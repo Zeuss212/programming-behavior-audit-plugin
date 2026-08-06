@@ -23,6 +23,13 @@ ARK_MODEL_ENV_VAR = "ARK_MODEL"
 DEFAULT_ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/coding/v3"
 DEFAULT_ARK_MODEL = "glm-5-2-260617"
 REQUEST_TIMEOUT_SEC = 60
+ANALYSIS_TIMEOUT_ENV_VAR = (
+    "JUPYTERLAB_BEHAVIOR_AUDIT_ANALYSIS_TIMEOUT_SEC"
+)
+DEFAULT_ANALYSIS_TIMEOUT_SEC = 120
+MIN_ANALYSIS_TIMEOUT_SEC = 60
+MAX_ANALYSIS_TIMEOUT_SEC = 180
+PROVIDER_CALL_TIMEOUT_SEC = 60
 WORKER_REQUEST_TIMEOUT_SEC = 90
 STRUCTURED_OUTPUT_TOKEN_BUDGETS: tuple[int, int] = (8192, 16384)
 AI_CONFIG_FILENAME = ".ark_ai_config.json"
@@ -78,6 +85,18 @@ class LlmTransportResult:
 
 
 JsonClient = Callable[[Mapping[str, object]], Mapping[str, object]]
+
+
+def analysis_timeout_sec() -> int:
+    """Return the validated whole-analysis timeout budget in seconds."""
+
+    raw = os.environ.get(ANALYSIS_TIMEOUT_ENV_VAR)
+    if raw is None or not raw.isdecimal():
+        return DEFAULT_ANALYSIS_TIMEOUT_SEC
+    value = int(raw)
+    if not MIN_ANALYSIS_TIMEOUT_SEC <= value <= MAX_ANALYSIS_TIMEOUT_SEC:
+        return DEFAULT_ANALYSIS_TIMEOUT_SEC
+    return value
 
 
 def _validated_base_url(value: object) -> str:

@@ -13,6 +13,7 @@ from myextension.behavior_log_store import LOG_DIR_ENV_VAR
 def isolated_environment(monkeypatch, tmp_path):
     for name in (
         transport.AI_CONFIG_PATH_ENV_VAR,
+        transport.ANALYSIS_TIMEOUT_ENV_VAR,
         LOG_DIR_ENV_VAR,
         transport.ARK_API_KEY_ENV_VAR,
         transport.ARK_BASE_URL_ENV_VAR,
@@ -96,3 +97,32 @@ def test_missing_bluedot_workspace_keeps_local_default(monkeypatch, tmp_path):
         / transport.AI_CONFIG_FILENAME
     )
     assert expected.is_file()
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [
+        (None, 120),
+        ("60", 60),
+        ("120", 120),
+        ("180", 180),
+        ("59", 120),
+        ("181", 120),
+        ("120.0", 120),
+        ("invalid", 120),
+        ("", 120),
+    ],
+)
+def test_analysis_timeout_is_bounded(monkeypatch, configured, expected):
+    if configured is None:
+        monkeypatch.delenv(
+            transport.ANALYSIS_TIMEOUT_ENV_VAR,
+            raising=False,
+        )
+    else:
+        monkeypatch.setenv(
+            transport.ANALYSIS_TIMEOUT_ENV_VAR,
+            configured,
+        )
+
+    assert transport.analysis_timeout_sec() == expected

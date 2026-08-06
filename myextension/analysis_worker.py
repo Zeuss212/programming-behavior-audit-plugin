@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import queue
 import re
@@ -33,7 +34,8 @@ from .dimension_analyzer import (
 )
 from .llm_transport import (
     LlmTransportError,
-    WORKER_REQUEST_TIMEOUT_SEC,
+    PROVIDER_CALL_TIMEOUT_SEC,
+    analysis_timeout_sec,
     provider_json_client,
 )
 from .schema_registry import validate_schema
@@ -149,9 +151,14 @@ class _RecordingRetryingClient:
         self,
         provider: Callable[..., Mapping[str, object]],
         wait: Callable[[float], None],
+        *,
+        total_timeout_sec: int,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._provider = provider
         self._wait = wait
+        self._clock = clock
+        self._deadline = clock() + total_timeout_sec
         self.responses: list[dict[str, object]] = []
 
     @staticmethod
@@ -174,12 +181,18 @@ class _RecordingRetryingClient:
         self,
         request_body: Mapping[str, object],
     ) -> Mapping[str, object]:
-        delays = (2.0, 8.0)
-        for call_index in range(3):
+        for call_index in range(2):
+            remaining = self._deadline - self._clock()
+            if remaining <= 0:
+                raise LlmTransportError("analysis_deadline_exceeded")
+            timeout_sec = min(
+                PROVIDER_CALL_TIMEOUT_SEC,
+                max(1, math.ceil(remaining)),
+            )
             try:
                 raw = self._provider(
                     request_body,
-                    timeout_sec=WORKER_REQUEST_TIMEOUT_SEC,
+                    timeout_sec=timeout_sec,
                 )
                 normalized = normalize_json_value(raw)
                 if not isinstance(normalized, dict):
@@ -189,9 +202,14 @@ class _RecordingRetryingClient:
                 self.responses.append(normalized)
                 return normalized
             except LlmTransportError as error:
-                if call_index >= 2 or not self._retryable(error):
+                if call_index == 1 or not self._retryable(error):
                     raise
-                self._wait(delays[call_index])
+                remaining = self._deadline - self._clock()
+                if remaining <= 2.0:
+                    raise LlmTransportError(
+                        "analysis_deadline_exceeded"
+                    ) from error
+                self._wait(2.0)
         raise AssertionError("unreachable")
 
 
@@ -206,6 +224,7 @@ class AnalysisWorker:
         session_store: SessionStore | None = None,
         provider_client: Callable[..., Mapping[str, object]] | None = None,
         wait: Callable[[float], None] | None = None,
+        clock: Callable[[], float] | None = None,
         terminal_callback: Callable[[str], object] | None = None,
         synchronous: bool = False,
         autostart: bool = True,
@@ -215,6 +234,7 @@ class AnalysisWorker:
         self.session_store = session_store or SessionStore(self.root)
         self._provider_client = provider_client or provider_json_client
         self._wait = wait or time.sleep
+        self._clock = clock or time.monotonic
         self._terminal_callback = terminal_callback
         self._synchronous = synchronous
         self._queue: queue.Queue[object] = queue.Queue(maxsize=100)
@@ -698,6 +718,8 @@ class AnalysisWorker:
         recorder = _RecordingRetryingClient(
             self._provider_client,
             self._wait,
+            total_timeout_sec=analysis_timeout_sec(),
+            clock=self._clock,
         )
         error_code = "analysis_worker_failed"
         try:

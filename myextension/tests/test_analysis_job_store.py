@@ -54,6 +54,20 @@ JOB_KEYS = {
 }
 
 
+class FakeMonotonic:
+    def __init__(self) -> None:
+        self.value = 0.0
+
+    def __call__(self) -> float:
+        return self.value
+
+    def advance(self, seconds: float) -> None:
+        self.value += seconds
+
+    def sleep(self, seconds: float) -> None:
+        self.advance(seconds)
+
+
 def session() -> dict[str, object]:
     return {
         "schema_version": 1,
@@ -446,7 +460,7 @@ def test_worker_ready_persists_private_artifacts_and_closed_public_result(
     worker.enqueue(str(job["job_id"]))
     updated = job_store.get(str(job["job_id"]))
     assert updated["status"] == "ready"
-    assert calls and {timeout for _, timeout in calls} == {90}
+    assert calls and {timeout for _, timeout in calls} == {60}
 
     analysis_id = str(updated["analysis_id"])
     result_path = tmp_path / "analyses" / analysis_id / "result.json"
@@ -492,7 +506,7 @@ def test_worker_recovers_truncated_response_in_same_attempt(tmp_path):
 
     def provider(request, *, timeout_sec):
         requests.append(dict(request))
-        assert timeout_sec == 90
+        assert timeout_sec == 60
         if len(requests) == 1:
             return truncated_provider_response()
         return provider_response(str(job["session_id"]))
@@ -912,18 +926,17 @@ def test_worker_ai_not_configured_is_partial_with_no_private_leak(
 
 
 @pytest.mark.parametrize(
-    ("failure", "expected_delays"),
+    "failure",
     [
-        (LlmTransportError("provider_network_error"), [2.0, 8.0]),
-        (LlmTransportError("provider_timeout"), [2.0, 8.0]),
-        (LlmTransportError("provider_http_error", http_status=429), [2.0, 8.0]),
-        (LlmTransportError("provider_http_error", http_status=503), [2.0, 8.0]),
+        LlmTransportError("provider_network_error"),
+        LlmTransportError("provider_timeout"),
+        LlmTransportError("provider_http_error", http_status=429),
+        LlmTransportError("provider_http_error", http_status=503),
     ],
 )
 def test_worker_retries_transient_provider_calls_only(
     tmp_path,
     failure,
-    expected_delays,
 ):
     session_store, job_store, job = create_worker_job(tmp_path)
     calls = 0
@@ -932,9 +945,7 @@ def test_worker_retries_transient_provider_calls_only(
     def provider(request, *, timeout_sec):
         nonlocal calls
         calls += 1
-        if calls < 3:
-            raise failure
-        return provider_response(str(job["session_id"]))
+        raise failure
 
     worker = AnalysisWorker(
         tmp_path,
@@ -945,9 +956,9 @@ def test_worker_retries_transient_provider_calls_only(
         synchronous=True,
     )
     worker.enqueue(str(job["job_id"]))
-    assert calls == 3
-    assert waits == expected_delays
-    assert job_store.get(str(job["job_id"]))["status"] == "ready"
+    assert calls == 2
+    assert waits == [2.0]
+    assert job_store.get(str(job["job_id"]))["status"] == "partial"
 
 
 @pytest.mark.parametrize("status", [400, 401, 403])
@@ -981,7 +992,7 @@ def test_worker_does_not_retry_nonretryable_http_status(
     assert job_store.get(str(job["job_id"]))["status"] == "partial"
 
 
-def test_one_logical_repair_keeps_independent_transport_retry_budgets(
+def test_one_logical_repair_shares_deadline_with_independent_retries(
     tmp_path,
 ):
     session_store, job_store, job = create_worker_job(tmp_path)
@@ -1004,7 +1015,7 @@ def test_one_logical_repair_keeps_independent_transport_retry_budgets(
             raise LlmTransportError("provider_network_error")
         if calls == 2:
             return initial
-        if calls in {3, 4}:
+        if calls == 3:
             raise LlmTransportError("provider_timeout")
         return repair
 
@@ -1019,8 +1030,8 @@ def test_one_logical_repair_keeps_independent_transport_retry_budgets(
     worker.enqueue(str(job["job_id"]))
     updated = job_store.get(str(job["job_id"]))
     assert updated["status"] == "ready"
-    assert calls == 5
-    assert waits == [2.0, 2.0, 8.0]
+    assert calls == 4
+    assert waits == [2.0, 2.0]
     raw_path = (
         tmp_path
         / "jobs"
@@ -1030,6 +1041,79 @@ def test_one_logical_repair_keeps_independent_transport_retry_budgets(
     )
     recorded = json.loads(raw_path.read_text())["responses"]
     assert recorded == [initial, repair]
+
+
+def test_worker_shares_budget_across_truncation_and_repair(tmp_path):
+    session_store, job_store, job = create_worker_job(tmp_path)
+    complete = provider_response(str(job["session_id"]))
+    initial = {
+        "model": "synthetic-model",
+        "dimensions": [complete["dimensions"][0]],  # type: ignore[index]
+    }
+    repair = {
+        "model": "synthetic-model",
+        "dimensions": [complete["dimensions"][1]],  # type: ignore[index]
+    }
+    clock = FakeMonotonic()
+    timeouts: list[int] = []
+    requests: list[dict[str, object]] = []
+
+    def provider(request, *, timeout_sec):
+        requests.append(dict(request))
+        timeouts.append(timeout_sec)
+        if len(requests) == 1:
+            clock.advance(40.0)
+            return truncated_provider_response()
+        if len(requests) == 2:
+            clock.advance(50.0)
+            return initial
+        clock.advance(1.0)
+        return repair
+
+    worker = AnalysisWorker(
+        tmp_path,
+        job_store=job_store,
+        session_store=session_store,
+        provider_client=provider,
+        wait=clock.sleep,
+        clock=clock,
+        synchronous=True,
+    )
+    worker.enqueue(str(job["job_id"]))
+
+    assert job_store.get(str(job["job_id"]))["status"] == "ready"
+    assert timeouts == [60, 60, 30]
+    assert [request["max_tokens"] for request in requests] == [
+        8192,
+        16384,
+        8192,
+    ]
+
+
+def test_worker_does_not_call_provider_after_shared_deadline(tmp_path):
+    session_store, job_store, job = create_worker_job(tmp_path)
+    clock = FakeMonotonic()
+    calls = 0
+
+    def provider(request, *, timeout_sec):
+        nonlocal calls
+        calls += 1
+        clock.advance(121.0)
+        return truncated_provider_response()
+
+    worker = AnalysisWorker(
+        tmp_path,
+        job_store=job_store,
+        session_store=session_store,
+        provider_client=provider,
+        wait=clock.sleep,
+        clock=clock,
+        synchronous=True,
+    )
+    worker.enqueue(str(job["job_id"]))
+
+    assert calls == 1
+    assert job_store.get(str(job["job_id"]))["status"] == "partial"
 
 
 def test_invalid_model_output_gets_one_repair_but_no_transport_retry(

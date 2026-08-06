@@ -186,6 +186,30 @@ function actionForError(code: string | null): string {
   if (code === 'ai_not_configured' || code === 'ai_analysis_failed') {
     return '请检查“AI 服务配置”，然后重试分析。';
   }
+  if (code === 'ai_analysis_timeout') {
+    return '分析超时，请重试；如反复出现，请减少维度或事件量，或将分析超时设置调高（60–180 秒）。';
+  }
+  if (code === 'ai_provider_network_error') {
+    return '无法连接 AI 服务，请检查网络、DNS 或 TLS/代理配置后重试。';
+  }
+  if (code === 'ai_provider_rate_limited') {
+    return 'AI 服务限流或额度不足，请稍后重试并检查额度或并发限制。';
+  }
+  if (code === 'ai_provider_auth_failed') {
+    return 'AI 服务鉴权失败，请检查 API Key 和模型权限后重试。';
+  }
+  if (code === 'ai_provider_request_rejected') {
+    return 'AI 请求被拒绝，请检查 Base URL 和模型名是否匹配服务配置。';
+  }
+  if (code === 'ai_provider_unavailable') {
+    return 'AI 服务暂不可用，请稍后重试。';
+  }
+  if (code === 'ai_response_truncated') {
+    return 'AI 输出过长且二次请求仍被截断，请减少维度或事件量后重试。';
+  }
+  if (code === 'ai_response_invalid') {
+    return 'AI 输出格式无效，请重试；如反复出现，请检查模型是否支持结构化 JSON 输出。';
+  }
   if (code === 'model_timeout') return '模型响应超时，可以重试分析。';
   if (code === 'analysis_output_invalid' || code === 'invalid_profile') {
     return '请重试并检查维度定义。';

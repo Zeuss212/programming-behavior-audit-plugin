@@ -2285,6 +2285,14 @@ describe('BehaviorAnalysisSidebar', () => {
   it.each([
     ['ai_not_configured', 'AI 服务配置'],
     ['ai_analysis_failed', 'AI 服务配置'],
+    ['ai_analysis_timeout', '分析超时'],
+    ['ai_provider_network_error', '网络、DNS 或 TLS'],
+    ['ai_provider_rate_limited', '额度或并发'],
+    ['ai_provider_auth_failed', 'API Key 和模型权限'],
+    ['ai_provider_request_rejected', 'Base URL 和模型名'],
+    ['ai_provider_unavailable', '服务暂不可用'],
+    ['ai_response_truncated', '输出过长'],
+    ['ai_response_invalid', '输出格式'],
     ['model_timeout', '模型响应超时'],
     ['session_not_finalized', '重试上传/结束'],
     ['input_snapshot_mismatch', '联系管理员'],
@@ -2294,25 +2302,34 @@ describe('BehaviorAnalysisSidebar', () => {
     ['analysis_commit_failed', '服务器分析失败'],
     ['analysis_worker_failed', '服务器分析失败'],
     ['invalid_profile', '检查维度定义']
-  ])('maps backend code %s to an actionable message', async (code, text) => {
-    const capture = createCapture();
-    capture.snapshot.mockReturnValue({
-      ...snapshot,
-      sessionId: job.session_id
-    });
-    const deps = dependencies(capture, [profile]);
-    deps.getAnalysisJob = jest.fn(async () => ({
-      ...job,
-      status: 'error' as const,
-      error_code: code
-    }));
-    const sidebar = new BehaviorAnalysisSidebar(deps);
-    await flush();
-    (sidebar as unknown as { job: IAnalysisJob }).job = job;
-    await sidebar.refreshAnalysis();
-    expect(sidebar.node.textContent).toContain(text);
-    sidebar.dispose();
-  });
+  ])(
+    'maps backend error guidance %s to an actionable message',
+    async (code, text) => {
+      const capture = createCapture();
+      capture.snapshot.mockReturnValue({
+        ...snapshot,
+        sessionId: job.session_id
+      });
+      const deps = dependencies(capture, [profile]);
+      deps.getAnalysisJob = jest.fn(async () => ({
+        ...job,
+        status: 'error' as const,
+        error_code: code
+      }));
+      const sidebar = new BehaviorAnalysisSidebar(deps);
+      await flush();
+      (sidebar as unknown as { job: IAnalysisJob }).job = job;
+      await sidebar.refreshAnalysis();
+      expect(sidebar.node.textContent).toContain(text);
+      const hasRetry = Array.from(
+        sidebar.node.querySelectorAll<HTMLButtonElement>('button')
+      ).some(value => value.textContent === '重试分析');
+      expect(hasRetry).toBe(
+        code !== 'input_snapshot_mismatch' && code !== 'analysis_input_invalid'
+      );
+      sidebar.dispose();
+    }
+  );
 
   it('treats analysis_input_invalid as integrity failure without retry guidance', async () => {
     let active = true;

@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "template_id": "repeated-run-failures",
+  "version": 1,
+  "deployment_status": "pilot",
+  "code": "REPEATED_RUN_FAILURES",
+  "name": "连续失败且未有效修复",
+  "question": "学生是否连续运行失败且没有形成有效修复？",
+  "evidence_criteria": [
+    {"id": "support-1", "direction": "support", "statement": "多次运行失败，错误持续或在未解决时反复出现"},
+    {"id": "exclude-1", "direction": "exclude", "statement": "单次失败后及时修复不计入"}
+  ],
+  "levels": [
+    {"code": "possible", "name": "可能出现", "definition": "存在相关行为证据，但范围或持续性有限"},
+    {"code": "clear", "name": "明显出现", "definition": "在多个有效阶段持续出现相关行为"}
+  ],
+  "teaching_actions": {
+    "possible": "结合错误证据询问学生当前修复假设",
+    "clear": "引导学生一次只验证一个修复假设并记录结果"
+  },
+  "analysis_config": {
+    "mode": "llm_evidence",
+    "minimum_observation": {"run_count": 2}
+  },
+  "examples": [
+    {"kind": "positive", "summary": "相同错误在多次运行中持续出现，期间没有有效修复。"},
+    {"kind": "negative", "summary": "首次运行失败后学生修正边界，下一次运行不再出现该错误。"}
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "template_id": "debug-chain",
+  "version": 1,
+  "deployment_status": "pilot",
+  "code": "DEBUG_CHAIN",
+  "name": "失败后的修改验证链",
+  "question": "学生运行失败后，是否修改相关代码并再次验证？",
+  "evidence_criteria": [
+    {"id": "support-1", "direction": "support", "statement": "失败运行后修改相关代码并再次运行"},
+    {"id": "exclude-1", "direction": "exclude", "statement": "只修改注释或运行无关 Cell 不计入"}
+  ],
+  "levels": [
+    {"code": "possible", "name": "可能出现", "definition": "存在相关行为证据，但范围或持续性有限"},
+    {"code": "clear", "name": "明显出现", "definition": "在多个有效阶段持续出现相关行为"}
+  ],
+  "teaching_actions": {
+    "possible": "结合失败与再次运行的证据询问学生调试思路",
+    "clear": "安排一次短练习，要求记录失败、修改与验证的对应关系"
+  },
+  "analysis_config": {
+    "mode": "llm_evidence",
+    "minimum_observation": {"edit_event_count": 1, "run_count": 1}
+  },
+  "examples": [
+    {"kind": "positive", "summary": "一次失败运行后，学生修改相关代码并再次运行。"},
+    {"kind": "negative", "summary": "学生只修改注释，随后运行了另一个无关 Cell。"}
+  ]
+}

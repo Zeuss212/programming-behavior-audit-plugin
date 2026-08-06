@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Published dimension profile version v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "profile_id", "version", "problem_id", "title", "dimensions", "content_hash", "deployment_status", "preview_status"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "profile_id": {"type": "string", "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"},
+    "version": {"type": "integer", "minimum": 1},
+    "problem_id": {"type": "string", "minLength": 1},
+    "title": {"type": "string", "minLength": 1, "maxLength": 200},
+    "dimensions": {"type": "array", "minItems": 1, "maxItems": 10, "items": {"$ref": "#/$defs/dimension"}},
+    "content_hash": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
+    "deployment_status": {"const": "pilot"},
+    "preview_status": {"enum": ["pending_real_samples", "completed"]}
+  },
+  "$defs": {
+    "dimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "name", "question", "evidence_criteria", "levels", "analysis_config"],
+      "properties": {
+        "code": {"type": "string", "pattern": "^(?:CUSTOM_[A-Z0-9]{8}|(?!CUSTOM_)[A-Z][A-Z0-9_]*)$"},
+        "name": {"type": "string", "minLength": 1, "maxLength": 50},
+        "question": {"type": "string", "minLength": 1, "maxLength": 200},
+        "no_known_exclusion": {"type": "boolean"},
+        "evidence_criteria": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/evidence_criterion"}, "allOf": [{"contains": {"properties": {"direction": {"const": "support"}}, "required": ["direction"]}}]},
+        "levels": {"type": "array", "minItems": 2, "maxItems": 2, "uniqueItems": true, "items": {"$ref": "#/$defs/level"}, "allOf": [{"contains": {"properties": {"code": {"const": "possible"}}, "required": ["code"]}}, {"contains": {"properties": {"code": {"const": "clear"}}, "required": ["code"]}}]},
+        "teaching_actions": {"$ref": "#/$defs/teaching_actions"},
+        "analysis_config": {"$ref": "#/$defs/analysis_config"}
+      },
+      "allOf": [{"if": {"properties": {"no_known_exclusion": {"const": true}}, "required": ["no_known_exclusion"]}, "else": {"properties": {"evidence_criteria": {"contains": {"properties": {"direction": {"const": "exclude"}}, "required": ["direction"]}}}}}]
+    },
+    "evidence_criterion": {"type": "object", "additionalProperties": false, "required": ["id", "direction", "statement"], "properties": {"id": {"type": "string", "minLength": 1}, "direction": {"enum": ["support", "exclude"]}, "statement": {"type": "string", "minLength": 1}}},
+    "level": {"type": "object", "additionalProperties": false, "required": ["code", "name", "definition"], "properties": {"code": {"enum": ["possible", "clear"]}, "name": {"type": "string", "minLength": 1}, "definition": {"type": "string", "minLength": 1}}},
+    "teaching_actions": {"type": "object", "additionalProperties": false, "required": ["possible", "clear"], "properties": {"possible": {"type": "string", "minLength": 1}, "clear": {"type": "string", "minLength": 1}, "not_observed": {"type": "string", "minLength": 1}}},
+    "analysis_config": {"type": "object", "additionalProperties": false, "required": ["mode"], "properties": {"mode": {"const": "llm_evidence"}, "minimum_observation": {"$ref": "#/$defs/minimum_observation"}}},
+    "minimum_observation": {"type": "object", "additionalProperties": false, "minProperties": 1, "properties": {"valid_observation_duration_ms": {"type": "integer", "minimum": 0}, "edit_event_count": {"type": "integer", "minimum": 0}, "run_count": {"type": "integer", "minimum": 0}}}
+  }
+}

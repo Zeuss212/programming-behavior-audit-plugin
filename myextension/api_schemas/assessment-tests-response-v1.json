@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Assessment test generation response v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["assessment_tests"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "request_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "assessment_tests": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 30,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "knowledge_point_ids",
+          "kind",
+          "input",
+          "expected",
+          "enabled",
+          "source",
+          "order"
+        ],
+        "properties": {
+          "id": {"type": "string", "pattern": "^TEST_[A-Z0-9]{8}$"},
+          "name": {"type": "string", "minLength": 1, "maxLength": 120},
+          "knowledge_point_ids": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 10,
+            "uniqueItems": true,
+            "items": {"type": "string", "pattern": "^KP_[A-Z0-9]{8}$"}
+          },
+          "kind": {"enum": ["function_call", "stdin_stdout"]},
+          "input": {"type": "string", "maxLength": 4000},
+          "expected": {"type": "string", "maxLength": 4000},
+          "enabled": {"const": true},
+          "source": {"const": "ai_suggestion"},
+          "order": {"type": "integer", "minimum": 0, "maximum": 29}
+        }
+      }
+    }
+  }
+}

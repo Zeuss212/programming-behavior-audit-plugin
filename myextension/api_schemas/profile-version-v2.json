@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Published assessment profile version v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "profile_id",
+    "version",
+    "problem_id",
+    "title",
+    "problem_context",
+    "knowledge_points",
+    "assessment_tests",
+    "confirmations",
+    "dimensions",
+    "content_hash",
+    "deployment_status",
+    "preview_status"
+  ],
+  "properties": {
+    "schema_version": {
+      "$ref": "profile-draft-v2.json#/properties/schema_version"
+    },
+    "profile_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "version": {"type": "integer", "minimum": 1},
+    "problem_id": {
+      "$ref": "profile-draft-v2.json#/properties/problem_id"
+    },
+    "title": {"$ref": "profile-draft-v2.json#/properties/title"},
+    "problem_context": {
+      "$ref": "profile-draft-v2.json#/properties/problem_context"
+    },
+    "knowledge_points": {
+      "$ref": "profile-draft-v2.json#/properties/knowledge_points",
+      "minItems": 1
+    },
+    "assessment_tests": {
+      "$ref": "profile-draft-v2.json#/properties/assessment_tests",
+      "minItems": 1
+    },
+    "confirmations": {
+      "$ref": "profile-draft-v2.json#/properties/confirmations"
+    },
+    "dimensions": {
+      "$ref": "profile-draft-v2.json#/properties/dimensions",
+      "minItems": 1
+    },
+    "content_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "deployment_status": {"const": "pilot"},
+    "preview_status": {"enum": ["pending_real_samples", "completed"]}
+  }
+}

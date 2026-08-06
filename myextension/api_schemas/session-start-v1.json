@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Session start v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "problem_id", "profile_id", "profile_version", "profile_content_hash"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "problem_id": {"type": "string", "minLength": 1},
+    "profile_id": {"type": "string", "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"},
+    "profile_version": {"type": "integer", "minimum": 1},
+    "profile_content_hash": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"}
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "template_id": "repeated-editing",
+  "version": 1,
+  "deployment_status": "pilot",
+  "code": "REPEATED_EDITING",
+  "name": "同阶段反复改写",
+  "question": "学生是否在同一任务阶段反复改写相近代码？",
+  "evidence_criteria": [
+    {"id": "support-1", "direction": "support", "statement": "同一 Cell 或文件区域多次删除、恢复或小范围改写"},
+    {"id": "exclude-1", "direction": "exclude", "statement": "正常的一次性重构或格式化不计入"}
+  ],
+  "levels": [
+    {"code": "possible", "name": "可能出现", "definition": "存在相关行为证据，但范围或持续性有限"},
+    {"code": "clear", "name": "明显出现", "definition": "在多个有效阶段持续出现相关行为"}
+  ],
+  "teaching_actions": {
+    "possible": "结合证据询问学生每次改写的目标与判断依据",
+    "clear": "引导学生先写下修改假设，再用一次运行验证结果"
+  },
+  "analysis_config": {
+    "mode": "llm_evidence",
+    "minimum_observation": {"valid_observation_duration_ms": 60000, "edit_event_count": 3}
+  },
+  "examples": [
+    {"kind": "positive", "summary": "学生在同一代码区域连续删除、恢复并小范围改写。"},
+    {"kind": "negative", "summary": "学生一次性重构函数后运行验证，没有反复改写。"}
+  ]
+}

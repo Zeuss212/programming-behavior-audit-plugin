@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Pilot API error v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "request_id", "code", "message", "retryable"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "request_id": {"type": "string", "minLength": 1},
+    "code": {"type": "string", "minLength": 1},
+    "message": {"type": "string", "minLength": 1},
+    "retryable": {"type": "boolean"},
+    "details": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["field", "reason"],
+      "properties": {
+        "field": {"type": "string", "minLength": 1},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

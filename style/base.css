@@ -1,0 +1,808 @@
+.jp-BehaviorAudit-editor,
+.jp-BehaviorAudit-firstRun {
+  box-sizing: border-box;
+  height: 100%;
+  overflow: auto;
+  padding: 24px;
+  color: var(--jp-ui-font-color1);
+  background: var(--jp-layout-color0);
+}
+
+.jp-BehaviorAudit-editorHeader {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 880px;
+  margin: 0 auto;
+}
+
+.jp-BehaviorAudit-editorHeader h1,
+.jp-BehaviorAudit-firstRun h1 {
+  margin: 0;
+  font-size: var(--jp-content-font-size3);
+  line-height: 1.4;
+}
+
+.jp-BehaviorAudit-steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  max-width: 880px;
+  padding: 0;
+  margin: 24px auto;
+  list-style: none;
+  border-block: 1px solid var(--jp-border-color2);
+}
+
+.jp-BehaviorAudit-step {
+  padding: 12px;
+  color: var(--jp-ui-font-color2);
+  text-align: center;
+}
+
+.jp-BehaviorAudit-step[aria-current='step'] {
+  color: var(--jp-ui-font-color1);
+  font-weight: 600;
+  box-shadow: inset 0 -2px var(--jp-brand-color1);
+}
+
+.jp-BehaviorAudit-step + .jp-BehaviorAudit-step {
+  border-left: 1px solid var(--jp-border-color2);
+}
+
+.jp-BehaviorAudit-saveStatus,
+.jp-BehaviorAudit-editorContent,
+.jp-BehaviorAudit-firstRun {
+  max-width: 880px;
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.jp-BehaviorAudit-saveStatus {
+  min-height: 20px;
+  color: var(--jp-ui-font-color2);
+  font-size: var(--jp-ui-font-size0);
+  text-align: right;
+}
+
+.jp-BehaviorAudit-editorContent h2,
+.jp-BehaviorAudit-firstRun h2 {
+  margin: 0 0 8px;
+  color: var(--jp-ui-font-color1);
+}
+
+.jp-BehaviorAudit-editorContent p,
+.jp-BehaviorAudit-firstRun p {
+  line-height: 1.5;
+}
+
+.jp-BehaviorAudit-templateGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 20px 0;
+}
+
+.jp-BehaviorAudit-templateCard {
+  padding: 16px;
+  border: 1px solid var(--jp-border-color2);
+  border-radius: var(--jp-border-radius);
+  background: var(--jp-layout-color1);
+}
+
+.jp-BehaviorAudit-templateCard h3 {
+  margin: 0 0 8px;
+  color: var(--jp-ui-font-color1);
+  font-size: var(--jp-ui-font-size2);
+}
+
+.jp-BehaviorAudit-templateCard p {
+  min-height: 44px;
+  margin: 0 0 16px;
+  color: var(--jp-ui-font-color2);
+}
+
+.jp-BehaviorAudit-customEntry {
+  margin-top: 4px;
+}
+
+.jp-BehaviorAudit-form {
+  display: grid;
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.jp-BehaviorAudit-dimensions {
+  display: grid;
+  gap: 16px;
+}
+
+.jp-BehaviorAudit-dimensionCard,
+.jp-BehaviorAudit-addDimension {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--jp-border-color2);
+  border-radius: var(--jp-border-radius);
+  background: var(--jp-layout-color1);
+}
+
+.jp-BehaviorAudit-dimensionCardHeader {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.jp-BehaviorAudit-dimensionCardHeader h3,
+.jp-BehaviorAudit-addDimension h3 {
+  margin: 0;
+  color: var(--jp-ui-font-color1);
+  font-size: var(--jp-ui-font-size2);
+}
+
+.jp-BehaviorAudit-dimensionAddActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.jp-BehaviorAudit-field {
+  display: grid;
+  gap: 6px;
+}
+
+.jp-BehaviorAudit-label {
+  color: var(--jp-ui-font-color1);
+  font-weight: 600;
+}
+
+.jp-BehaviorAudit-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 8px;
+  color: var(--jp-ui-font-color1);
+  font: inherit;
+  background: var(--jp-input-background);
+  border: 1px solid var(--jp-input-border-color);
+  border-radius: var(--jp-border-radius);
+}
+
+.jp-BehaviorAudit-input:disabled {
+  color: var(--jp-ui-font-color2);
+  background: var(--jp-layout-color2);
+}
+
+.jp-BehaviorAudit-input[aria-invalid='true'] {
+  border-color: var(--jp-error-color1);
+}
+
+textarea.jp-BehaviorAudit-input {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.jp-BehaviorAudit-fieldError {
+  min-height: 18px;
+  color: var(--jp-error-color1);
+  font-size: var(--jp-ui-font-size0);
+}
+
+.jp-BehaviorAudit-checkboxField {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.jp-BehaviorAudit-checkboxField input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.jp-BehaviorAudit-examples,
+.jp-BehaviorAudit-pilotDisclaimer,
+.jp-BehaviorAudit-state {
+  padding: 16px;
+  margin: 16px 0;
+  border: 1px solid var(--jp-border-color2);
+  border-radius: var(--jp-border-radius);
+  background: var(--jp-layout-color1);
+}
+
+.jp-BehaviorAudit-examples h3 {
+  margin: 0 0 12px;
+}
+
+.jp-BehaviorAudit-examples p {
+  margin: 8px 0;
+}
+
+.jp-BehaviorAudit-notice {
+  color: var(--jp-ui-font-color2);
+  font-size: var(--jp-ui-font-size0);
+}
+
+.jp-BehaviorAudit-state-error {
+  border-color: var(--jp-error-color2);
+}
+
+.jp-BehaviorAudit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  padding-top: 8px;
+}
+
+.jp-BehaviorAudit-inlineActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.jp-BehaviorAudit-actions-spread {
+  justify-content: space-between;
+}
+
+.jp-BehaviorAudit-advancedSettings {
+  min-width: 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--jp-border-color2);
+}
+
+.jp-BehaviorAudit-advancedSettings summary {
+  cursor: pointer;
+  color: var(--jp-ui-font-color1);
+  font-weight: 600;
+}
+
+.jp-BehaviorAudit-advancedSettingsBody {
+  display: grid;
+  gap: 12px;
+  padding-top: 12px;
+}
+
+.jp-BehaviorAudit-assistStatus {
+  min-height: 20px;
+  margin: 8px 0;
+  color: var(--jp-ui-font-color2);
+  font-size: var(--jp-ui-font-size0);
+}
+
+.jp-BehaviorAudit-assistStatus:empty {
+  display: none;
+}
+
+.jp-BehaviorAudit-assistStatus-error {
+  color: var(--jp-error-color1);
+}
+
+.jp-BehaviorAudit-candidateSection,
+.jp-BehaviorAudit-confirmedSection {
+  display: grid;
+  gap: 12px;
+  margin: 20px 0;
+}
+
+.jp-BehaviorAudit-candidateSection h3,
+.jp-BehaviorAudit-confirmedSection > h3 {
+  margin: 0;
+  font-size: var(--jp-content-font-size2);
+}
+
+.jp-BehaviorAudit-suggestionCard {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--jp-info-color2);
+  border-radius: var(--jp-border-radius);
+  background: var(--jp-layout-color1);
+}
+
+.jp-BehaviorAudit-suggestionCard p {
+  margin: 0;
+  color: var(--jp-ui-font-color2);
+}
+
+.jp-BehaviorAudit-testPointLinks {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--jp-border-color2);
+}
+
+.jp-BehaviorAudit-testPointLinks legend {
+  padding: 0 4px;
+  color: var(--jp-ui-font-color1);
+  font-weight: 600;
+}
+
+.jp-BehaviorAudit-button {
+  min-height: 32px;
+  padding: 6px 12px;
+  color: var(--jp-ui-font-color1);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--jp-border-color1);
+  border-radius: var(--jp-border-radius);
+  background: var(--jp-layout-color1);
+}
+
+.jp-BehaviorAudit-button-primary {
+  color: var(--jp-ui-inverse-font-color1);
+  background: var(--jp-brand-color1);
+  border-color: var(--jp-brand-color1);
+}
+
+.jp-BehaviorAudit-button-secondary:hover {
+  background: var(--jp-layout-color2);
+}
+
+.jp-BehaviorAudit-button-primary:hover {
+  background: var(--jp-brand-color0);
+}
+
+.jp-BehaviorAudit-button-danger {
+  color: var(--jp-ui-inverse-font-color1);
+  background: var(--jp-error-color1);
+  border-color: var(--jp-error-color1);
+}
+
+.jp-BehaviorAudit-sidebar button,
+.jp-BehaviorAudit-sidebar select,
+.jp-BehaviorAudit-sidebar input,
+.jp-BehaviorAudit-sidebar textarea {
+  max-width: 100%;
+}
+
+.jp-BehaviorAudit-button:focus-visible,
+.jp-BehaviorAudit-input:focus-visible,
+.jp-BehaviorAudit-checkboxField input:focus-visible {
+  outline: 2px solid var(--jp-brand-color1);
+  outline-offset: 2px;
+}
+
+.jp-BehaviorAudit-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.jp-BehaviorAudit-button[aria-busy='true'] {
+  cursor: progress;
+}
+
+.jp-BehaviorAudit-statusBadge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 2px 8px;
+  font-size: var(--jp-ui-font-size0);
+  font-weight: 600;
+  border: 1px solid var(--jp-border-color2);
+  border-radius: 999px;
+}
+
+.jp-BehaviorAudit-statusBadge-neutral {
+  color: var(--jp-ui-font-color2);
+  background: var(--jp-layout-color2);
+}
+
+.jp-BehaviorAudit-statusBadge-info {
+  color: var(--jp-info-color0);
+  border-color: var(--jp-info-color2);
+}
+
+.jp-BehaviorAudit-statusBadge-warning {
+  color: var(--jp-warn-color0);
+  border-color: var(--jp-warn-color2);
+}
+
+.jp-BehaviorAudit-statusBadge-success {
+  color: var(--jp-success-color0);
+  border-color: var(--jp-success-color2);
+}
+
+.jp-BehaviorAudit-statusBadge-danger {
+  color: var(--jp-error-color0);
+  border-color: var(--jp-error-color2);
+}
+
+.jp-BehaviorAudit-pilotDisclaimer {
+  border-color: var(--jp-warn-color2);
+}
+
+.jp-BehaviorAudit-summary {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.35fr) 1fr;
+  gap: 8px 16px;
+  padding: 16px 0;
+  margin: 0;
+}
+
+.jp-BehaviorAudit-summary dt {
+  color: var(--jp-ui-font-color2);
+  font-weight: 600;
+}
+
+.jp-BehaviorAudit-summary dd {
+  margin: 0;
+}
+
+.jp-BehaviorAudit-firstRun {
+  height: auto;
+  padding-top: 48px;
+}
+
+.jp-BehaviorAudit-firstRun h2 {
+  margin-top: 24px;
+  font-size: var(--jp-content-font-size2);
+}
+
+.jp-BehaviorAudit-sidebar {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  gap: 12px;
+  padding: 12px;
+  overflow: hidden auto;
+  color: var(--jp-ui-font-color1);
+  background: var(--jp-layout-color1);
+}
+
+.jp-BehaviorAudit-sidebar h1,
+.jp-BehaviorAudit-sidebar h2 {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--jp-ui-font-size2);
+}
+
+.jp-BehaviorAudit-sidebarSection,
+.jp-BehaviorAudit-resultCard,
+.jp-BehaviorAudit-resultEmpty,
+.jp-BehaviorAudit-sidebarStatus {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--jp-border-color2);
+  border-radius: var(--jp-border-radius);
+  background: var(--jp-layout-color0);
+}
+
+.jp-BehaviorAudit-sidebarStatus:empty {
+  display: none;
+}
+
+.jp-BehaviorAudit-sidebar .jp-BehaviorAudit-pilotDisclaimer,
+.jp-BehaviorAudit-sidebar p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+
+.jp-BehaviorAudit-captureState,
+.jp-BehaviorAudit-counts,
+.jp-BehaviorAudit-resultSummary,
+.jp-BehaviorAudit-evidenceMeta,
+.jp-BehaviorAudit-notice {
+  color: var(--jp-ui-font-color2);
+  font-size: var(--jp-ui-font-size0);
+}
+
+.jp-BehaviorAudit-observationProgress {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px 0;
+  border-block: 1px solid var(--jp-border-color2);
+}
+
+.jp-BehaviorAudit-observationProgressSummary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  justify-content: space-between;
+  color: var(--jp-ui-font-color1);
+  font-size: var(--jp-ui-font-size0);
+  font-weight: 600;
+}
+
+.jp-BehaviorAudit-observationProgress progress {
+  width: 100%;
+  height: 8px;
+  accent-color: var(--jp-brand-color1);
+}
+
+.jp-BehaviorAudit-observationProgressMeta,
+.jp-BehaviorAudit-observationProgressComplete {
+  color: var(--jp-ui-font-color2);
+  font-size: var(--jp-ui-font-size0);
+}
+
+.jp-BehaviorAudit-observationProgressComplete {
+  font-weight: 600;
+}
+
+.jp-BehaviorAudit-sessionLogs {
+  display: grid;
+  gap: 8px;
+}
+
+.jp-BehaviorAudit-sessionLogRow {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--jp-border-color2);
+  border-radius: var(--jp-border-radius);
+  background: var(--jp-layout-color1);
+}
+
+.jp-BehaviorAudit-sessionLogHeader {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.jp-BehaviorAudit-sessionLogIdentity {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.jp-BehaviorAudit-sessionLogFilename {
+  min-height: auto;
+  padding: 0;
+  overflow-wrap: anywhere;
+  color: var(--jp-brand-color1);
+  font-size: var(--jp-ui-font-size0);
+  font-weight: 500;
+  text-align: left;
+  text-decoration: underline;
+  border: 0;
+  background: transparent;
+}
+
+.jp-BehaviorAudit-sessionLogFilename:disabled {
+  color: var(--jp-ui-font-color2);
+  text-decoration: none;
+  background: transparent;
+}
+
+.jp-BehaviorAudit-sessionLogStatus {
+  flex: 0 0 auto;
+  color: var(--jp-ui-font-color2);
+  font-size: var(--jp-ui-font-size0);
+}
+
+.jp-BehaviorAudit-sessionLogStatus-generating {
+  color: var(--jp-info-color1);
+}
+
+.jp-BehaviorAudit-sessionLogStatus-ready {
+  color: var(--jp-success-color1);
+}
+
+.jp-BehaviorAudit-sessionLogStatus-error {
+  color: var(--jp-error-color1);
+}
+
+.jp-BehaviorAudit-logFolderControl {
+  display: grid;
+  gap: 8px;
+  padding: 8px 0;
+}
+
+.jp-BehaviorAudit-logViewer {
+  min-width: 0;
+  color: var(--jp-ui-font-color1);
+  background: var(--jp-layout-color0);
+}
+
+.jp-BehaviorAudit-logViewer-header {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--jp-border-color2);
+  background: var(--jp-layout-color1);
+}
+
+.jp-BehaviorAudit-logViewer-header > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.jp-BehaviorAudit-logViewer-header span {
+  overflow-wrap: anywhere;
+  color: var(--jp-ui-font-color2);
+  font-size: var(--jp-ui-font-size0);
+}
+
+.jp-BehaviorAudit-logViewer-header
+  .jp-BehaviorAudit-logViewer-downloadStatus:not(:empty) {
+  color: var(--jp-error-color1);
+}
+
+.jp-BehaviorAudit-logViewer-content {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 0;
+  padding: 16px;
+  overflow: auto;
+}
+
+.jp-BehaviorAudit-logViewer-content pre {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.jp-BehaviorAudit-stopWarning {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--jp-warn-color2);
+  border-radius: var(--jp-border-radius);
+  background: var(--jp-warn-color3);
+}
+
+.jp-BehaviorAudit-stopWarning p {
+  color: var(--jp-ui-font-color1);
+}
+
+.jp-BehaviorAudit-resultConclusion {
+  color: var(--jp-ui-font-color1);
+  font-weight: 700;
+}
+
+.jp-BehaviorAudit-teachingAction {
+  padding-top: 8px;
+  border-top: 1px solid var(--jp-border-color2);
+}
+
+.jp-BehaviorAudit-evidenceDetails,
+.jp-BehaviorAudit-reviewDetails,
+.jp-BehaviorAudit-analysisDetails,
+.jp-BehaviorAudit-aiConfig,
+.jp-BehaviorAudit-advancedData {
+  min-width: 0;
+  padding: 8px 0;
+  border-top: 1px solid var(--jp-border-color2);
+}
+
+.jp-BehaviorAudit-evidenceDetails summary,
+.jp-BehaviorAudit-reviewDetails summary,
+.jp-BehaviorAudit-analysisDetails summary,
+.jp-BehaviorAudit-aiConfig summary,
+.jp-BehaviorAudit-advancedData summary {
+  cursor: pointer;
+  color: var(--jp-ui-font-color1);
+  font-weight: 600;
+}
+
+.jp-BehaviorAudit-evidenceList,
+.jp-BehaviorAudit-reviewForm,
+.jp-BehaviorAudit-aiConfig,
+.jp-BehaviorAudit-advancedData,
+.jp-BehaviorAudit-deleteSession {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.jp-BehaviorAudit-evidenceList {
+  padding-left: 20px;
+  overflow-wrap: anywhere;
+}
+
+.jp-BehaviorAudit-evidenceList li {
+  padding: 4px 0;
+}
+
+.jp-BehaviorAudit-reviewForm fieldset {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--jp-border-color2);
+}
+
+.jp-BehaviorAudit-choice {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  overflow-wrap: anywhere;
+}
+
+.jp-BehaviorAudit-reviewForm textarea.jp-BehaviorAudit-input {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.jp-BehaviorAudit-advancedData > .jp-BehaviorAudit-button {
+  margin-top: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .jp-BehaviorAudit-sidebar * {
+    scroll-behavior: auto;
+  }
+}
+
+@media (width <= 640px) {
+  .jp-BehaviorAudit-editor,
+  .jp-BehaviorAudit-firstRun {
+    padding: 16px;
+  }
+
+  .jp-BehaviorAudit-editorHeader {
+    align-items: flex-start;
+  }
+
+  .jp-BehaviorAudit-steps {
+    grid-template-columns: 1fr;
+    margin: 16px auto;
+  }
+
+  .jp-BehaviorAudit-step {
+    text-align: left;
+  }
+
+  .jp-BehaviorAudit-step + .jp-BehaviorAudit-step {
+    border-top: 1px solid var(--jp-border-color2);
+    border-left: 0;
+  }
+
+  .jp-BehaviorAudit-templateGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .jp-BehaviorAudit-dimensionCardHeader {
+    align-items: flex-start;
+  }
+
+  .jp-BehaviorAudit-dimensionCardHeader .jp-BehaviorAudit-button,
+  .jp-BehaviorAudit-dimensionAddActions .jp-BehaviorAudit-button {
+    width: 100%;
+  }
+
+  .jp-BehaviorAudit-summary {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .jp-BehaviorAudit-summary dd + dt {
+    margin-top: 8px;
+  }
+
+  .jp-BehaviorAudit-actions {
+    justify-content: stretch;
+  }
+
+  .jp-BehaviorAudit-inlineActions,
+  .jp-BehaviorAudit-actions-spread {
+    align-items: stretch;
+    justify-content: stretch;
+  }
+
+  .jp-BehaviorAudit-inlineActions .jp-BehaviorAudit-button {
+    flex: 1 1 100%;
+  }
+
+  .jp-BehaviorAudit-actions .jp-BehaviorAudit-button {
+    flex: 1 1 100%;
+  }
+}

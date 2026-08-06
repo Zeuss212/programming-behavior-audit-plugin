@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Dimension analysis result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "dimension_code", "decision"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "dimension_code": {"type": "string", "minLength": 1},
+    "decision": {"$ref": "#/$defs/decision"},
+    "data_quality": {"$ref": "#/$defs/data_quality"},
+    "ai_result": {"$ref": "#/$defs/ai_result"},
+    "review": {"$ref": "#/$defs/review"}
+  },
+  "allOf": [{
+    "if": {"properties": {"decision": {"properties": {"final_evidence_status": {"const": "observed"}}, "required": ["final_evidence_status"]}}, "required": ["decision"]},
+    "then": {"required": ["ai_result"], "properties": {"ai_result": {"type": "object", "properties": {"evidence_claims": {"minItems": 1}}, "required": ["evidence_claims"]}}}
+  }],
+  "$defs": {
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "final_evidence_status", "final_level_code", "display_label", "source"],
+      "properties": {
+        "status": {"enum": ["resolved", "needs_review", "partial", "failed"]},
+        "final_evidence_status": {"enum": ["observed", "not_observed", "insufficient_evidence", "not_computable", null]},
+        "final_level_code": {"enum": ["possible", "clear", null]},
+        "display_label": {"type": "string", "minLength": 1},
+        "source": {"enum": ["llm_evidence", "coverage"]}
+      },
+      "allOf": [
+        {"if": {"properties": {"status": {"const": "resolved"}}, "required": ["status"]}, "then": {"properties": {"final_evidence_status": {"enum": ["observed", "not_observed", "insufficient_evidence", "not_computable"]}}}},
+        {"if": {"properties": {"status": {"enum": ["needs_review", "partial", "failed"]}}, "required": ["status"]}, "then": {"properties": {"final_evidence_status": {"const": null}, "final_level_code": {"const": null}}}},
+        {"if": {"properties": {"status": {"const": "resolved"}, "final_evidence_status": {"const": "observed"}}, "required": ["status", "final_evidence_status"]}, "then": {"properties": {"final_level_code": {"enum": ["possible", "clear"]}}}},
+        {"if": {"properties": {"status": {"const": "resolved"}, "final_evidence_status": {"enum": ["not_observed", "insufficient_evidence", "not_computable"]}}, "required": ["status", "final_evidence_status"]}, "then": {"properties": {"final_level_code": {"const": null}}}}
+      ]
+    },
+    "evidence_claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_id", "criterion_id", "direction", "claim"],
+      "properties": {
+        "event_id": {"type": "string", "minLength": 1},
+        "criterion_id": {"type": "string", "minLength": 1},
+        "direction": {"enum": ["support", "exclude"]},
+        "claim": {"type": "string", "minLength": 1},
+        "occurred_at": {"type": "string", "minLength": 1},
+        "event_type": {"type": "string", "minLength": 1}
+      }
+    },
+    "data_quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["missing_required_signals", "observation_opportunities", "reason_code", "reason"],
+      "properties": {
+        "missing_required_signals": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "observation_opportunities": {"type": "integer", "minimum": 0},
+        "reason_code": {"type": ["string", "null"], "minLength": 1},
+        "reason": {"type": ["string", "null"], "minLength": 1},
+        "status": {"type": "string", "minLength": 1},
+        "missing_optional_signals": {"type": "array", "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "ai_result": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["confidence", "evidence_claims", "explanation"],
+      "properties": {
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "evidence_claims": {"type": "array", "items": {"$ref": "#/$defs/evidence_claim"}},
+        "explanation": {"type": "string", "maxLength": 500}
+      }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["revision", "status"],
+      "properties": {
+        "revision": {"type": "integer", "minimum": 0},
+        "status": {"enum": ["unreviewed", "reviewed"]}
+      }
+    }
+  }
+}

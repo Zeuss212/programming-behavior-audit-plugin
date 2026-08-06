@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "session-log-list-response-v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "request_id", "session_id", "logs"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "request_id": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "session_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "logs": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "prefixItems": [
+        {"allOf": [{"$ref": "#/$defs/log"}, {"properties": {"kind": {"const": "operation"}, "filename": {"const": "operation_log.json"}}}]},
+        {"allOf": [{"$ref": "#/$defs/log"}, {"properties": {"kind": {"const": "process"}, "filename": {"const": "process_log.md"}}}]},
+        {"allOf": [{"$ref": "#/$defs/log"}, {"properties": {"kind": {"const": "analysis"}, "filename": {"const": "analysis_log.json"}}}]}
+      ],
+      "items": false
+    }
+  },
+  "$defs": {
+    "log": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "filename", "label", "description", "status", "media_type", "size_bytes", "generated_at", "error_code"],
+      "properties": {
+        "kind": {"enum": ["operation", "process", "analysis"]},
+        "filename": {"enum": ["operation_log.json", "process_log.md", "analysis_log.json"]},
+        "label": {"type": "string", "minLength": 1, "maxLength": 50},
+        "description": {"type": "string", "minLength": 1, "maxLength": 200},
+        "status": {"enum": ["pending", "generating", "ready", "error"]},
+        "media_type": {"enum": ["application/json; charset=utf-8", "text/markdown; charset=utf-8"]},
+        "size_bytes": {"type": ["integer", "null"], "minimum": 0},
+        "generated_at": {"type": ["string", "null"], "maxLength": 100},
+        "error_code": {"type": ["string", "null"], "minLength": 1, "maxLength": 100}
+      }
+    }
+  }
+}

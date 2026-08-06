@@ -1,0 +1,73 @@
+{
+  "version": "pilot-v1",
+  "active_idle_threshold_ms": 2000,
+  "verification_after_idle_window_ms": 120000,
+  "signals": {
+    "valid_observation_duration_ms": {
+      "unit": "milliseconds",
+      "scope": "session",
+      "missing_value_meaning": "event timestamps cannot be validated",
+      "source_segment_types": ["code_writing", "code_deletion", "code_paste", "idle"]
+    },
+    "edit_event_count": {
+      "unit": "count",
+      "scope": "session",
+      "missing_value_meaning": "edit events cannot be computed",
+      "source_segment_types": ["code_writing", "code_deletion", "code_paste"]
+    },
+    "delete_event_count": {
+      "unit": "count",
+      "scope": "session",
+      "missing_value_meaning": "deletion events cannot be computed",
+      "source_segment_types": ["code_deletion"]
+    },
+    "paste_event_count": {
+      "unit": "count",
+      "scope": "session",
+      "missing_value_meaning": "paste events cannot be computed",
+      "source_segment_types": ["code_paste", "code_writing"]
+    },
+    "run_count": {
+      "unit": "count",
+      "scope": "session",
+      "missing_value_meaning": "execution events cannot be computed",
+      "source_segment_types": ["code_execution"]
+    },
+    "failed_run_count": {
+      "unit": "count",
+      "scope": "session",
+      "missing_value_meaning": "execution outcomes cannot be computed",
+      "source_segment_types": ["code_execution"]
+    },
+    "active_idle_count": {
+      "unit": "count",
+      "scope": "session",
+      "missing_value_meaning": "idle events cannot be computed",
+      "source_segment_types": ["idle"]
+    },
+    "active_idle_total_duration_ms": {
+      "unit": "milliseconds",
+      "scope": "session",
+      "missing_value_meaning": "idle duration cannot be computed",
+      "source_segment_types": ["idle"]
+    },
+    "page_away_duration_ms": {
+      "unit": "milliseconds",
+      "scope": "session",
+      "missing_value_meaning": "page-away duration cannot be computed",
+      "source_segment_types": ["page_away"]
+    },
+    "failure_edit_success_chain_count": {
+      "unit": "count",
+      "scope": "same document and cell",
+      "missing_value_meaning": "execution or edit ordering cannot be computed",
+      "source_segment_types": ["code_execution", "code_writing", "code_deletion", "code_paste"]
+    },
+    "error_type_change_count": {
+      "unit": "count",
+      "scope": "same document and cell",
+      "missing_value_meaning": "execution error types cannot be computed",
+      "source_segment_types": ["code_execution"]
+    }
+  }
+}

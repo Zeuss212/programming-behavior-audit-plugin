@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Assessment knowledge recommendation request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "problem_context", "teacher_focus"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "problem_context": {
+      "$ref": "profile-draft-v2.json#/properties/problem_context"
+    },
+    "teacher_focus": {
+      "type": "array",
+      "maxItems": 10,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1, "maxLength": 80}
+    }
+  }
+}

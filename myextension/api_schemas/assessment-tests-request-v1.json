@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Assessment test generation request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "problem_context", "knowledge_points"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "problem_context": {
+      "$ref": "profile-draft-v2.json#/properties/problem_context"
+    },
+    "knowledge_points": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "description"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^KP_[A-Z0-9]{8}$"},
+          "name": {"type": "string", "minLength": 1, "maxLength": 80},
+          "description": {"type": "string", "maxLength": 500}
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "template_id": "pause-without-validation",
+  "version": 1,
+  "deployment_status": "pilot",
+  "code": "PAUSE_WITHOUT_VALIDATION",
+  "name": "主动停顿后缺少验证",
+  "question": "学生主动停顿后是否缺少及时的运行验证？",
+  "evidence_criteria": [
+    {"id": "support-1", "direction": "support", "statement": "有效观察期间停顿，之后继续编辑但没有及时运行"},
+    {"id": "exclude-1", "direction": "exclude", "statement": "页面离开、程序运行等待或停顿后及时运行不计入"}
+  ],
+  "levels": [
+    {"code": "possible", "name": "可能出现", "definition": "存在相关行为证据，但范围或持续性有限"},
+    {"code": "clear", "name": "明显出现", "definition": "在多个有效阶段持续出现相关行为"}
+  ],
+  "teaching_actions": {
+    "possible": "结合停顿后的编辑证据询问学生当时的判断",
+    "clear": "安排短练习，提醒学生停顿思考后及时运行验证"
+  },
+  "analysis_config": {
+    "mode": "llm_evidence",
+    "minimum_observation": {"valid_observation_duration_ms": 60000, "edit_event_count": 2}
+  },
+  "examples": [
+    {"kind": "positive", "summary": "有效停顿后学生继续编辑，但没有及时运行验证。"},
+    {"kind": "negative", "summary": "停顿来自程序运行等待，或停顿后学生立即运行验证。"}
+  ]
+}

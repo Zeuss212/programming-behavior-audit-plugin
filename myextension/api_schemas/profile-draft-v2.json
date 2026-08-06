@@ -1,0 +1,265 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Assessment profile draft v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "problem_id",
+    "title",
+    "problem_context",
+    "knowledge_points",
+    "assessment_tests",
+    "confirmations",
+    "dimensions"
+  ],
+  "properties": {
+    "schema_version": {"const": 2},
+    "problem_id": {"type": "string", "minLength": 1, "maxLength": 200},
+    "title": {"type": "string", "minLength": 1, "maxLength": 200},
+    "problem_context": {"$ref": "#/$defs/problem_context"},
+    "knowledge_points": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 10,
+      "items": {"$ref": "#/$defs/knowledge_point"}
+    },
+    "assessment_tests": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 30,
+      "items": {"$ref": "#/$defs/assessment_test"}
+    },
+    "confirmations": {"$ref": "#/$defs/confirmations"},
+    "dimensions": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 10,
+      "items": {"$ref": "#/$defs/dimension"}
+    }
+  },
+  "$defs": {
+    "problem_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["statement", "language", "submission_contract"],
+      "properties": {
+        "statement": {"type": "string", "minLength": 1, "maxLength": 10000},
+        "language": {"const": "python"},
+        "submission_contract": {"$ref": "#/$defs/submission_contract"}
+      }
+    },
+    "submission_contract": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "entrypoint"],
+          "properties": {
+            "kind": {"const": "function"},
+            "entrypoint": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,99}$"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {"kind": {"const": "stdin_stdout"}}
+        }
+      ]
+    },
+    "knowledge_point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "description", "source", "order"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^KP_[A-Z0-9]{8}$"},
+        "name": {"type": "string", "minLength": 1, "maxLength": 80},
+        "description": {"type": "string", "maxLength": 500},
+        "source": {"enum": ["teacher", "ai_suggestion"]},
+        "order": {"type": "integer", "minimum": 0, "maximum": 9}
+      }
+    },
+    "assessment_test": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "knowledge_point_ids",
+        "kind",
+        "input",
+        "expected",
+        "enabled",
+        "source",
+        "order"
+      ],
+      "properties": {
+        "id": {"type": "string", "pattern": "^TEST_[A-Z0-9]{8}$"},
+        "name": {"type": "string", "minLength": 1, "maxLength": 120},
+        "knowledge_point_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10,
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^KP_[A-Z0-9]{8}$"}
+        },
+        "kind": {"enum": ["function_call", "stdin_stdout"]},
+        "input": {"type": "string", "maxLength": 4000},
+        "expected": {"type": "string", "maxLength": 4000},
+        "enabled": {"type": "boolean"},
+        "source": {"enum": ["teacher", "ai_suggestion"]},
+        "order": {"type": "integer", "minimum": 0, "maximum": 29}
+      }
+    },
+    "confirmations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["knowledge_points_hash", "tests_hash"],
+      "properties": {
+        "knowledge_points_hash": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "tests_hash": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "dimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "knowledge_point_id",
+        "name",
+        "question",
+        "evidence_criteria",
+        "levels",
+        "analysis_config"
+      ],
+      "properties": {
+        "knowledge_point_id": {
+          "type": "string",
+          "pattern": "^KP_[A-Z0-9]{8}$"
+        },
+        "code": {
+          "type": "string",
+          "pattern": "^(?:CUSTOM_[A-Z0-9]{8}|(?!CUSTOM_)[A-Z][A-Z0-9_]*)$"
+        },
+        "name": {"type": "string", "minLength": 1, "maxLength": 50},
+        "question": {"type": "string", "minLength": 1, "maxLength": 200},
+        "no_known_exclusion": {"type": "boolean"},
+        "evidence_criteria": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/evidence_criterion"},
+          "allOf": [
+            {
+              "contains": {
+                "properties": {"direction": {"const": "support"}},
+                "required": ["direction"]
+              }
+            }
+          ]
+        },
+        "levels": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/level"},
+          "allOf": [
+            {
+              "contains": {
+                "properties": {"code": {"const": "possible"}},
+                "required": ["code"]
+              }
+            },
+            {
+              "contains": {
+                "properties": {"code": {"const": "clear"}},
+                "required": ["code"]
+              }
+            }
+          ]
+        },
+        "teaching_actions": {"$ref": "#/$defs/teaching_actions"},
+        "analysis_config": {"$ref": "#/$defs/analysis_config"}
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"no_known_exclusion": {"const": true}},
+            "required": ["no_known_exclusion"]
+          },
+          "else": {
+            "properties": {
+              "evidence_criteria": {
+                "contains": {
+                  "properties": {"direction": {"const": "exclude"}},
+                  "required": ["direction"]
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "evidence_criterion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "direction", "statement"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 100},
+        "direction": {"enum": ["support", "exclude"]},
+        "statement": {"type": "string", "minLength": 1, "maxLength": 500}
+      }
+    },
+    "level": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "name", "definition"],
+      "properties": {
+        "code": {"enum": ["possible", "clear"]},
+        "name": {"type": "string", "minLength": 1},
+        "definition": {"type": "string", "minLength": 1}
+      }
+    },
+    "teaching_actions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["possible", "clear"],
+      "properties": {
+        "possible": {"type": "string", "minLength": 1, "maxLength": 500},
+        "clear": {"type": "string", "minLength": 1, "maxLength": 500},
+        "not_observed": {"type": "string", "minLength": 1, "maxLength": 500}
+      }
+    },
+    "analysis_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": {"const": "llm_evidence"},
+        "minimum_observation": {"$ref": "#/$defs/minimum_observation"}
+      }
+    },
+    "minimum_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "valid_observation_duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "edit_event_count": {"type": "integer", "minimum": 0},
+        "run_count": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

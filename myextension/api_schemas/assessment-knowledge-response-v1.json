@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Assessment knowledge recommendation response v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["knowledge_points"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "request_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "knowledge_points": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "description",
+          "evidence_question",
+          "support_statement",
+          "exclusion_statement",
+          "source",
+          "order"
+        ],
+        "properties": {
+          "id": {"type": "string", "pattern": "^KP_[A-Z0-9]{8}$"},
+          "name": {"type": "string", "minLength": 1, "maxLength": 80},
+          "description": {"type": "string", "minLength": 1, "maxLength": 500},
+          "evidence_question": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "support_statement": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "exclusion_statement": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "source": {"const": "ai_suggestion"},
+          "order": {"type": "integer", "minimum": 0, "maximum": 5}
+        }
+      }
+    }
+  }
+}

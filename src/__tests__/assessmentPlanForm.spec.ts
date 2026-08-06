@@ -129,7 +129,41 @@ describe('assessment plan pure state', () => {
       id: 'KP_B1C2D3E4',
       name: '平均值计算',
       source: 'ai_suggestion',
-      order: 1
+      order: 1,
+      evidenceQuestion: '是否正确完成平均值计算？',
+      supportStatement: '使用多个样例验证平均值。',
+      exclusionStatement: '固定输出单个结果不计入。'
+    });
+  });
+
+  it('fills invalid AI evidence fields with deterministic defaults', async () => {
+    const runtimeSuggestion = {
+      id: 'KP_B1C2D3E4',
+      name: '空序列处理',
+      description: '先判断列表是否为空。',
+      evidence_question: '   ',
+      support_statement: undefined,
+      exclusion_statement: 7,
+      source: 'ai_suggestion',
+      order: 0
+    } as unknown as Parameters<typeof mergeKnowledgeSuggestions>[1][number];
+
+    const merged = mergeKnowledgeSuggestions(baseState(), [runtimeSuggestion]);
+
+    expect(merged.knowledgePoints[0]).toMatchObject({
+      evidenceQuestion:
+        '学生是否通过代码、运行和修改过程正确应用“空序列处理”？',
+      supportStatement: '代码与验证过程显示学生正确应用了“空序列处理”。',
+      exclusionStatement:
+        '只出现一次偶然正确输出，或缺少与“空序列处理”相关的验证，不计入。'
+    });
+    expect(validateAssessmentPlanState(merged)).not.toHaveProperty(
+      'knowledgePoints'
+    );
+    await expect(confirmKnowledgePoints(merged, subtle)).resolves.toMatchObject({
+      confirmations: {
+        knowledge_points_hash: expect.stringMatching(/^[0-9a-f]{64}$/)
+      }
     });
   });
 
@@ -292,7 +326,7 @@ describe('assessment plan pure state', () => {
       evidenceQuestion: ''
     });
     expect(validateAssessmentPlanState(incompletePoint)).toMatchObject({
-      knowledgePoints: '请补全每个知识点的名称和观察依据'
+      knowledgePoints: '知识点 1 缺少：过程观察问题'
     });
     await expect(
       confirmKnowledgePoints(incompletePoint, subtle)
@@ -311,6 +345,17 @@ describe('assessment plan pure state', () => {
     await expect(
       confirmAssessmentTests(confirmedKnowledge, subtle)
     ).rejects.toThrow('请先补全并修正测试');
+  });
+
+  it('reports exact missing fields for the first incomplete point', () => {
+    const incomplete = updateKnowledgePoint(withPoint(), 'KP_A1B2C3D4', {
+      supportStatement: ' ',
+      exclusionStatement: ''
+    });
+
+    expect(validateAssessmentPlanState(incomplete)).toMatchObject({
+      knowledgePoints: '知识点 1 缺少：支持表现、排除情况'
+    });
   });
 
   it('publishes only after current points and complete enabled tests are confirmed', async () => {

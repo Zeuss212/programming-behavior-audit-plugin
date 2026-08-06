@@ -127,6 +127,36 @@ function defaultEvidence(name: string): {
   };
 }
 
+export type KnowledgePointRequiredField =
+  | 'name'
+  | 'evidenceQuestion'
+  | 'supportStatement'
+  | 'exclusionStatement';
+
+export const KNOWLEDGE_POINT_REQUIRED_FIELD_LABELS: Record<
+  KnowledgePointRequiredField,
+  string
+> = {
+  name: '知识点名称',
+  evidenceQuestion: '过程观察问题',
+  supportStatement: '支持表现',
+  exclusionStatement: '排除情况'
+};
+
+export function missingKnowledgePointFields(
+  point: IAssessmentKnowledgePointEditor
+): KnowledgePointRequiredField[] {
+  return (
+    Object.keys(
+      KNOWLEDGE_POINT_REQUIRED_FIELD_LABELS
+    ) as KnowledgePointRequiredField[]
+  ).filter(field => !point[field].trim());
+}
+
+function normalizedSuggestionText(value: unknown, fallback: string): string {
+  return typeof value === 'string' && value.trim() ? value.trim() : fallback;
+}
+
 export function createAssessmentPlanState(): IAssessmentPlanState {
   return {
     title: '',
@@ -234,15 +264,25 @@ export function mergeKnowledgeSuggestions(
     }
     usedNames.add(normalizedName);
     usedIds.add(suggestion.id);
+    const evidence = defaultEvidence(name);
     added.push({
       id: suggestion.id,
       name,
       description: suggestion.description.trim(),
       source: 'ai_suggestion',
       order: 0,
-      evidenceQuestion: suggestion.evidence_question.trim(),
-      supportStatement: suggestion.support_statement.trim(),
-      exclusionStatement: suggestion.exclusion_statement.trim()
+      evidenceQuestion: normalizedSuggestionText(
+        suggestion.evidence_question,
+        evidence.evidenceQuestion
+      ),
+      supportStatement: normalizedSuggestionText(
+        suggestion.support_statement,
+        evidence.supportStatement
+      ),
+      exclusionStatement: normalizedSuggestionText(
+        suggestion.exclusion_statement,
+        evidence.exclusionStatement
+      )
     });
   }
   if (added.length === 0) return state;
@@ -469,18 +509,16 @@ export function validateAssessmentPlanState(
   ) {
     errors.entrypoint = '请输入学生需要实现的函数名';
   }
+  const incompletePointIndex = state.knowledgePoints.findIndex(
+    point => missingKnowledgePointFields(point).length > 0
+  );
   if (state.knowledgePoints.length === 0) {
     errors.knowledgePoints = '请至少确认一个知识点';
-  } else if (
-    state.knowledgePoints.some(
-      point =>
-        !point.name.trim() ||
-        !point.evidenceQuestion.trim() ||
-        !point.supportStatement.trim() ||
-        !point.exclusionStatement.trim()
-    )
-  ) {
-    errors.knowledgePoints = '请补全每个知识点的名称和观察依据';
+  } else if (incompletePointIndex >= 0) {
+    const labels = missingKnowledgePointFields(
+      state.knowledgePoints[incompletePointIndex]
+    ).map(field => KNOWLEDGE_POINT_REQUIRED_FIELD_LABELS[field]);
+    errors.knowledgePoints = `知识点 ${incompletePointIndex + 1} 缺少：${labels.join('、')}`;
   }
   if (
     state.assessmentTests.some(

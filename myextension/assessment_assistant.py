@@ -28,6 +28,8 @@ Python 标识符、输入、预期输出和必要技术术语可以保留原文�
 stdin_stdout。字段值是文本表示，不是可执行测试脚本。每个知识点至少覆盖一次。
 不得包含密钥、路径、学生身份、分数或 JSON 以外的说明文字。"""
 
+ASSESSMENT_ASSIST_TOKEN_BUDGETS: tuple[int, int] = (2048, 4096)
+
 
 class AssessmentAssistantOutputError(ValueError):
     """The provider returned data outside the closed authoring contract."""
@@ -96,6 +98,9 @@ def _payload_from_chat(
             system_prompt=system_prompt,
             user_payload=user_payload,
             client=client,
+            token_budgets=ASSESSMENT_ASSIST_TOKEN_BUDGETS,
+            thinking_mode="disabled",
+            json_mode=True,
         ).payload
     except AssessmentAssistantOutputError:
         raise

@@ -167,6 +167,10 @@ class _RecordingRetryingClient:
         self._wait = wait
         self._clock = clock
         self._deadline = clock() + total_timeout_sec
+        self._max_calls = max(
+            1,
+            math.ceil(total_timeout_sec / PROVIDER_CALL_TIMEOUT_SEC),
+        )
         self.responses: list[dict[str, object]] = []
 
     @staticmethod
@@ -189,7 +193,7 @@ class _RecordingRetryingClient:
         self,
         request_body: Mapping[str, object],
     ) -> Mapping[str, object]:
-        for call_index in range(2):
+        for call_index in range(self._max_calls):
             remaining = self._deadline - self._clock()
             if remaining <= 0:
                 raise LlmTransportError("analysis_deadline_exceeded")
@@ -210,9 +214,18 @@ class _RecordingRetryingClient:
                 self.responses.append(normalized)
                 return normalized
             except LlmTransportError as error:
-                if call_index == 1 or not self._retryable(error):
+                if (
+                    call_index + 1 >= self._max_calls
+                    or not self._retryable(error)
+                ):
                     raise
                 remaining = self._deadline - self._clock()
+                if remaining <= 0:
+                    raise LlmTransportError(
+                        "analysis_deadline_exceeded"
+                    ) from error
+                if error.error_code == "provider_timeout":
+                    continue
                 if remaining <= 2.0:
                     raise LlmTransportError(
                         "analysis_deadline_exceeded"

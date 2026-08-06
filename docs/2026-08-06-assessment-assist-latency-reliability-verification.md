@@ -126,7 +126,7 @@ synthetic_provider_ok calls=1 tests=5 elapsed_sec=6.356
 - wheel：`myextension-0.2.1-py3-none-any.whl`，SHA-256 为
   `047367eb210819eddd7850f29324a05df7172278b289ec9d7cbb411cdc1e7e29`；
 - ZIP：`myextension-0.2.1-BLUEDOT-完整交付包-20260806-analysis-retry-fix.zip`；
-- ZIP SHA-256：`4934832221686e094541bc53dc89b4c3e5c9bbe1c9a172cadced69a77ec7c230`；
+- ZIP SHA-256：`e1fffc768af41a1ba7fc379a1ecf94deeaccf2608ce88c638b54ee6809d711ea`；
 - ZIP 完整性测试与 `.zip.sha256` 校验均通过；
 - 两个交付目录各自在正确工作目录执行 `shasum -a 256 -c SHA256SUMS`，
   wheel 均显示 `OK`；四个镜像构建/验证脚本均通过 `sh -n`。

@@ -2235,7 +2235,7 @@ async def test_complete_three_dimension_pilot_flow_is_exact_and_review_is_additi
     }
 
     def provider(_request, *, timeout_sec):
-        assert timeout_sec == 90
+        assert timeout_sec == 60
         return {
             "model": "synthetic-three-dimension-model",
             "id": "synthetic-provider-request",

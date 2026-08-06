@@ -14,7 +14,10 @@ PACKAGE_JSON = Path(__file__).resolve().parents[2] / "package.json"
 PACKAGE_VERSION = json.loads(PACKAGE_JSON.read_text(encoding="utf-8"))["version"]
 DELIVERY_WHEEL = (
     Path(__file__).resolve().parents[2]
-    / "dist"
+    / "deploy"
+    / "bluedot"
+    / f"release-{PACKAGE_VERSION}"
+    / "artifacts"
     / f"myextension-{PACKAGE_VERSION}-py3-none-any.whl"
 )
 

@@ -416,6 +416,7 @@ export class BehaviorAnalysisSidebar extends Widget {
     this.title.icon = inspectorIcon;
     this.title.label = '行为分析';
     this.title.caption = '编程行为分析';
+    this.title.className = 'jp-BehaviorAudit-sidebarTab';
     this.upload = deps.capture.snapshot();
     this.currentSessionId = this.upload.sessionId;
     this.unsubscribe = deps.capture.subscribe(snapshot => {

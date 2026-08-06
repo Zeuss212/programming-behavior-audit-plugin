@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { ServerConnection } from '@jupyterlab/services';
 
 import { IBehaviorCaptureController } from '../behaviorCapture';
@@ -891,14 +893,56 @@ describe('BehaviorAnalysisSidebar', () => {
     sidebar.dispose();
   });
 
-  it('uses a real JupyterLab icon so the activity bar does not render vertical text', () => {
+  it('keeps the activity-bar icon and upright label metadata', () => {
     const sidebar = new BehaviorAnalysisSidebar(
       dependencies(createCapture(), [])
     );
 
     expect(sidebar.title.icon).toBeDefined();
+    expect(sidebar.title.label).toBe('行为分析');
     expect(sidebar.title.caption).toBe('编程行为分析');
+    expect(sidebar.title.className.split(/\s+/)).toContain(
+      'jp-BehaviorAudit-sidebarTab'
+    );
     sidebar.dispose();
+  });
+
+  it('keeps this left Chinese tab upright without changing other tabs', () => {
+    const style = document.createElement('style');
+    style.textContent = `
+      .jp-SideBar.lm-TabBar[data-orientation='vertical'] .lm-TabBar-tabLabel {
+        writing-mode: vertical-rl;
+      }
+      .jp-SideBar.lm-TabBar.jp-mod-left .lm-TabBar-tabLabel {
+        transform: rotate(180deg);
+      }
+      ${readFileSync('style/base.css', 'utf8')}
+    `;
+    const sideBar = document.createElement('div');
+    sideBar.className = 'jp-SideBar lm-TabBar jp-mod-left';
+    sideBar.dataset.orientation = 'vertical';
+    const pluginTab = document.createElement('div');
+    pluginTab.className = 'lm-TabBar-tab jp-BehaviorAudit-sidebarTab';
+    const pluginLabel = document.createElement('div');
+    pluginLabel.className = 'lm-TabBar-tabLabel';
+    const otherTab = document.createElement('div');
+    otherTab.className = 'lm-TabBar-tab';
+    const otherLabel = document.createElement('div');
+    otherLabel.className = 'lm-TabBar-tabLabel';
+    pluginTab.appendChild(pluginLabel);
+    otherTab.appendChild(otherLabel);
+    sideBar.append(pluginTab, otherTab);
+    document.head.appendChild(style);
+    document.body.appendChild(sideBar);
+
+    expect(
+      getComputedStyle(pluginLabel).getPropertyValue('text-orientation')
+    ).toBe('upright');
+    expect(getComputedStyle(pluginLabel).transform).toBe('none');
+    expect(getComputedStyle(otherLabel).transform).toBe('rotate(180deg)');
+
+    sideBar.remove();
+    style.remove();
   });
 
   it('wraps browser timers so dependency method calls do not rebind them', () => {

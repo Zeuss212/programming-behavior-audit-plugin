@@ -787,8 +787,10 @@ Run:
   deploy/bluedot/release-0.2.1/artifacts/myextension-0.2.1-py3-none-any.whl
 .venv/bin/python -m json.tool \
   myextension-0.2.1-BLUEDOT-完整交付包/MANIFEST.json
-shasum -a 256 -c deploy/bluedot/release-0.2.1/SHA256SUMS
-shasum -a 256 -c myextension-0.2.1-BLUEDOT-完整交付包/SHA256SUMS
+# workdir: deploy/bluedot/release-0.2.1
+shasum -a 256 -c SHA256SUMS
+# workdir: myextension-0.2.1-BLUEDOT-完整交付包
+shasum -a 256 -c SHA256SUMS
 cmp \
   deploy/bluedot/release-0.2.1/artifacts/myextension-0.2.1-py3-none-any.whl \
   myextension-0.2.1-BLUEDOT-完整交付包/artifacts/myextension-0.2.1-py3-none-any.whl
@@ -1043,8 +1045,10 @@ git diff --check
 .venv/bin/jlpm eslint:check
 .venv/bin/jlpm build:lib:prod
 .venv/bin/jupyter-builder build .
-shasum -a 256 -c deploy/bluedot/release-0.2.1/SHA256SUMS
-shasum -a 256 -c myextension-0.2.1-BLUEDOT-完整交付包/SHA256SUMS
+# workdir: deploy/bluedot/release-0.2.1
+shasum -a 256 -c SHA256SUMS
+# workdir: myextension-0.2.1-BLUEDOT-完整交付包
+shasum -a 256 -c SHA256SUMS
 shasum -a 256 -c \
   myextension-0.2.1-BLUEDOT-完整交付包-20260806-assessment-assist-fix.zip.sha256
 git status --short

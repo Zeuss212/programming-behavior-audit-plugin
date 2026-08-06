@@ -35,6 +35,8 @@ REQUIRED_TASK_12_MARKERS = (
     "分析详情",
     "教师复核",
     "jp-BehaviorAudit-sidebarTab",
+    "ai_provider_timeout",
+    "ai_response_invalid",
 )
 
 FORBIDDEN_STALE_OR_PRIVATE_MARKERS = (

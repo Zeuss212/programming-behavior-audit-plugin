@@ -1,6 +1,6 @@
 # myextension 0.2.1 BLUEDOT 镜像交付包
 
-本目录是同时包含“分析慢、偶发失败”可靠性修复和 2026-08-06 界面热修复的最新独立交付包。界面热修复确保采用 AI 建议后隐藏观察字段可完整确认，并让左侧“行为分析”标签正向直立显示。它安装 JupyterLab 4 的 prebuilt 前端扩展和 Jupyter Server 2 后端扩展，不需要在目标镜像中安装 Node.js，也不会修改基础镜像原有的 `ENTRYPOINT` 或 `CMD`。
+本目录是同时包含完整会话分析可靠性修复、2026-08-06 界面热修复和测试建议延迟修复的最新独立交付包。界面热修复确保采用 AI 建议后隐藏观察字段可完整确认，并让左侧“行为分析”标签正向直立显示；建议修复关闭作者辅助请求的不必要深度思考，避免约 60 秒后失败。它安装 JupyterLab 4 的 prebuilt 前端扩展和 Jupyter Server 2 后端扩展，不需要在目标镜像中安装 Node.js，也不会修改基础镜像原有的 `ENTRYPOINT` 或 `CMD`。
 
 本包只提供文件和管理员执行步骤；没有登录镜像仓库、没有推送镜像、没有调用真实 AI，也没有修改 BLUEDOT 工作台。
 
@@ -19,7 +19,7 @@
 插件版本保持 `0.2.1`，本次新 wheel 通过所在目录和 SHA-256 与旧 `dist/` wheel 区分：
 
 ```text
-c7bffe0ad1528715b9bdd371965d0bc52d762429c31e2f3664d3136a60547386  artifacts/myextension-0.2.1-py3-none-any.whl
+2461f4e24e3a1914b6471e8444d92de5719b83ad41b1df389ae18e627a20a3f2  artifacts/myextension-0.2.1-py3-none-any.whl
 ```
 
 ## 2. 基础镜像要求
@@ -153,6 +153,13 @@ docker image inspect "$TARGET_IMAGE" --format '{{json .RepoDigests}}'
 
 ## 9. 0.2.1 最新运行配置逻辑
 
+### 知识点和测试建议请求
+
+- 作者辅助请求内部固定使用 `2048 → 4096` 输出预算、关闭深度思考并要求 JSON 对象；
+- 只有第一次响应因长度截断时才使用 4096 恢复一次；
+- 完整会话分析继续使用下节的独立预算，不会被缩短；
+- 本项修复不需要新环境变量，也不更换当前 `glm-5-2-260617` 模型。
+
 ### 分析时间预算
 
 ```text
@@ -220,6 +227,7 @@ python -m jupyter lab
 | 错误码 | 含义与处理 |
 | --- | --- |
 | `ai_analysis_timeout` | 整体预算或 Provider 请求超时；先重试，再检查延迟并考虑将预算调到 180 秒。 |
+| `ai_provider_timeout` | 作者辅助 Provider 请求超过 60 秒；当前草稿已保留，可重试或手工继续。 |
 | `ai_provider_network_error` | 检查网络、DNS、TLS、代理和出口策略。 |
 | `ai_provider_rate_limited` | 检查额度、QPS 和并发限制，稍后重试。 |
 | `ai_provider_auth_failed` | 检查 Secret 是否注入、API Key 是否有效、模型权限是否开放。 |

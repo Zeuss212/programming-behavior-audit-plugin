@@ -8,9 +8,10 @@ import socket
 import stat
 import urllib.error
 import urllib.request
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlsplit
 
 from .behavior_log_store import LOG_DIR_ENV_VAR, resolve_log_root
@@ -84,6 +85,7 @@ class LlmTransportResult:
 
 
 JsonClient = Callable[[Mapping[str, object]], Mapping[str, object]]
+ThinkingMode = Literal["enabled", "disabled", "auto"]
 
 
 def analysis_timeout_sec() -> int:
@@ -244,9 +246,24 @@ def chat_json(
     system_prompt: str,
     user_payload: Mapping[str, object],
     client: JsonClient | None = None,
+    token_budgets: Sequence[int] = STRUCTURED_OUTPUT_TOKEN_BUDGETS,
+    thinking_mode: ThinkingMode | None = None,
+    json_mode: bool = False,
 ) -> LlmTransportResult:
     """Send a bounded deterministic JSON chat request and parse JSON."""
 
+    budgets = tuple(token_budgets)
+    if not budgets or any(
+        not isinstance(value, int)
+        or isinstance(value, bool)
+        or value <= 0
+        for value in budgets
+    ):
+        raise ValueError("token_budgets must contain positive integers")
+    if thinking_mode not in {None, "enabled", "disabled", "auto"}:
+        raise ValueError("thinking_mode is invalid")
+    if not isinstance(json_mode, bool):
+        raise ValueError("json_mode must be boolean")
     if client is None:
         load_ai_config()
     model_name = os.environ.get(ARK_MODEL_ENV_VAR, DEFAULT_ARK_MODEL)
@@ -263,13 +280,17 @@ def chat_json(
         },
     ]
     raw: Mapping[str, object] | None = None
-    for max_tokens in STRUCTURED_OUTPUT_TOKEN_BUDGETS:
+    for max_tokens in budgets:
         request_body: dict[str, object] = {
             "model": model_name,
             "messages": messages,
             "temperature": 0,
             "max_tokens": max_tokens,
         }
+        if thinking_mode is not None:
+            request_body["thinking"] = {"type": thinking_mode}
+        if json_mode:
+            request_body["response_format"] = {"type": "json_object"}
         if client is not None:
             candidate = client(request_body)
             if not isinstance(candidate, Mapping):

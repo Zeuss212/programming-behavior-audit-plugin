@@ -769,6 +769,67 @@ def truncated_provider_response() -> dict[str, object]:
     }
 
 
+def test_transport_supports_bounded_authoring_json_requests():
+    requests: list[dict[str, object]] = []
+
+    def client(request):
+        requests.append(dict(request))
+        return {"assessment_tests": []}
+
+    response = chat_json(
+        system_prompt="synthetic system",
+        user_payload={"synthetic": True},
+        client=client,
+        token_budgets=(2048, 4096),
+        thinking_mode="disabled",
+        json_mode=True,
+    )
+
+    assert response.payload == {"assessment_tests": []}
+    assert len(requests) == 1
+    assert requests[0]["max_tokens"] == 2048
+    assert requests[0]["thinking"] == {"type": "disabled"}
+    assert requests[0]["response_format"] == {"type": "json_object"}
+
+
+def test_transport_defaults_do_not_enable_authoring_only_fields():
+    requests: list[dict[str, object]] = []
+
+    def client(request):
+        requests.append(dict(request))
+        return {"dimensions": []}
+
+    chat_json(
+        system_prompt="synthetic system",
+        user_payload={"synthetic": True},
+        client=client,
+    )
+
+    assert requests[0]["max_tokens"] == 8192
+    assert "thinking" not in requests[0]
+    assert "response_format" not in requests[0]
+
+
+@pytest.mark.parametrize(
+    ("options", "message"),
+    [
+        ({"token_budgets": ()}, "token_budgets"),
+        ({"token_budgets": (0,)}, "token_budgets"),
+        ({"token_budgets": (True,)}, "token_budgets"),
+        ({"thinking_mode": "unknown"}, "thinking_mode"),
+        ({"json_mode": 1}, "json_mode"),
+    ],
+)
+def test_transport_rejects_invalid_request_controls(options, message):
+    with pytest.raises(ValueError, match=message):
+        chat_json(
+            system_prompt="synthetic system",
+            user_payload={"synthetic": True},
+            client=lambda _request: {"dimensions": []},
+            **options,
+        )
+
+
 def test_transport_retries_one_length_truncation_with_larger_budget():
     requests: list[dict[str, object]] = []
 

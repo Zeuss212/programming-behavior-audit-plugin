@@ -5,7 +5,7 @@
   "purpose": "BLUEDOT JupyterLab 4 image delivery",
   "artifact": {
     "path": "artifacts/myextension-0.2.1-py3-none-any.whl",
-    "sha256": "2461f4e24e3a1914b6471e8444d92de5719b83ad41b1df389ae18e627a20a3f2"
+    "sha256": "047367eb210819eddd7850f29324a05df7172278b289ec9d7cbb411cdc1e7e29"
   },
   "source": {
     "fixed_delivery_commit": "2a3dc75",
@@ -22,22 +22,24 @@
     "analysis_retry_frontend_commit": "5a14c49"
   },
   "validated": {
-    "backend": "668 passed",
-    "frontend": "20 suites, 300 passed",
+    "backend": "673 passed",
+    "frontend": "20 suites, 302 passed",
     "lint": "stylelint, Prettier, and ESLint passed",
     "production_build": "TypeScript and JupyterLab prebuilt build passed",
     "wheel_structure": "passed",
     "wheel_zip_integrity": "passed",
-    "isolated_install": "myextension 0.2.1 imported from a private target; labextension enabled and OK",
-    "labextension_artifact": "1 passed, remoteEntry.cb43c0aff88bc38a.js matches the wheel",
+    "isolated_install": "myextension 0.2.1 imported from /private/tmp/myextension-analysis-retry.bXxaIn/site; labextension enabled and OK",
+    "labextension_artifact": "artifact and release 9 passed; remoteEntry.80d52557487e4002.js matches the wheel",
+    "analysis_retry_unit": "164 passed; 60/120/180 second budgets limit calls to 1/2/3",
     "synthetic_provider_acceptance": "one synthetic call, 5 closed tests, 6.356 seconds; no actual draft or student data",
-    "fresh_wheel_preview": "HTTP 200; profile count 0 before browser use; remoteEntry.cb43c0aff88bc38a.js; 行为分析 vertical-rl, upright, transform none",
+    "assessment_fix_preview": "HTTP 200 before the final retry fix; profile count 0; remoteEntry.cb43c0aff88bc38a.js; 行为分析 vertical-rl, upright, transform none",
     "release_script_tests": "8 passed"
   },
   "not_validated": [
     "Docker image build and run because the local Docker daemon was unavailable",
     "Real BLUEDOT base image, registry push, framework registration, and workspace acceptance",
     "Automatic third-call recovery against a real Provider after this fix",
+    "Fresh browser preview of the final auto-retry wheel because active user test sessions were preserved",
     "Real course content, actual draft, or student data with an AI provider"
   ],
   "entrypoints": {

@@ -124,21 +124,22 @@ AI 结论只能作为辅助教学判断，教师复核单独追加保存。真�
 
 知识点和测试建议属于短时作者辅助请求，内部固定使用 `2048 → 4096` 的结构化
 输出预算、关闭深度思考，并要求 JSON 对象。只有第一次响应因长度截断时才使用
-4096 再恢复一次。会话停止后的完整行为分析仍使用原有 `8192 → 16384` 预算和
-120 秒总时限，不受本项优化影响，也不需要新增环境变量或更换当前模型。
+4096 再恢复一次。会话停止后的完整行为分析继续使用 `8192 → 16384` 预算，
+单次 Provider 调用最多 60 秒；默认 180 秒总预算内最多调用三次。Provider 超时
+后立即重试，网络错误、429 和 5xx 在重试前短暂等待；不需要更换当前模型。
 
 建议生成失败时，页面保留当前草稿并允许手工继续。按页面稳定错误码排查：
 
-| 错误码 | 建议操作 |
-| --- | --- |
-| `ai_provider_timeout` | 请求超过 60 秒；重试一次，仍失败时检查模型延迟。 |
-| `ai_provider_network_error` | 检查网络、DNS、TLS、代理和出口策略。 |
-| `ai_provider_auth_failed` | 检查 API Key、模型权限和 Secret 注入。 |
-| `ai_provider_rate_limited` | 稍后重试，并检查额度、QPS 和并发限制。 |
-| `ai_provider_request_rejected` | 检查 Base URL、模型名和 Provider 参数兼容性。 |
-| `ai_provider_unavailable` | Provider 返回 5xx；稍后重试并查看其服务状态。 |
-| `ai_response_truncated` | 减少知识点数量或描述长度后重试。 |
-| `ai_response_invalid` | 检查模型是否支持结构化 JSON 对象输出。 |
+| 错误码                         | 建议操作                                         |
+| ------------------------------ | ------------------------------------------------ |
+| `ai_provider_timeout`          | 请求超过 60 秒；重试一次，仍失败时检查模型延迟。 |
+| `ai_provider_network_error`    | 检查网络、DNS、TLS、代理和出口策略。             |
+| `ai_provider_auth_failed`      | 检查 API Key、模型权限和 Secret 注入。           |
+| `ai_provider_rate_limited`     | 稍后重试，并检查额度、QPS 和并发限制。           |
+| `ai_provider_request_rejected` | 检查 Base URL、模型名和 Provider 参数兼容性。    |
+| `ai_provider_unavailable`      | Provider 返回 5xx；稍后重试并查看其服务状态。    |
+| `ai_response_truncated`        | 减少知识点数量或描述长度后重试。                 |
+| `ai_response_invalid`          | 检查模型是否支持结构化 JSON 对象输出。           |
 
 页面不会显示 Provider 原始响应；排查时也不要复制 API Key、真实题目、学生代码
 或完整请求/响应正文。

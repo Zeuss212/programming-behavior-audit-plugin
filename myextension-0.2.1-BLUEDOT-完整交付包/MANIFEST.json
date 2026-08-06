@@ -15,7 +15,11 @@
     "ui_hotfix_source_commit": "e4ae0b5",
     "assessment_assist_design_commit": "05628ef",
     "assessment_assist_plan_commit": "439005a",
-    "assessment_assist_source_commit": "4180d2e"
+    "assessment_assist_source_commit": "4180d2e",
+    "analysis_retry_design_commit": "4dad09d",
+    "analysis_retry_plan_commit": "7d81685",
+    "analysis_retry_backend_commit": "b3a178a",
+    "analysis_retry_frontend_commit": "5a14c49"
   },
   "validated": {
     "backend": "668 passed",
@@ -26,13 +30,14 @@
     "wheel_zip_integrity": "passed",
     "isolated_install": "myextension 0.2.1 imported from a private target; labextension enabled and OK",
     "labextension_artifact": "1 passed, remoteEntry.cb43c0aff88bc38a.js matches the wheel",
+    "synthetic_provider_acceptance": "one synthetic call, 5 closed tests, 6.356 seconds; no actual draft or student data",
+    "fresh_wheel_preview": "HTTP 200; profile count 0 before browser use; remoteEntry.cb43c0aff88bc38a.js; 行为分析 vertical-rl, upright, transform none",
     "release_script_tests": "8 passed"
   },
   "not_validated": [
     "Docker image build and run because the local Docker daemon was unavailable",
     "Real BLUEDOT base image, registry push, framework registration, and workspace acceptance",
-    "Synthetic provider acceptance for the new authoring request parameters",
-    "Fresh wheel preview for the new assessment-assist delivery",
+    "Automatic third-call recovery against a real Provider after this fix",
     "Real course content, actual draft, or student data with an AI provider"
   ],
   "entrypoints": {

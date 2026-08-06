@@ -30,7 +30,7 @@
 - `src/ui/behaviorAnalysisSidebar.ts`: active-job state and bounded auto-retry explanation.
 - `src/__tests__/behaviorAnalysisSidebar.spec.ts`: queued/running copy and terminal retry regression.
 - `myextension/tests/test_labextension_artifact.py`: stale frontend wheel guard.
-- Root and two delivery README/config/Docker/manifest sets: synchronized runtime contract.
+- Root README, two delivery README/config/Docker sets, and the complete bundle manifest: synchronized runtime contract.
 - `docs/2026-08-06-assessment-assist-latency-reliability-verification.md`: consolidated evidence.
 - `myextension-0.2.1-BLUEDOT-完整交付包-20260806-analysis-retry-fix.zip{,.sha256}`: new final archive.
 
@@ -271,7 +271,8 @@ git commit -m "fix: explain full analysis automatic retry"
 
 **Files:**
 - Modify: `README.md:116-135`
-- Modify: both delivery `Dockerfile`, `runtime.env.example`, `README.md`, and `MANIFEST.json` files.
+- Modify: both delivery `Dockerfile`, `runtime.env.example`, and `README.md` files.
+- Modify: `myextension-0.2.1-BLUEDOT-完整交付包/MANIFEST.json`.
 - Modify: `docs/2026-08-06-assessment-assist-latency-reliability-verification.md`
 
 **Interfaces:**
@@ -285,7 +286,7 @@ git commit -m "fix: explain full analysis automatic retry"
 - Both `runtime.env.example` files must set the same value to `180`.
 - Both delivery READMEs must describe automatic retry within 180 seconds before manual retry and use 180 seconds in their smoke-test expectation.
 - The verification doc must record the sanitized 120.13-second timeout and 57.82-second successful manual retry, and state that no extra real Provider validation was run.
-- Both manifests retain Docker/BLUEDOT/real-course-data exclusions; final counts and hashes are filled only from Task 5 evidence.
+- The complete bundle manifest retains Docker/BLUEDOT/real-course-data exclusions; final counts and hashes are filled only from Task 5 evidence.
 - Earlier dated plans/specs remain historical and are not rewritten.
 
 - [ ] **Step 2: Prove the two delivery copies match**
@@ -307,8 +308,6 @@ Expected: all three comparisons exit `0`.
 .venv/bin/jlpm exec prettier README.md --write
 .venv/bin/jlpm prettier:base --check
 .venv/bin/python -m json.tool \
-  deploy/bluedot/release-0.2.1/MANIFEST.json >/dev/null
-.venv/bin/python -m json.tool \
   myextension-0.2.1-BLUEDOT-完整交付包/MANIFEST.json >/dev/null
 git diff --check
 ```
@@ -323,7 +322,6 @@ git add README.md \
   deploy/bluedot/release-0.2.1/Dockerfile \
   deploy/bluedot/release-0.2.1/runtime.env.example \
   deploy/bluedot/release-0.2.1/README.md \
-  deploy/bluedot/release-0.2.1/MANIFEST.json \
   myextension-0.2.1-BLUEDOT-完整交付包/Dockerfile \
   myextension-0.2.1-BLUEDOT-完整交付包/runtime.env.example \
   myextension-0.2.1-BLUEDOT-完整交付包/README.md \
@@ -338,7 +336,7 @@ git commit -m "docs: document full analysis auto retry"
 **Files:**
 - Rebuild: `dist/myextension-0.2.1-py3-none-any.whl`
 - Replace: both delivery `artifacts/myextension-0.2.1-py3-none-any.whl` files.
-- Modify: both delivery `SHA256SUMS` and `MANIFEST.json` files.
+- Modify: both delivery `SHA256SUMS` files and the complete bundle `MANIFEST.json`.
 - Create: `myextension-0.2.1-BLUEDOT-完整交付包-20260806-analysis-retry-fix.zip`
 - Create: `myextension-0.2.1-BLUEDOT-完整交付包-20260806-analysis-retry-fix.zip.sha256`
 
@@ -409,7 +407,6 @@ After the new ZIP passes, move the known untracked pre-retry ZIP and `.sha256` i
 ```bash
 git add deploy/bluedot/release-0.2.1/artifacts \
   deploy/bluedot/release-0.2.1/SHA256SUMS \
-  deploy/bluedot/release-0.2.1/MANIFEST.json \
   myextension-0.2.1-BLUEDOT-完整交付包/artifacts \
   myextension-0.2.1-BLUEDOT-完整交付包/SHA256SUMS \
   myextension-0.2.1-BLUEDOT-完整交付包/MANIFEST.json \
@@ -424,7 +421,7 @@ git commit -m "build: deliver full analysis auto retry"
 
 **Files:**
 - Modify: `docs/2026-08-06-assessment-assist-latency-reliability-verification.md`
-- Modify: both delivery `MANIFEST.json` files only when fresh counts or hashes require it.
+- Modify: the complete bundle `MANIFEST.json` only when fresh counts or hashes require it.
 
 **Interfaces:**
 - Consumes: the exact source tree, wheel, delivery directories, and archive being handed off.
@@ -457,13 +454,12 @@ Run `shasum -a 256 -c SHA256SUMS` from each delivery directory. Then run README/
 
 - [ ] **Step 4: Record fresh evidence only**
 
-Update the verification document and both manifests with exact backend/frontend totals, retry RED/GREEN evidence, wheel SHA, remote entry, archive SHA, and isolated install path. State that the observed real first/second attempt timings motivated the fix, while the new third-call path was validated with fake time and no additional real Provider request. Retain exclusions for Docker, BLUEDOT, registry/Git push, and real course/student data. Validate both JSON files and run `git diff --check`.
+Update the verification document and complete bundle manifest with exact backend/frontend totals, retry RED/GREEN evidence, wheel SHA, remote entry, archive SHA, and isolated install path. State that the observed real first/second attempt timings motivated the fix, while the new third-call path was validated with fake time and no additional real Provider request. Retain exclusions for Docker, BLUEDOT, registry/Git push, and real course/student data. Validate the JSON file and run `git diff --check`.
 
 - [ ] **Step 5: Commit final evidence**
 
 ```bash
 git add docs/2026-08-06-assessment-assist-latency-reliability-verification.md \
-  deploy/bluedot/release-0.2.1/MANIFEST.json \
   myextension-0.2.1-BLUEDOT-完整交付包/MANIFEST.json
 git commit -m "docs: record full analysis retry verification"
 ```

@@ -163,16 +163,17 @@ docker image inspect "$TARGET_IMAGE" --format '{{json .RepoDigests}}'
 ### 分析时间预算
 
 ```text
-JUPYTERLAB_BEHAVIOR_AUDIT_ANALYSIS_TIMEOUT_SEC=120
+JUPYTERLAB_BEHAVIOR_AUDIT_ANALYSIS_TIMEOUT_SEC=180
 ```
 
-- 默认整次 AI 分析预算为 120 秒；
-- 仅接受 `60` 到 `180` 的整数，越界或非法值回退到 120；
+- 默认整次 AI 分析预算为 180 秒；
+- 仅接受 `60` 到 `180` 的整数，越界或非法值回退到 180；
 - 单次 Provider 请求最多 60 秒，且不能超过整次分析剩余时间；
-- 网络错误、Provider 超时、HTTP 429 或 5xx 最多重试一次，等待 2 秒；
+- `60`、`120`、`180` 秒预算分别最多调用 Provider 1、2、3 次；
+- Provider 超时后立即重试；网络错误、HTTP 429 或 5xx 重试前等待 2 秒；
 - 初始请求、一次截断恢复、一次无效维度修复和瞬时重试共享同一预算。
 
-若真实模型稳定超过 120 秒，可在完成成本和容量评估后设置为 `180`；不建议继续增大，因为前端和平台需要有明确终态。
+180 秒也是闭合配置上限。用尽自动恢复机会后任务进入明确终态，并保留“重试分析”按钮；不建议继续增大，因为前端和平台需要有明确终态。
 
 ### AI 配置文件优先级
 
@@ -216,7 +217,7 @@ python -m jupyter lab
 
 1. 只使用合成数据，并由 Secret Manager 注入 AI Key。
 2. 确认 Base URL、模型名、额度、网络和模型权限正确。
-3. 执行同一合成流程，分析应在默认 120 秒预算内进入 `ready`、`partial` 或明确错误终态。
+3. 执行同一合成流程，页面应提示响应较慢时会自动重试，分析在默认 180 秒预算内进入 `ready`、`partial` 或明确错误终态。
 4. 验证成功结果引用当前会话事件，且每个维度最多返回 3 条主要证据。
 5. 验证 `analysis_log.json` 只在终态开放，不出现 Key、Provider 响应正文或本机绝对路径。
 
@@ -226,7 +227,7 @@ python -m jupyter lab
 
 | 错误码 | 含义与处理 |
 | --- | --- |
-| `ai_analysis_timeout` | 整体预算或 Provider 请求超时；先重试，再检查延迟并考虑将预算调到 180 秒。 |
+| `ai_analysis_timeout` | 180 秒自动恢复预算已用尽；可手动重试，并检查 Provider 延迟、额度和服务状态。 |
 | `ai_provider_timeout` | 作者辅助 Provider 请求超过 60 秒；当前草稿已保留，可重试或手工继续。 |
 | `ai_provider_network_error` | 检查网络、DNS、TLS、代理和出口策略。 |
 | `ai_provider_rate_limited` | 检查额度、QPS 和并发限制，稍后重试。 |

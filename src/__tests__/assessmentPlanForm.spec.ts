@@ -169,6 +169,72 @@ describe('assessment plan pure state', () => {
     );
   });
 
+  it('autofills missing legacy observation fields before confirming', async () => {
+    const legacyState = {
+      ...baseState(),
+      knowledgePoints: [
+        {
+          id: 'KP_B1C2D3E4',
+          name: '函数默认参数',
+          description: '为可选参数设置默认值。',
+          source: 'ai_suggestion',
+          order: 0,
+          evidenceQuestion: undefined,
+          supportStatement: '   ',
+          exclusionStatement: 7
+        }
+      ]
+    } as unknown as Parameters<typeof confirmKnowledgePoints>[0];
+
+    const confirmed = await confirmKnowledgePoints(legacyState, subtle);
+
+    expect(confirmed.knowledgePoints[0]).toMatchObject({
+      evidenceQuestion:
+        '学生是否通过代码、运行和修改过程正确应用“函数默认参数”？',
+      supportStatement: '代码与验证过程显示学生正确应用了“函数默认参数”。',
+      exclusionStatement:
+        '只出现一次偶然正确输出，或缺少与“函数默认参数”相关的验证，不计入。'
+    });
+    expect(confirmed.confirmations.knowledge_points_hash).toMatch(
+      /^[0-9a-f]{64}$/
+    );
+  });
+
+  it('autofills missing observation fields at the draft build boundary', () => {
+    const legacyState = {
+      ...baseState(),
+      knowledgePoints: [
+        {
+          id: 'KP_B1C2D3E4',
+          name: '函数默认参数',
+          description: '为可选参数设置默认值。',
+          source: 'ai_suggestion',
+          order: 0,
+          evidenceQuestion: null,
+          supportStatement: '',
+          exclusionStatement: {}
+        }
+      ]
+    } as unknown as Parameters<typeof buildAssessmentProfileDraft>[0];
+
+    const draft = buildAssessmentProfileDraft(legacyState);
+
+    expect(draft.dimensions[0]).toMatchObject({
+      question: '学生是否通过代码、运行和修改过程正确应用“函数默认参数”？',
+      evidence_criteria: [
+        {
+          direction: 'support',
+          statement: '代码与验证过程显示学生正确应用了“函数默认参数”。'
+        },
+        {
+          direction: 'exclude',
+          statement:
+            '只出现一次偶然正确输出，或缺少与“函数默认参数”相关的验证，不计入。'
+        }
+      ]
+    });
+  });
+
   it('editing a point preserves draft tests but invalidates both confirmations', async () => {
     const withTests = replaceAssessmentTests(withPoint(), [generatedTest()]);
     const knowledgeConfirmed = await confirmKnowledgePoints(withTests, subtle);
@@ -323,17 +389,7 @@ describe('assessment plan pure state', () => {
     expect(canPublishAssessmentPlan(unchecked)).toBe(false);
   });
 
-  it('rejects incomplete knowledge evidence and answer-kind mismatches before confirmation', async () => {
-    const incompletePoint = updateKnowledgePoint(withPoint(), 'KP_A1B2C3D4', {
-      evidenceQuestion: ''
-    });
-    expect(validateAssessmentPlanState(incompletePoint)).toMatchObject({
-      knowledgePoints: '知识点 1 缺少：过程观察问题'
-    });
-    await expect(
-      confirmKnowledgePoints(incompletePoint, subtle)
-    ).rejects.toThrow('请先完成题目和知识点');
-
+  it('rejects answer-kind mismatches before test confirmation', async () => {
     const mismatched = replaceAssessmentTests(withPoint(), [
       {
         ...generatedTest(),

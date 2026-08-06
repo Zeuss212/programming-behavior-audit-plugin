@@ -1,6 +1,6 @@
 {
     "name": "myextension",
-    "version": "0.2.1",
+    "version": "0.2.2",
     "description": "A question- and knowledge-point-driven programming behavior analysis Pilot for JupyterLab.",
     "keywords": [
         "jupyter",

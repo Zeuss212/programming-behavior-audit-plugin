@@ -12,6 +12,10 @@ import {
 import { ApiError } from '../models/apiError';
 import { IDimensionProfileVersion } from '../models/dimensionProfile';
 import * as requestModule from '../request';
+import {
+  createAssessmentPlanState,
+  IAssessmentPlanState
+} from '../ui/assessmentPlanForm';
 import { GuidedProfileEditor } from '../ui/guidedProfileEditor';
 
 const settings = {} as ServerConnection.ISettings;
@@ -231,6 +235,48 @@ describe('teacher-first GuidedProfileEditor', () => {
     expect(
       fieldByLabel(editor.node, '我想考察的知识点（可选，每行一个）').value
     ).toBe('循环边界\n平均值计算');
+  });
+
+  it('autofills legacy observation fields before rendering knowledge cards', () => {
+    const editor = createEditor();
+    const internal = editor as unknown as {
+      state: IAssessmentPlanState;
+      showKnowledgePoints: () => void;
+    };
+    internal.state = {
+      ...createAssessmentPlanState(),
+      title: '默认参数分析',
+      problemId: 'default-parameter',
+      problemStatement: '实现带默认参数的函数。',
+      submissionContract: {
+        kind: 'function',
+        entrypoint: 'calculate'
+      },
+      knowledgePoints: [
+        {
+          id: 'KP_A1B2C3D4',
+          name: '函数默认参数',
+          description: '为可选参数设置默认值。',
+          source: 'ai_suggestion',
+          order: 0,
+          evidenceQuestion: undefined,
+          supportStatement: null,
+          exclusionStatement: 7
+        }
+      ] as unknown as IAssessmentPlanState['knowledgePoints']
+    };
+
+    internal.showKnowledgePoints();
+
+    expect(fieldByLabel(editor.node, '过程观察问题').value).toBe(
+      '学生是否通过代码、运行和修改过程正确应用“函数默认参数”？'
+    );
+    expect(fieldByLabel(editor.node, '支持表现').value).toBe(
+      '代码与验证过程显示学生正确应用了“函数默认参数”。'
+    );
+    expect(fieldByLabel(editor.node, '排除情况').value).toBe(
+      '只出现一次偶然正确输出，或缺少与“函数默认参数”相关的验证，不计入。'
+    );
   });
 
   it('shows a manual fallback when default AI recommendation is unavailable', async () => {

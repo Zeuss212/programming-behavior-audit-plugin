@@ -26,6 +26,7 @@ import {
   mergeKnowledgeSuggestions,
   moveAssessmentTest,
   moveKnowledgePoint,
+  normalizeKnowledgePointEvidence,
   removeAssessmentTest,
   removeKnowledgePoint,
   updateAssessmentPlanContext,
@@ -207,6 +208,11 @@ export class GuidedProfileEditor extends Widget {
   }
 
   private showKnowledgePoints(): void {
+    const normalized = normalizeKnowledgePointEvidence(this.state);
+    if (normalized !== this.state) {
+      this.state = normalized;
+      this.markDraftChanged();
+    }
     this.setStep(2);
     renderKnowledgePointStep(
       this.contentNode,

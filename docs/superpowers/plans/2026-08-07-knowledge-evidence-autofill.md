@@ -31,30 +31,31 @@
 - Produces: `normalizeKnowledgePointEvidence(state: IAssessmentPlanState): IAssessmentPlanState`
 - Consumes: existing `defaultEvidence`, `confirmKnowledgePoints`, and `buildAssessmentProfileDraft`
 
-- [ ] Add a failing test that passes a legacy AI point with absent, whitespace, and non-string evidence fields directly to `confirmKnowledgePoints` and expects deterministic defaults.
-- [ ] Run the focused test with coverage disabled and confirm it fails because the legacy point is not normalized.
-- [ ] Implement `normalizeKnowledgePointEvidence` and make `missingKnowledgePointFields` safe for unknown runtime values.
-- [ ] Invoke normalization before knowledge rendering, confirmation, and draft construction.
-- [ ] Run focused form/editor tests and confirm they pass.
+- [x] Add a failing test that passes a legacy AI point with absent, whitespace, and non-string evidence fields directly to `confirmKnowledgePoints` and expects deterministic defaults.
+- [x] Run the focused test with coverage disabled and confirm it fails because the legacy point is not normalized.
+- [x] Implement `normalizeKnowledgePointEvidence` and make `missingKnowledgePointFields` safe for unknown runtime values.
+- [x] Invoke normalization before knowledge rendering, confirmation, and draft construction.
+- [x] Run focused form/editor tests and confirm they pass.
 
 ### Task 2: Unique release artifact and regression verification
 
 **Files:**
 
 - Modify: `package.json`
-- Modify: `yarn.lock`
+- Modify: `README.md`
+- Modify: `启动说明.md`
+- Modify: `deploy/bluedot/Dockerfile`
 - Create: `dist/myextension-0.2.2-py3-none-any.whl`
-- Create: `myextension-0.2.2-演示热修复包/README.md`
-- Create: `myextension-0.2.2-演示热修复包/SHA256SUMS`
-- Create: `myextension-0.2.2-演示热修复包/artifacts/myextension-0.2.2-py3-none-any.whl`
+- Create: `deploy/bluedot/release-0.2.2/`
+- Create: `myextension-0.2.2-BLUEDOT-演示热修复交付包.zip`
 
 **Interfaces:**
 
 - Produces: installable `myextension 0.2.2` with a new `remoteEntry.*.js`
 
-- [ ] Change the package version from 0.2.1 to 0.2.2 using the project package manager so the lockfile stays consistent.
-- [ ] Run the complete frontend test suite and lint checks.
-- [ ] Build the production labextension and wheel.
-- [ ] Install the wheel into an isolated target and verify Python version, server extension, labextension, autofill strings, and unique remote entry.
-- [ ] Copy only the verified wheel into a new delivery folder, generate `SHA256SUMS`, and document force-reinstall, full server restart, new image tag/digest, and browser hard refresh.
-- [ ] Commit source, tests, documentation, and the verified delivery folder without adding unrelated ZIP files.
+- [x] Change the package version from 0.2.1 to 0.2.2. This Yarn workspace uses a local workspace reference, so no lockfile version entry changes.
+- [x] Run the complete frontend test suite and lint checks.
+- [x] Build the production labextension and wheel.
+- [x] Install the wheel into an isolated target and verify Python version, server extension, labextension, autofill strings, and unique remote entry.
+- [x] Copy only the verified wheel into a new delivery folder, generate `SHA256SUMS`, and document force-reinstall, full server restart, new image tag/digest, and browser hard refresh.
+- [x] Commit source, tests, documentation, and the verified delivery folder without adding the unrelated 0.2.1 ZIP.

@@ -5,24 +5,28 @@
   "purpose": "BLUEDOT JupyterLab 4 image delivery",
   "artifact": {
     "path": "artifacts/myextension-0.2.1-py3-none-any.whl",
-    "sha256": "8436b8e69f9e25c58df68c0024723c660e9fe8751c52a60b320c1e97f28ea16e"
+    "sha256": "c7bffe0ad1528715b9bdd371965d0bc52d762429c31e2f3664d3136a60547386"
   },
   "source": {
     "fixed_delivery_commit": "2a3dc75",
     "fixed_delivery_tag": "bluedot-delivery-0.2.1-fixed",
-    "folder_design_commit": "8c53a7e"
+    "folder_design_commit": "8c53a7e",
+    "ui_hotfix_design_commit": "5b05674",
+    "ui_hotfix_source_commit": "e4ae0b5"
   },
   "validated": {
-    "backend": "668 passed, 23 subtests passed",
-    "frontend": "20 suites, 287 passed",
-    "lint": "passed",
-    "production_build": "passed",
+    "backend": "652 passed",
+    "frontend": "20 suites, 291 passed",
+    "lint": "stylelint, Prettier, and ESLint passed",
+    "production_build": "TypeScript and JupyterLab prebuilt build passed",
     "wheel_structure": "passed",
     "wheel_zip_integrity": "passed",
     "isolated_install": "myextension 0.2.1, analysis budget 120, provider timeout 60",
+    "labextension_artifact": "1 passed, remoteEntry.c2f8b507d3fb417c.js matches the wheel",
     "release_script_tests": "8 passed"
   },
   "not_validated": [
+    "Fresh local wheel preview visual acceptance",
     "Docker image build and run because the local Docker daemon was unavailable",
     "Real BLUEDOT base image, registry push, framework registration, and workspace acceptance",
     "Real or paid AI provider"

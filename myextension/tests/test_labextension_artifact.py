@@ -34,6 +34,7 @@ REQUIRED_TASK_12_MARKERS = (
     "本次会话结果",
     "分析详情",
     "教师复核",
+    "jp-BehaviorAudit-sidebarTab",
 )
 
 FORBIDDEN_STALE_OR_PRIVATE_MARKERS = (
@@ -125,6 +126,7 @@ def _assert_wheel_delivery_contents() -> None:
     )
     with ZipFile(DELIVERY_WHEEL) as wheel:
         names = set(wheel.namelist())
+    assert not any(name.startswith("myextension/labextension/") for name in names)
     required_prefixes = (
         "myextension/resources/dimension_templates/",
         "myextension/resources/signal_dictionary/",

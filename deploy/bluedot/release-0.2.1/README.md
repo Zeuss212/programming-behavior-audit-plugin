@@ -1,6 +1,6 @@
 # myextension 0.2.1 BLUEDOT 镜像交付包
 
-本目录是修复“分析慢、偶发失败”后的独立交付包。它安装 JupyterLab 4 的 prebuilt 前端扩展和 Jupyter Server 2 后端扩展，不需要在目标镜像中安装 Node.js，也不会修改基础镜像原有的 `ENTRYPOINT` 或 `CMD`。
+本目录是同时包含“分析慢、偶发失败”可靠性修复和 2026-08-06 界面热修复的最新独立交付包。界面热修复确保采用 AI 建议后隐藏观察字段可完整确认，并让左侧“行为分析”标签正向直立显示。它安装 JupyterLab 4 的 prebuilt 前端扩展和 Jupyter Server 2 后端扩展，不需要在目标镜像中安装 Node.js，也不会修改基础镜像原有的 `ENTRYPOINT` 或 `CMD`。
 
 本包只提供文件和管理员执行步骤；没有登录镜像仓库、没有推送镜像、没有调用真实 AI，也没有修改 BLUEDOT 工作台。
 
@@ -19,7 +19,7 @@
 插件版本保持 `0.2.1`，本次新 wheel 通过所在目录和 SHA-256 与旧 `dist/` wheel 区分：
 
 ```text
-8436b8e69f9e25c58df68c0024723c660e9fe8751c52a60b320c1e97f28ea16e  artifacts/myextension-0.2.1-py3-none-any.whl
+c7bffe0ad1528715b9bdd371965d0bc52d762429c31e2f3664d3136a60547386  artifacts/myextension-0.2.1-py3-none-any.whl
 ```
 
 ## 2. 基础镜像要求

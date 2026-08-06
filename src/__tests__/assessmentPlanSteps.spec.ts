@@ -192,12 +192,12 @@ describe('teacher-first assessment steps', () => {
         'details.jp-BehaviorAudit-advancedSettings'
       )?.open
     ).toBe(true);
-    expect(
-      inputByLabel(content, '支持表现').getAttribute('aria-invalid')
-    ).toBe('true');
-    expect(
-      inputByLabel(content, '排除情况').getAttribute('aria-invalid')
-    ).toBe('true');
+    expect(inputByLabel(content, '支持表现').getAttribute('aria-invalid')).toBe(
+      'true'
+    );
+    expect(inputByLabel(content, '排除情况').getAttribute('aria-invalid')).toBe(
+      'true'
+    );
     expect(
       inputByLabel(content, '过程观察问题').hasAttribute('aria-invalid')
     ).toBe(false);

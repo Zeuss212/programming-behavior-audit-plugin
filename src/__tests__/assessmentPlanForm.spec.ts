@@ -160,11 +160,13 @@ describe('assessment plan pure state', () => {
     expect(validateAssessmentPlanState(merged)).not.toHaveProperty(
       'knowledgePoints'
     );
-    await expect(confirmKnowledgePoints(merged, subtle)).resolves.toMatchObject({
-      confirmations: {
-        knowledge_points_hash: expect.stringMatching(/^[0-9a-f]{64}$/)
+    await expect(confirmKnowledgePoints(merged, subtle)).resolves.toMatchObject(
+      {
+        confirmations: {
+          knowledge_points_hash: expect.stringMatching(/^[0-9a-f]{64}$/)
+        }
       }
-    });
+    );
   });
 
   it('editing a point preserves draft tests but invalidates both confirmations', async () => {

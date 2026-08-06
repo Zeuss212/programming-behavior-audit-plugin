@@ -469,6 +469,60 @@ def test_missing_ai_configuration_returns_partial_without_fake_decision(
     assert result["error_code"] == "ai_not_configured"
 
 
+@pytest.mark.parametrize(
+    ("failure", "expected"),
+    [
+        (
+            LlmTransportError("analysis_deadline_exceeded"),
+            "ai_analysis_timeout",
+        ),
+        (LlmTransportError("provider_timeout"), "ai_analysis_timeout"),
+        (
+            LlmTransportError("provider_network_error"),
+            "ai_provider_network_error",
+        ),
+        (
+            LlmTransportError("provider_http_error", http_status=429),
+            "ai_provider_rate_limited",
+        ),
+        (
+            LlmTransportError("provider_http_error", http_status=401),
+            "ai_provider_auth_failed",
+        ),
+        (
+            LlmTransportError("provider_http_error", http_status=403),
+            "ai_provider_auth_failed",
+        ),
+        (
+            LlmTransportError("provider_http_error", http_status=400),
+            "ai_provider_request_rejected",
+        ),
+        (
+            LlmTransportError("provider_http_error", http_status=503),
+            "ai_provider_unavailable",
+        ),
+        (
+            LlmTransportError("provider_response_truncated"),
+            "ai_response_truncated",
+        ),
+        (
+            LlmTransportError("provider_response_invalid"),
+            "ai_response_invalid",
+        ),
+        (RuntimeError("private-provider-detail"), "ai_analysis_failed"),
+    ],
+)
+def test_analysis_failure_maps_to_safe_code(failure, expected):
+    def failing_client(_request):
+        raise failure
+
+    result = _analyze(failing_client)
+
+    assert result["status"] == "partial"
+    assert result["error_code"] == expected
+    assert "private-provider-detail" not in json.dumps(result)
+
+
 @pytest.fixture
 def isolated_ai_config(monkeypatch, tmp_path):
     monkeypatch.setenv(
@@ -1115,6 +1169,9 @@ def test_prompt_candidates_are_bounded_sanitized_and_treat_code_as_data():
         "content"
     ]
     assert "PROMOTE_MODEL_CREATED_DIMENSION" not in messages[0]["content"]
+    assert "最多返回 3 条" in messages[0]["content"]
+    assert "160" in messages[0]["content"]
+    assert "Markdown" in messages[0]["content"]
     payload = json.loads(messages[1]["content"])
     serialized_payload = messages[1]["content"]
     assert "/Users/student" not in serialized_payload
@@ -1140,6 +1197,9 @@ def test_prompt_candidates_are_bounded_sanitized_and_treat_code_as_data():
             assert len(event["cell_source"]) <= 300
     for dimension in payload["dimensions"]:
         assert len(dimension["candidate_event_ids"]) <= 20
+    schema_row = payload["output_schema"]["dimensions"][0]
+    assert "最多3条" in schema_row["evidence_claims"][0]["claim"]
+    assert "160" in schema_row["explanation"]
     assert result["prompt_snapshot"]["candidate_selector_version"] == (
         "pilot-candidate-v1"
     )
@@ -1573,6 +1633,7 @@ def test_invalid_repair_is_attempted_only_once():
 
     assert calls == 2
     assert result["status"] == "partial"
+    assert result["error_code"] == "ai_response_invalid"
     assert all(
         row["decision"]["status"] == "partial"
         for row in result["dimension_results"]

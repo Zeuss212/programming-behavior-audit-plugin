@@ -66,6 +66,14 @@ _PUBLIC_RESULT_KEYS = {
 _ANALYZER_ERROR_CODES = {
     "ai_not_configured",
     "ai_analysis_failed",
+    "ai_analysis_timeout",
+    "ai_provider_network_error",
+    "ai_provider_rate_limited",
+    "ai_provider_auth_failed",
+    "ai_provider_request_rejected",
+    "ai_provider_unavailable",
+    "ai_response_truncated",
+    "ai_response_invalid",
     "invalid_profile",
 }
 _PROVENANCE_KEYS = {

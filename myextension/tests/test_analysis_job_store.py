@@ -926,17 +926,27 @@ def test_worker_ai_not_configured_is_partial_with_no_private_leak(
 
 
 @pytest.mark.parametrize(
-    "failure",
+    ("failure", "expected_error"),
     [
-        LlmTransportError("provider_network_error"),
-        LlmTransportError("provider_timeout"),
-        LlmTransportError("provider_http_error", http_status=429),
-        LlmTransportError("provider_http_error", http_status=503),
+        (
+            LlmTransportError("provider_network_error"),
+            "ai_provider_network_error",
+        ),
+        (LlmTransportError("provider_timeout"), "ai_analysis_timeout"),
+        (
+            LlmTransportError("provider_http_error", http_status=429),
+            "ai_provider_rate_limited",
+        ),
+        (
+            LlmTransportError("provider_http_error", http_status=503),
+            "ai_provider_unavailable",
+        ),
     ],
 )
 def test_worker_retries_transient_provider_calls_only(
     tmp_path,
     failure,
+    expected_error,
 ):
     session_store, job_store, job = create_worker_job(tmp_path)
     calls = 0
@@ -958,13 +968,23 @@ def test_worker_retries_transient_provider_calls_only(
     worker.enqueue(str(job["job_id"]))
     assert calls == 2
     assert waits == [2.0]
-    assert job_store.get(str(job["job_id"]))["status"] == "partial"
+    updated = job_store.get(str(job["job_id"]))
+    assert updated["status"] == "partial"
+    assert updated["error_code"] == expected_error
 
 
-@pytest.mark.parametrize("status", [400, 401, 403])
+@pytest.mark.parametrize(
+    ("status", "expected_error"),
+    [
+        (400, "ai_provider_request_rejected"),
+        (401, "ai_provider_auth_failed"),
+        (403, "ai_provider_auth_failed"),
+    ],
+)
 def test_worker_does_not_retry_nonretryable_http_status(
     tmp_path,
     status,
+    expected_error,
 ):
     session_store, job_store, job = create_worker_job(tmp_path)
     calls = 0
@@ -989,7 +1009,9 @@ def test_worker_does_not_retry_nonretryable_http_status(
     worker.enqueue(str(job["job_id"]))
     assert calls == 1
     assert waits == []
-    assert job_store.get(str(job["job_id"]))["status"] == "partial"
+    updated = job_store.get(str(job["job_id"]))
+    assert updated["status"] == "partial"
+    assert updated["error_code"] == expected_error
 
 
 def test_one_logical_repair_shares_deadline_with_independent_retries(
@@ -1113,7 +1135,9 @@ def test_worker_does_not_call_provider_after_shared_deadline(tmp_path):
     worker.enqueue(str(job["job_id"]))
 
     assert calls == 1
-    assert job_store.get(str(job["job_id"]))["status"] == "partial"
+    updated = job_store.get(str(job["job_id"]))
+    assert updated["status"] == "partial"
+    assert updated["error_code"] == "ai_analysis_timeout"
 
 
 def test_invalid_model_output_gets_one_repair_but_no_transport_retry(
@@ -1139,7 +1163,9 @@ def test_invalid_model_output_gets_one_repair_but_no_transport_retry(
     worker.enqueue(str(job["job_id"]))
     assert calls == 2
     assert waits == []
-    assert job_store.get(str(job["job_id"]))["status"] == "partial"
+    updated = job_store.get(str(job["job_id"]))
+    assert updated["status"] == "partial"
+    assert updated["error_code"] == "ai_response_invalid"
 
 
 def test_duplicate_simultaneous_enqueue_runs_only_one_attempt(tmp_path):

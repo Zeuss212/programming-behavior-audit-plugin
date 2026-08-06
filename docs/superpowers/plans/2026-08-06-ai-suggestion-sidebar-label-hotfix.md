@@ -383,7 +383,7 @@ git commit -m "fix: reveal incomplete knowledge observation fields"
 - Consumes: JupyterLab 4 DOM classes `.jp-SideBar.lm-TabBar.jp-mod-left`, `[data-orientation='vertical']`, `.lm-TabBar-tab`, and `.lm-TabBar-tabLabel`.
 - Preserves: `inspectorIcon`, visible label `行为分析`, caption `编程行为分析`, all other tabs, and the right sidebar.
 
-- [ ] **Step 1: Write failing title-class and CSS-contract tests**
+- [ ] **Step 1: Write failing title-class and computed-style behavior tests**
 
 Import `readFileSync` from `node:fs`. Rename the existing icon test to describe upright label metadata and add these assertions:
 
@@ -395,20 +395,43 @@ expect(sidebar.title.className.split(/\s+/)).toContain(
 );
 ```
 
-Add a static style contract test:
+Add a computed-style test. It first injects the two relevant JupyterLab defaults, then the plugin stylesheet, so it proves both the override and its isolation from an ordinary tab:
 
 ```typescript
-it('scopes the upright Chinese label override to the left plugin tab', () => {
-  const css = readFileSync('style/base.css', 'utf8');
+it('keeps this left Chinese tab upright without changing other tabs', () => {
+  const style = document.createElement('style');
+  style.textContent = `
+    .jp-SideBar.lm-TabBar[data-orientation='vertical'] .lm-TabBar-tabLabel {
+      writing-mode: vertical-rl;
+    }
+    .jp-SideBar.lm-TabBar.jp-mod-left .lm-TabBar-tabLabel {
+      transform: rotate(180deg);
+    }
+    ${readFileSync('style/base.css', 'utf8')}
+  `;
+  const sideBar = document.createElement('div');
+  sideBar.className = 'jp-SideBar lm-TabBar jp-mod-left';
+  sideBar.dataset.orientation = 'vertical';
+  const pluginTab = document.createElement('div');
+  pluginTab.className = 'lm-TabBar-tab jp-BehaviorAudit-sidebarTab';
+  const pluginLabel = document.createElement('div');
+  pluginLabel.className = 'lm-TabBar-tabLabel';
+  const otherTab = document.createElement('div');
+  otherTab.className = 'lm-TabBar-tab';
+  const otherLabel = document.createElement('div');
+  otherLabel.className = 'lm-TabBar-tabLabel';
+  pluginTab.appendChild(pluginLabel);
+  otherTab.appendChild(otherLabel);
+  sideBar.append(pluginTab, otherTab);
+  document.head.appendChild(style);
+  document.body.appendChild(sideBar);
 
-  expect(css).toContain(
-    ".jp-SideBar.lm-TabBar.jp-mod-left[data-orientation='vertical']"
-  );
-  expect(css).toContain(
-    '.lm-TabBar-tab.jp-BehaviorAudit-sidebarTab .lm-TabBar-tabLabel'
-  );
-  expect(css).toMatch(/text-orientation:\s*upright/);
-  expect(css).toMatch(/transform:\s*none/);
+  expect(getComputedStyle(pluginLabel).textOrientation).toBe('upright');
+  expect(getComputedStyle(pluginLabel).transform).toBe('none');
+  expect(getComputedStyle(otherLabel).transform).toBe('rotate(180deg)');
+
+  sideBar.remove();
+  style.remove();
 });
 ```
 

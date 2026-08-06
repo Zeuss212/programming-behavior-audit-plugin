@@ -132,6 +132,7 @@ log/
 output/
 .playwright-cli/
 .superpowers/
+.worktrees/
 junit.xml
 *.env
 *.env.*

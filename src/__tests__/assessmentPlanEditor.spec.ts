@@ -9,6 +9,7 @@ import {
   IAssessmentProfileVersion,
   IKnowledgePointSuggestion
 } from '../models/assessmentPlan';
+import { ApiError } from '../models/apiError';
 import { IDimensionProfileVersion } from '../models/dimensionProfile';
 import * as requestModule from '../request';
 import { GuidedProfileEditor } from '../ui/guidedProfileEditor';
@@ -245,6 +246,56 @@ describe('teacher-first GuidedProfileEditor', () => {
       'AI 暂时不可用，可继续手工添加知识点'
     );
     expect(editor.node.textContent).toContain('添加自定义知识点');
+  });
+
+  it.each([
+    ['ai_provider_timeout', '生成超时，当前草稿已保留'],
+    ['ai_provider_network_error', '检查网络、DNS、TLS 或代理'],
+    ['ai_provider_auth_failed', '检查 API Key 和模型权限'],
+    ['ai_provider_rate_limited', '稍后重试，并检查额度或并发限制'],
+    ['ai_provider_request_rejected', '检查 Base URL、模型和参数兼容性'],
+    ['ai_provider_unavailable', 'AI 服务暂时不可用，请稍后重试'],
+    ['ai_response_truncated', '减少知识点数量或描述长度后重试'],
+    ['ai_response_invalid', '检查模型是否支持结构化 JSON 输出']
+  ])(
+    'shows actionable knowledge guidance for %s',
+    async (code, expectedMessage) => {
+      request.mockRejectedValueOnce(new ApiError(502, code, 'safe', true));
+      const editor = createEditor();
+      completeQuestion(editor);
+
+      clickButton(editor, '下一步：确认知识点');
+      await flushPromises();
+
+      expect(editor.node.textContent).toContain(expectedMessage);
+      expect(editor.node.textContent).toContain('添加自定义知识点');
+      editor.dispose();
+    }
+  );
+
+  it('keeps manual tests when AI test regeneration times out', async () => {
+    request.mockRejectedValue(
+      new ApiError(502, 'ai_provider_timeout', 'safe', true)
+    );
+    const editor = createEditor();
+    completeQuestion(editor, { teacherFocus: '循环边界' });
+    clickButton(editor, '下一步：确认知识点');
+    clickButton(editor, '我已确认以上知识点');
+    await flushPromises();
+
+    clickButton(editor, '添加手工测试');
+    setField(fieldByLabel(editor.node, '测试 1 名称'), '教师保留的边界测试');
+    clickButton(editor, '重新生成测试建议');
+    await flushPromises();
+
+    expect(editor.node.textContent).toContain(
+      '测试建议生成超时，当前草稿已保留'
+    );
+    expect(fieldByLabel(editor.node, '测试 1 名称').value).toBe(
+      '教师保留的边界测试'
+    );
+    expect(editor.node.textContent).toContain('添加手工测试');
+    editor.dispose();
   });
 
   it('lets an ordinary teacher continue with only the question text', async () => {

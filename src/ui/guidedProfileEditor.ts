@@ -682,6 +682,30 @@ export class GuidedProfileEditor extends Widget {
         ? 'AI 服务尚未配置，可先手工添加知识点，或在左侧完成 AI 配置后重试。'
         : 'AI 服务尚未配置，可添加手工测试，或在左侧完成 AI 配置后重试。';
     }
+    if (error instanceof ApiError) {
+      const subject = kind === 'knowledge' ? '知识点建议' : '测试建议';
+      const messages: Readonly<Record<string, string>> = {
+        ai_provider_timeout: `${subject}生成超时，当前草稿已保留，可重试或手工继续。`,
+        ai_provider_network_error:
+          '无法连接 AI 服务，请检查网络、DNS、TLS 或代理；当前草稿已保留。',
+        ai_provider_auth_failed:
+          'AI 鉴权失败，请检查 API Key 和模型权限；也可先手工继续。',
+        ai_provider_rate_limited:
+          'AI 请求受限，请稍后重试，并检查额度或并发限制。',
+        ai_provider_request_rejected:
+          'AI 拒绝了请求，请检查 Base URL、模型和参数兼容性。',
+        ai_provider_unavailable:
+          'AI 服务暂时不可用，请稍后重试；当前草稿已保留。',
+        ai_response_truncated:
+          'AI 输出被截断，请减少知识点数量或描述长度后重试。',
+        ai_response_invalid:
+          'AI 返回格式无效，请检查模型是否支持结构化 JSON 输出。'
+      };
+      const mapped = messages[error.code];
+      if (mapped) {
+        return mapped;
+      }
+    }
     return kind === 'knowledge'
       ? 'AI 暂时不可用，可继续手工添加知识点。'
       : 'AI 暂时不可用，可继续添加和编辑手工测试。';

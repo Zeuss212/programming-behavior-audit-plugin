@@ -719,6 +719,31 @@ class DimensionProfileVersionRouteHandler(ProfileAPIHandler):
             self._finish_internal_error()
 
 
+def _assessment_assist_transport_code(
+    error: LlmTransportError,
+    fallback: str,
+) -> str:
+    if error.error_code == "provider_timeout":
+        return "ai_provider_timeout"
+    if error.error_code == "provider_network_error":
+        return "ai_provider_network_error"
+    if error.error_code == "provider_response_truncated":
+        return "ai_response_truncated"
+    if error.error_code == "provider_response_invalid":
+        return "ai_response_invalid"
+    if error.error_code != "provider_http_error":
+        return fallback
+    if error.http_status in {401, 403}:
+        return "ai_provider_auth_failed"
+    if error.http_status == 429:
+        return "ai_provider_rate_limited"
+    if error.http_status is not None and 400 <= error.http_status < 500:
+        return "ai_provider_request_rejected"
+    if error.http_status is not None and 500 <= error.http_status < 600:
+        return "ai_provider_unavailable"
+    return fallback
+
+
 class AssessmentAssistRouteHandler(JsonAPIHandler):
     """Shared safe validation and error mapping for stateless AI assistance."""
 
@@ -766,7 +791,10 @@ class AssessmentAssistRouteHandler(JsonAPIHandler):
         if isinstance(error, LlmTransportError):
             self.finish_error(
                 502,
-                self.failure_code,
+                _assessment_assist_transport_code(
+                    error,
+                    self.failure_code,
+                ),
                 self.failure_message,
                 retryable=True,
             )

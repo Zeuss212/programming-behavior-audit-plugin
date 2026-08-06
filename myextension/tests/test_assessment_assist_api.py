@@ -1,5 +1,8 @@
 import json
 
+import pytest
+
+from myextension.llm_transport import LlmTransportError
 from myextension.schema_registry import validate_schema
 from myextension.tests.test_assessment_profile import make_assessment_profile
 
@@ -151,6 +154,95 @@ async def test_assist_endpoint_maps_missing_ai_without_echoing_question(
     payload = json.loads(response.body)
     assert payload["code"] == "ai_not_configured"
     assert private_question not in response.body.decode("utf-8")
+
+
+@pytest.mark.parametrize(
+    ("provider_error", "expected_code"),
+    [
+        (LlmTransportError("provider_timeout"), "ai_provider_timeout"),
+        (
+            LlmTransportError("provider_network_error"),
+            "ai_provider_network_error",
+        ),
+        (
+            LlmTransportError("provider_http_error", http_status=401),
+            "ai_provider_auth_failed",
+        ),
+        (
+            LlmTransportError("provider_http_error", http_status=403),
+            "ai_provider_auth_failed",
+        ),
+        (
+            LlmTransportError("provider_http_error", http_status=429),
+            "ai_provider_rate_limited",
+        ),
+        (
+            LlmTransportError("provider_http_error", http_status=400),
+            "ai_provider_request_rejected",
+        ),
+        (
+            LlmTransportError("provider_http_error", http_status=503),
+            "ai_provider_unavailable",
+        ),
+        (
+            LlmTransportError("provider_response_truncated"),
+            "ai_response_truncated",
+        ),
+        (
+            LlmTransportError("provider_response_invalid"),
+            "ai_response_invalid",
+        ),
+        (
+            LlmTransportError("synthetic_unknown_failure"),
+            "test_generation_failed",
+        ),
+    ],
+)
+async def test_test_assist_maps_provider_failures_without_private_echo(
+    jp_fetch,
+    monkeypatch,
+    provider_error,
+    expected_code,
+):
+    import myextension.routes as routes
+
+    private_marker = "SYNTHETIC_PRIVATE_ASSESSMENT_MARKER"
+
+    def fail(*_args, **_kwargs):
+        raise provider_error
+
+    monkeypatch.setattr(routes, "generate_assessment_tests", fail)
+    response = await jp_fetch(
+        "myextension",
+        "assessment-assist",
+        "tests",
+        method="POST",
+        body=json.dumps(
+            {
+                "schema_version": 1,
+                "problem_context": {
+                    **FUNCTION_CONTEXT,
+                    "statement": private_marker,
+                },
+                "knowledge_points": [
+                    {
+                        "id": "KP_A1B2C3D4",
+                        "name": "循环边界",
+                        "description": "正确遍历列表。",
+                    }
+                ],
+            }
+        ),
+        headers={"Content-Type": "application/json"},
+        raise_error=False,
+    )
+
+    payload = json.loads(response.body)
+    assert response.code == 502
+    assert payload["code"] == expected_code
+    assert payload["retryable"] is True
+    assert private_marker not in response.body.decode("utf-8")
+    assert "provider_http_error" not in response.body.decode("utf-8")
 
 
 async def test_profile_api_preserves_v2_schema_and_publishes_exact_snapshot(

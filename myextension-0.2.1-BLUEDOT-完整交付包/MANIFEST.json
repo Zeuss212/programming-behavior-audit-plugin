@@ -23,10 +23,10 @@
     "wheel_zip_integrity": "passed",
     "isolated_install": "myextension 0.2.1, analysis budget 120, provider timeout 60",
     "labextension_artifact": "1 passed, remoteEntry.c2f8b507d3fb417c.js matches the wheel",
+    "fresh_wheel_preview": "HTTP 200; empty isolated data directory; profiles []; remoteEntry.c2f8b507d3fb417c.js; 行为分析 label vertical-rl, upright, transform none",
     "release_script_tests": "8 passed"
   },
   "not_validated": [
-    "Fresh local wheel preview visual acceptance",
     "Docker image build and run because the local Docker daemon was unavailable",
     "Real BLUEDOT base image, registry push, framework registration, and workspace acceptance",
     "Real or paid AI provider"

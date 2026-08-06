@@ -80,7 +80,20 @@ labextension myextension v0.2.1 enabled OK
 
 ## 本地预览
 
-等待从上述隔离 wheel 在新端口启动并完成 HTTP、`remoteEntry` 和标签计算样式验收。旧端口 `18995` 的混合预览不作为本轮证据，也不会在本轮停止。
+从最终隔离 wheel 在 `127.0.0.1:18996` 启动全新 JupyterLab，服务端和真实浏览器均未读取 worktree 源码。第一次启动没有显式设置数据目录，因此正确读取了用户主目录中历史保存的方案；这不是旧前端。随后停止该预览，以显式空目录 `/private/tmp/myextension-ui-hotfix-final.hPnQD3/data` 设置 `JUPYTERLAB_BEHAVIOR_AUDIT_LOG_DIR`，在同一端口重新启动并验收。原历史数据没有修改或删除。
+
+最终干净预览结果：
+
+- `http://127.0.0.1:18996/lab` 返回 HTTP `200`；
+- 浏览器实际请求 `/lab/extensions/myextension/static/remoteEntry.c2f8b507d3fb417c.js`，返回 HTTP `200`，与 wheel 内入口一致；
+- `/myextension/dimension-profiles` 返回 HTTP `200` 和 `{"profiles": []}`；
+- 真实页面的“题目与分析方案”下拉框只有“还没有已发布方案”，没有继承用户历史方案；
+- 无障碍树将插件标签识别为 `tab "行为分析"`；
+- 标签元素包含 `jp-BehaviorAudit-sidebarTab`；
+- 标签文字节点的浏览器计算样式为 `writing-mode: vertical-rl`、`text-orientation: upright`、`transform: none`；
+- 没有点击 AI 建议、开始监控或调用任何真实 AI。
+
+旧端口 `18995` 的混合预览不作为本轮证据，也没有在本轮停止。端口 `18996` 的 token 仅在运行时 URL 中提供给用户，不写入 Git、交付包或本记录。
 
 ## 未执行项
 
@@ -89,4 +102,4 @@ labextension myextension v0.2.1 enabled OK
 - 真实或付费 AI Provider；
 - 真实教学数据验收。
 
-完成新预览后再创建最终热修复 ZIP，确保 ZIP 内 `MANIFEST.json` 与最终验收事实一致。
+最终热修复 ZIP 在上述干净预览验收和清单更新后创建，确保 ZIP 内 `MANIFEST.json` 与最终验收事实一致。

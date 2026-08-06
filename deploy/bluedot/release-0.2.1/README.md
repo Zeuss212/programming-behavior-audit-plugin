@@ -184,6 +184,16 @@ JUPYTERLAB_BEHAVIOR_AUDIT_LOG_DIR=/workspace/result/behavior-audit
 
 目录中可能包含学生代码、输出和错误文本，必须继承工作台访问控制、保留、下载和删除策略，不能作为公共静态目录暴露。
 
+题目方案也会持久化在该插件数据目录中。打开后已经出现方案，通常表示当前工作台复用了以前的数据卷，并不表示插件前端是旧版。若要做全新的空白演示，请创建新的空目录或空数据卷，并在启动 JupyterLab 前指向它，例如：
+
+```bash
+mkdir -p /tmp/behavior-audit-clean-demo
+export JUPYTERLAB_BEHAVIOR_AUDIT_LOG_DIR=/tmp/behavior-audit-clean-demo
+python -m jupyter lab
+```
+
+空白环境中“题目与分析方案”应只显示“还没有已发布方案”。不要为了清空演示直接删除正式数据卷；生产环境应新建工作台或更换明确的空卷。
+
 ## 10. 工作台验收步骤
 
 ### 不启用真实 AI 的功能验收

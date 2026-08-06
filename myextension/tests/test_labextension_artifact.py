@@ -37,6 +37,7 @@ REQUIRED_TASK_12_MARKERS = (
     "jp-BehaviorAudit-sidebarTab",
     "ai_provider_timeout",
     "ai_response_invalid",
+    "最长约 180 秒",
 )
 
 FORBIDDEN_STALE_OR_PRIVATE_MARKERS = (

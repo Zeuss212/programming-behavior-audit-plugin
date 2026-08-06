@@ -1336,7 +1336,17 @@ export class BehaviorAnalysisSidebar extends Widget {
     refresh.disabled =
       !this.job || this.actionPending || this.refreshInFlight !== null;
     refresh.addEventListener('click', () => void this.refreshAnalysis());
-    section.append(text, refresh);
+    const activeAnalysisNotice =
+      this.job?.status === 'queued' || this.job?.status === 'running'
+        ? node('p', 'jp-BehaviorAudit-notice')
+        : null;
+    if (activeAnalysisNotice) {
+      activeAnalysisNotice.textContent =
+        'AI 正在分析；响应较慢时会自动重试，最长约 180 秒。';
+    }
+    section.appendChild(text);
+    if (activeAnalysisNotice) section.appendChild(activeAnalysisNotice);
+    section.appendChild(refresh);
     if (
       this.job?.status === 'error' ||
       (this.job?.status === 'partial' && this.job.error_code)

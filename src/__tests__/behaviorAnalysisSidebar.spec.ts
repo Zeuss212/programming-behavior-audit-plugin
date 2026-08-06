@@ -1391,6 +1391,28 @@ describe('BehaviorAnalysisSidebar', () => {
     sidebar.dispose();
   });
 
+  it.each(['queued', 'running'] as const)(
+    'explains bounded automatic retry while analysis is %s',
+    async status => {
+      const capture = createCapture();
+      capture.snapshot.mockReturnValue({
+        ...snapshot,
+        sessionId: job.session_id
+      });
+      const deps = dependencies(capture, [profile]);
+      deps.getAnalysisJob = jest.fn(async () => ({ ...job, status }));
+      const sidebar = new BehaviorAnalysisSidebar(deps);
+      await flush();
+      (sidebar as unknown as { job: IAnalysisJob }).job = { ...job, status };
+      await sidebar.refreshAnalysis();
+
+      expect(sidebar.node.textContent).toContain(
+        'AI 正在分析；响应较慢时会自动重试，最长约 180 秒。'
+      );
+      sidebar.dispose();
+    }
+  );
+
   it('maps job errors to action text and retries only on an explicit click', async () => {
     const capture = createCapture();
     capture.snapshot.mockReturnValue({

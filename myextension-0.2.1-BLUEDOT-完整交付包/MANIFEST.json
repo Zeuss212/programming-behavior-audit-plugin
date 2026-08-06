@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "package": "myextension",
+  "version": "0.2.1",
+  "purpose": "BLUEDOT JupyterLab 4 image delivery",
+  "artifact": {
+    "path": "artifacts/myextension-0.2.1-py3-none-any.whl",
+    "sha256": "8436b8e69f9e25c58df68c0024723c660e9fe8751c52a60b320c1e97f28ea16e"
+  },
+  "source": {
+    "fixed_delivery_commit": "2a3dc75",
+    "fixed_delivery_tag": "bluedot-delivery-0.2.1-fixed",
+    "folder_design_commit": "8c53a7e"
+  },
+  "validated": {
+    "backend": "668 passed, 23 subtests passed",
+    "frontend": "20 suites, 287 passed",
+    "lint": "passed",
+    "production_build": "passed",
+    "wheel_structure": "passed",
+    "wheel_zip_integrity": "passed",
+    "isolated_install": "myextension 0.2.1, analysis budget 120, provider timeout 60",
+    "release_script_tests": "8 passed"
+  },
+  "not_validated": [
+    "Docker image build and run because the local Docker daemon was unavailable",
+    "Real BLUEDOT base image, registry push, framework registration, and workspace acceptance",
+    "Real or paid AI provider"
+  ],
+  "entrypoints": {
+    "human": "00_从这里开始.md",
+    "codex": "AGENTS.md",
+    "full_instructions": "README.md",
+    "checksum": "SHA256SUMS"
+  }
+}

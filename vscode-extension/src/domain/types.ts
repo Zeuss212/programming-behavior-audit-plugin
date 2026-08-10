@@ -68,7 +68,7 @@ export interface PublishPlanInput {
 }
 
 export interface DocumentRef {
-  readonly document_id: string;
+  readonly relative_uri: string;
   readonly language_id: string;
   readonly notebook_cell_id?: string;
 }

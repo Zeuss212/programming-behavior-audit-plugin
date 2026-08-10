@@ -60,6 +60,13 @@ export interface PublishedPlan {
   readonly content_sha256: string;
 }
 
+export interface PublishPlanInput {
+  readonly plan_id?: string;
+  readonly problem_text: string;
+  readonly knowledge_points: readonly KnowledgePoint[];
+  readonly tests: readonly TestDraft[];
+}
+
 export interface DocumentRef {
   readonly document_id: string;
   readonly language_id: string;

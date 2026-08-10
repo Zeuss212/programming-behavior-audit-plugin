@@ -5,6 +5,10 @@
   "publisher": "bluedot-ai",
   "version": "0.1.0",
   "license": "BSD-3-Clause",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Zeuss212/programming-behavior-audit-plugin.git"
+  },
   "categories": [
     "Education"
   ],
@@ -149,7 +153,8 @@
     "test:soak": "node scripts/accelerated-soak.mjs",
     "test": "npm run test:unit",
     "verify": "npm run lint && npm run typecheck && npm run test:unit && npm run build",
-    "package": "npm run verify && vsce package --out behavior-audit-vscode-0.1.0.vsix"
+    "verify:vsix": "node scripts/verify-vsix.mjs behavior-audit-vscode-0.1.0.vsix",
+    "package": "npm run verify && vsce package --out behavior-audit-vscode-0.1.0.vsix && npm run verify:vsix"
   },
   "dependencies": {
     "@vscode/python-extension": "1.0.6",

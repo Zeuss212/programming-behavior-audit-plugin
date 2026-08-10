@@ -4,6 +4,8 @@ dist-test/**
 src/**
 test/**
 scripts/**
+node_modules/**
+esbuild.mjs
 *.config.*
 tsconfig*.json
 package-lock.json

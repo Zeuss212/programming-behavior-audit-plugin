@@ -1,5 +1,13 @@
 # 编程行为监控分析插件 0.3.0 Pilot
 
+## 独立 VS Code 版本
+
+仓库同时包含独立的 VS Code Desktop 扩展 0.1.0，它不依赖本页所述 JupyterLab
+wheel。源码和开发说明见 [`vscode-extension/README.md`](./vscode-extension/README.md)，
+安装交付目录见 [`deploy/vscode/release-0.1.0/`](./deploy/vscode/release-0.1.0/)。
+当前 VS Code 版本已通过自动化与 40 分钟加速模拟；真实桌面 5 分钟/40 分钟验收状态
+以交付目录中的验证记录为准。
+
 这是一个 JupyterLab 4 的本地前后端扩展。教师先输入题目，可选填本题希望考察的
 知识点；系统给出可编辑的知识点和测试建议，教师确认后发布题目方案。学生选择
 已发布方案并明确确认后开始监控；停止监控后，服务端才针对完整会话执行一次 AI

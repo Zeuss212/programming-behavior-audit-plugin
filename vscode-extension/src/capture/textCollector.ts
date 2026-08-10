@@ -12,6 +12,7 @@ export interface TextDocumentLike {
   readonly uri: {
     readonly scheme: string;
     readonly fsPath: string;
+    readonly fragment?: string;
   };
   readonly languageId: string;
   getText(): string;
@@ -168,9 +169,14 @@ export class TextCollector {
     ) {
       return undefined;
     }
+    const notebookCellId =
+      isNotebookCell && document.uri.fragment !== undefined
+        ? sha256Hex(document.uri.fragment).slice(0, 16)
+        : undefined;
     return {
       relative_uri: relativePath.split(sep).join('/'),
       language_id: document.languageId,
+      ...(notebookCellId === undefined ? {} : { notebook_cell_id: notebookCellId }),
     };
   }
 }

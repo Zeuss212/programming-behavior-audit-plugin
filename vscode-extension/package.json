@@ -44,14 +44,92 @@
     },
     "commands": [
       {
-        "command": "behaviorAudit.pasteAndRecord",
-        "title": "编程行为分析: 粘贴并记录摘要"
+        "command": "behaviorAudit.openTeacher",
+        "title": "编程行为分析: 打开教师端"
       },
       {
-        "command": "behaviorAudit.runPythonAndRecord",
+        "command": "behaviorAudit.openStudent",
+        "title": "编程行为分析: 打开学生端"
+      },
+      {
+        "command": "behaviorAudit.publishPlan",
+        "title": "编程行为分析: 发布考核方案"
+      },
+      {
+        "command": "behaviorAudit.suggestPlan",
+        "title": "编程行为分析: 生成 AI 方案建议（可选）"
+      },
+      {
+        "command": "behaviorAudit.importPlan",
+        "title": "编程行为分析: 导入考核方案"
+      },
+      {
+        "command": "behaviorAudit.exportPlan",
+        "title": "编程行为分析: 导出考核方案"
+      },
+      {
+        "command": "behaviorAudit.startCapture",
+        "title": "编程行为分析: 开始监控"
+      },
+      {
+        "command": "behaviorAudit.resumeCapture",
+        "title": "编程行为分析: 继续中断会话"
+      },
+      {
+        "command": "behaviorAudit.finishCapture",
+        "title": "编程行为分析: 结束并生成简报"
+      },
+      {
+        "command": "behaviorAudit.abandonCapture",
+        "title": "编程行为分析: 放弃当前会话"
+      },
+      {
+        "command": "behaviorAudit.runPython",
         "title": "编程行为分析: 运行当前 Python 文件并记录"
+      },
+      {
+        "command": "behaviorAudit.analyzeSession",
+        "title": "编程行为分析: 生成可选 AI 会话分析"
+      },
+      {
+        "command": "behaviorAudit.exportSession",
+        "title": "编程行为分析: 导出会话"
+      },
+      {
+        "command": "behaviorAudit.openDataLocation",
+        "title": "编程行为分析: 打开本地数据位置"
+      },
+      {
+        "command": "behaviorAudit.configureAiKey",
+        "title": "编程行为分析: 配置 AI Key"
+      },
+      {
+        "command": "behaviorAudit.clearAiKey",
+        "title": "编程行为分析: 清除 AI Key"
+      },
+      {
+        "command": "behaviorAudit.pasteAndRecord",
+        "title": "编程行为分析: 粘贴并记录摘要"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "behaviorAudit",
+          "title": "编程行为分析",
+          "icon": "media/activity.svg"
+        }
+      ]
+    },
+    "views": {
+      "behaviorAudit": [
+        {
+          "id": "behaviorAudit.sidebar",
+          "name": "教师与学生工作台",
+          "type": "webview"
+        }
+      ]
+    },
     "keybindings": [
       {
         "command": "behaviorAudit.pasteAndRecord",

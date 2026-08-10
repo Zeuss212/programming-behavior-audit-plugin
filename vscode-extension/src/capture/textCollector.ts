@@ -66,7 +66,10 @@ export class TextCollector {
 
   public constructor(private readonly host: TextCollectorHost) {}
 
-  public start(controller: Pick<CaptureController, 'record'>): CollectorDisposable {
+  public start(
+    controller: Pick<CaptureController, 'record'>,
+    registerPasteCommand = true,
+  ): CollectorDisposable {
     const dispatch = async (input: AuditEventInput): Promise<void> => {
       try {
         await controller.record(input);
@@ -75,7 +78,7 @@ export class TextCollector {
       }
     };
 
-    return composite([
+    const disposables: CollectorDisposable[] = [
       this.host.onDidChangeTextDocument(async (event) => {
         const document = this.documentRef(event.document);
         if (document === undefined || event.contentChanges.length === 0) {
@@ -138,15 +141,24 @@ export class TextCollector {
       this.host.onDidOpenTerminal(async () => {
         await dispatch({ kind: 'external_terminal_activity', payload: { occurred: true } });
       }),
-      this.host.registerCommand('behaviorAudit.pasteAndRecord', async () => {
-        this.pasteInProgress = true;
-        try {
-          await this.host.executeCommand('editor.action.clipboardPasteAction');
-        } finally {
-          this.pasteInProgress = false;
-        }
-      }),
-    ]);
+    ];
+    if (registerPasteCommand) {
+      disposables.push(
+        this.host.registerCommand('behaviorAudit.pasteAndRecord', () =>
+          this.pasteAndRecord(),
+        ),
+      );
+    }
+    return composite(disposables);
+  }
+
+  public async pasteAndRecord(): Promise<void> {
+    this.pasteInProgress = true;
+    try {
+      await this.host.executeCommand('editor.action.clipboardPasteAction');
+    } finally {
+      this.pasteInProgress = false;
+    }
   }
 
   private documentRef(document: TextDocumentLike): DocumentRef | undefined {

@@ -1,0 +1,10 @@
+.vscode-test/**
+coverage/**
+dist-test/**
+src/**
+test/**
+scripts/**
+*.config.*
+tsconfig*.json
+package-lock.json
+**/*.map

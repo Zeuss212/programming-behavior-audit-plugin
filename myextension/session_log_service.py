@@ -16,6 +16,7 @@ from typing import BinaryIO, Iterator
 from jsonschema import ValidationError
 
 from .analysis_job_store import AnalysisJobIntegrityError, AnalysisJobNotFoundError
+from .classroom_brief import build_classroom_brief
 from .canonical_json import canonical_json_bytes, sha256_json
 from .review_store import ReviewIntegrityError
 from .schema_registry import validate_schema
@@ -451,6 +452,25 @@ class SessionLogService:
                     "stale": False,
                 }
         raise SessionLogIntegrityError(_EXPORT_STABILITY_ERROR)
+
+    def export_classroom_brief(self, session_id: str) -> dict[str, object]:
+        """Persist a compact terminal-session brief without AI content."""
+
+        try:
+            brief = build_classroom_brief(self.get_detail(session_id))
+            validate_schema("classroom-brief-v1", brief)
+            self.session_store.write_classroom_brief(session_id, brief)
+            stored = self.session_store.read_classroom_brief(session_id)
+            if stored is None:
+                raise SessionIntegrityError(
+                    "Classroom brief disappeared after write."
+                )
+            validate_schema("classroom-brief-v1", stored)
+            return stored
+        except (SessionIntegrityError, ValidationError, ValueError) as error:
+            raise SessionLogIntegrityError(
+                "Stored session cannot produce a safe classroom brief."
+            ) from error
 
     def list_log_artifacts(self, session_id: str) -> list[dict[str, object]]:
         """Return the fixed public artifact order and durable status."""

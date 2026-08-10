@@ -1570,3 +1570,55 @@ def test_read_events_if_present_distinguishes_missing_from_unsafe(
     raw_path.symlink_to(target)
     with pytest.raises(SessionIntegrityError):
         store.read_events_if_present(session_id)
+
+
+def test_classroom_brief_round_trip_uses_private_file(tmp_path: Path) -> None:
+    store, session = started_session(tmp_path)
+    session_id = str(session["session_id"])
+    brief = {
+        "schema_version": 1,
+        "session_id": session_id,
+        "status": "complete",
+        "data_completeness": "complete",
+    }
+
+    assert store.read_classroom_brief(session_id) is None
+    store.write_classroom_brief(session_id, brief)
+
+    path = tmp_path / "sessions" / session_id / "classroom_brief.json"
+    assert store.read_classroom_brief(session_id) == brief
+    if os.name == "posix":
+        assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_classroom_brief_rejects_non_canonical_session_ids(
+    tmp_path: Path,
+) -> None:
+    store, _ = started_session(tmp_path)
+
+    with pytest.raises(InvalidSessionIdError):
+        store.read_classroom_brief("not-a-canonical-session")
+    with pytest.raises(InvalidSessionIdError):
+        store.write_classroom_brief("not-a-canonical-session", {})
+
+
+@pytest.mark.parametrize("entry_kind", ["directory", "symlink"])
+def test_classroom_brief_rejects_non_regular_files(
+    tmp_path: Path,
+    entry_kind: str,
+) -> None:
+    store, session = started_session(tmp_path)
+    session_id = str(session["session_id"])
+    path = tmp_path / "sessions" / session_id / "classroom_brief.json"
+    outside = tmp_path / "outside-classroom-brief.json"
+    outside.write_text('{"preserve": true}', encoding="utf-8")
+    if entry_kind == "directory":
+        path.mkdir()
+    else:
+        path.symlink_to(outside)
+
+    with pytest.raises(SessionIntegrityError):
+        store.read_classroom_brief(session_id)
+    with pytest.raises(SessionIntegrityError):
+        store.write_classroom_brief(session_id, {"schema_version": 1})
+    assert outside.read_text(encoding="utf-8") == '{"preserve": true}'

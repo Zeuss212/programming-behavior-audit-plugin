@@ -85,6 +85,16 @@ export interface AuditEvent {
   readonly payload: JsonObject;
 }
 
+export interface PythonRunResult {
+  readonly exitCode: number | null;
+  readonly signal: NodeJS.Signals | null;
+  readonly durationMs: number;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly stdoutTruncated: boolean;
+  readonly stderrTruncated: boolean;
+}
+
 export interface SessionState {
   readonly schema_version: typeof SESSION_SCHEMA_VERSION;
   readonly session_id: string;

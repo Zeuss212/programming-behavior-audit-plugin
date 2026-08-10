@@ -31,6 +31,10 @@
       {
         "command": "behaviorAudit.pasteAndRecord",
         "title": "编程行为分析: 粘贴并记录摘要"
+      },
+      {
+        "command": "behaviorAudit.runPythonAndRecord",
+        "title": "编程行为分析: 运行当前 Python 文件并记录"
       }
     ],
     "keybindings": [

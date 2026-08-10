@@ -10,7 +10,7 @@ import { DurableCaptureController } from './capture/captureController';
 import { TextCollector, type TextCollectorHost } from './capture/textCollector';
 import { workspaceIdentity } from './capture/workspaceIdentity';
 import { canonicalJson } from './domain/canonicalJson';
-import type { JsonObject, JsonValue, PublishedPlan } from './domain/types';
+import type { JsonObject, JsonValue, PublishedPlan, SessionState } from './domain/types';
 import { StableNotebookCollector, type NotebookCollectorHost } from './notebooks/notebookCollector';
 import { FilePlanRepository } from './plans/planRepository';
 import { FileReportService, FileSessionExporter } from './reports/exporter';
@@ -31,6 +31,15 @@ import { AuditStatusBar, type StatusBarItemLike } from './ui/statusBar';
 
 interface ActiveRuntime {
   readonly capture: DurableCaptureController;
+}
+
+export interface TestAuditApi {
+  readonly storageRoot: string;
+  startSession(): Promise<string>;
+  finishSession(): Promise<string>;
+  flush(): Promise<void>;
+  readBrief(sessionId: string): Promise<unknown>;
+  recoverPersistedSession(): Promise<SessionState | undefined>;
 }
 
 let activeRuntime: ActiveRuntime | undefined;
@@ -123,7 +132,9 @@ function notebookCollectorHost(
   };
 }
 
-export async function activate(context: VSCode.ExtensionContext): Promise<void> {
+export async function activate(
+  context: VSCode.ExtensionContext,
+): Promise<void | TestAuditApi> {
   const vscode = await import('vscode');
   const workspaceFolders = vscode.workspace.workspaceFolders ?? [];
   const workspaceRoot = workspaceFolders[0]?.uri.fsPath;
@@ -529,6 +540,50 @@ export async function activate(context: VSCode.ExtensionContext): Promise<void> 
       await reportService.materialize(terminal.session_id);
     }
     await refreshPresentation();
+  }
+
+  if (process.env.BEHAVIOR_AUDIT_TEST_MODE === '1') {
+    return {
+      storageRoot,
+      startSession: async () => {
+        const testPlan = await planRepository.publish({
+          problem_text: 'Extension Host 合成测试：实现空列表边界处理。',
+          knowledge_points: [
+            {
+              knowledge_point_id: 'kp-test-boundary',
+              name: '空列表边界',
+              description: '处理空列表输入。',
+              observation_basis: '记录到编辑、保存以及完成会话。',
+            },
+          ],
+          tests: [],
+        });
+        selectedPlan = testPlan;
+        consent = true;
+        return (await capture.start(testPlan, true)).session_id;
+      },
+      finishSession: async () => {
+        const terminal = await capture.finish('completed');
+        lastSessionId = terminal.session_id;
+        await reportService.materialize(terminal.session_id);
+        return terminal.session_id;
+      },
+      flush: async () => capture.flush(),
+      readBrief: async (sessionId) => {
+        const bytes = await sessionRepository.readArtifact(sessionId, 'classroom_brief');
+        return bytes === undefined
+          ? undefined
+          : JSON.parse(new TextDecoder().decode(bytes)) as unknown;
+      },
+      recoverPersistedSession: async () => {
+        const restarted = new FileSessionRepository(
+          storageRoot,
+          () => new Date(),
+          () => `unused-${randomUUID()}`,
+        );
+        return restarted.findActive(workspaceId);
+      },
+    };
   }
 }
 

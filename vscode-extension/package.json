@@ -144,7 +144,9 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test:unit": "vitest run",
+    "compile:test": "tsc -p tsconfig.test.json",
     "test:integration": "npm run build && npm run compile:test && node dist-test/test/integration/runTest.js",
+    "test:soak": "node scripts/accelerated-soak.mjs",
     "test": "npm run test:unit",
     "verify": "npm run lint && npm run typecheck && npm run test:unit && npm run build",
     "package": "npm run verify && vsce package --out behavior-audit-vscode-0.1.0.vsix"

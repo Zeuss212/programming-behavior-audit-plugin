@@ -17,12 +17,15 @@
     "types": [
       "node",
       "vscode",
+      "mocha",
       "vitest/globals"
     ],
     "noEmit": true
   },
   "include": [
     "src/**/*.ts",
+    "scripts/**/*.ts",
+    "test/integration/**/*.ts",
     "vitest.config.ts"
   ]
 }

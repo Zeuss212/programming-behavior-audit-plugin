@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "plan_id": "plan-fixture-001",
+  "version": 1,
+  "problem_text": "实现能够处理空列表的成绩分析函数。",
+  "knowledge_points": [
+    {
+      "knowledge_point_id": "kp-empty",
+      "name": "空列表边界",
+      "description": "处理空列表输入。",
+      "observation_basis": "运行空列表用例并返回约定结果。"
+    }
+  ],
+  "tests": [],
+  "published_at": "2026-08-10T00:00:00.000Z",
+  "content_sha256": "9854bff10cdf4b4cb8efd6b95c58b52a6167b4bd5ae54bc4be81026d44c2d0ac"
+}

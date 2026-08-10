@@ -17,6 +17,7 @@ import {
   ISessionLogFile,
   ISessionLogListResponse
 } from '../services/sessionLogApi';
+import { IClassroomBrief } from '../services/sessionBriefApi';
 import {
   BehaviorAnalysisSidebar,
   IBehaviorAnalysisSidebarDependencies,
@@ -133,6 +134,19 @@ const job: IAnalysisJob = {
   attempt_ids: [],
   analysis_id: null,
   error_code: null
+};
+
+const classroomBrief: IClassroomBrief = {
+  schema_version: 1,
+  request_id: '823e4567-e89b-42d3-a456-426614174000',
+  session_id: job.session_id,
+  status: 'complete',
+  data_completeness: 'complete',
+  active_duration_ms: 12_000,
+  run_summary: '运行 2 次，其中 1 次成功、1 次失败',
+  process_highlights: ['记录到 3 个代码编辑片段', '完成 2 次代码运行'],
+  attention_message: null,
+  generated_at: '2026-08-10T09:40:00+08:00'
 };
 
 const analysis: IAnalysisResult = {
@@ -306,6 +320,7 @@ function dependencies(
     reviewDimension: jest.fn(),
     retryAnalysisJob: jest.fn(),
     getStoredActiveSession: jest.fn(async () => null),
+    getClassroomBrief: jest.fn(async () => classroomBrief),
     abandonSession: jest.fn(),
     deleteSession: jest.fn(
       async (_settings, sessionId) =>
@@ -1491,7 +1506,7 @@ describe('BehaviorAnalysisSidebar', () => {
     sidebar.dispose();
   });
 
-  it('does not start a stored collecting session and abandons it explicitly', async () => {
+  it('automatically resumes a stored collecting session without creating another session', async () => {
     const stored: ISessionState = {
       schema_version: 1,
       request_id: 'synthetic-stored-request',
@@ -1506,25 +1521,27 @@ describe('BehaviorAnalysisSidebar', () => {
       analysis_job_id: null
     };
     const capture = createCapture();
+    capture.resume.mockImplementation(async () => {
+      capture.isEnabled.mockReturnValue(true);
+      capture.snapshot.mockReturnValue({
+        ...snapshot,
+        sessionId: stored.session_id,
+        uploadState: 'collecting',
+        eventCount: stored.received_event_count,
+        lastSequence: stored.last_contiguous_sequence,
+        lastServerSequence: stored.last_contiguous_sequence
+      });
+    });
     const deps = dependencies(capture, [profile]);
     deps.getStoredActiveSession = jest.fn(async () => stored);
-    deps.abandonSession = jest.fn(async () => ({
-      ...stored,
-      status: 'abandoned' as const
-    }));
     const sidebar = new BehaviorAnalysisSidebar(deps);
     await flush();
+
     expect(capture.start).not.toHaveBeenCalled();
-    expect(sidebar.node.textContent).toContain('检测到未完成会话');
-    Array.from(sidebar.node.querySelectorAll<HTMLButtonElement>('button'))
-      .find(value => value.textContent === '放弃未完成会话')
-      ?.click();
-    await flush();
-    expect(deps.abandonSession).toHaveBeenCalledWith(
-      settings,
-      stored.session_id,
-      'teacher_abandoned_local_session'
-    );
+    expect(capture.resume).toHaveBeenCalledWith(stored);
+    expect(sidebar.node.textContent).toContain('已恢复本次监控');
+    expect(sidebar.node.textContent).toContain('监控状态：进行中');
+    expect(sidebar.node.textContent).not.toContain('放弃未完成会话');
     sidebar.dispose();
   });
 
@@ -1617,6 +1634,7 @@ describe('BehaviorAnalysisSidebar', () => {
     const deps = dependencies(capture, [profile]);
     deps.storage = storage;
     deps.getStoredActiveSession = jest.fn(async () => finalized);
+    deps.getClassroomBrief = jest.fn(async () => classroomBrief);
     deps.getAnalysisJob = jest.fn(async () => ({
       ...job,
       status: 'partial' as const
@@ -1637,6 +1655,13 @@ describe('BehaviorAnalysisSidebar', () => {
     expect(sidebar.node.textContent).toContain(
       '数据采集完成，尚未进行 AI 分析'
     );
+    expect(sidebar.node.textContent).toContain('本节课本地简报');
+    expect(sidebar.node.textContent).toContain(
+      '本地简报已保存，教师端同步将在后续接入'
+    );
+    expect(
+      sidebar.node.querySelectorAll('.jp-BehaviorAudit-classroomBrief dt')
+    ).toHaveLength(5);
     expect(
       sidebar.node.querySelector('.jp-BehaviorAudit-resultCard')
     ).toBeNull();
@@ -2979,6 +3004,9 @@ describe('BehaviorAnalysisSidebar', () => {
       removeItem: jest.fn()
     } as unknown as Storage;
     const capture = createCapture();
+    capture.resume.mockRejectedValue(
+      new Error('synthetic durable recovery failure')
+    );
     capture.snapshot.mockImplementation(() => current);
     capture.start.mockImplementation(async () => {
       current = {
@@ -3127,6 +3155,12 @@ describe('BehaviorAnalysisSidebar', () => {
     const deps = dependencies(capture, [profile]);
     deps.storage = storage;
     deps.getStoredActiveSession = jest.fn(async () => abandoned);
+    deps.getClassroomBrief = jest.fn(async () => ({
+      ...classroomBrief,
+      status: 'partial' as const,
+      data_completeness: 'partial' as const,
+      attention_message: '建议教师结合过程记录进行询问。'
+    }));
     const sidebar = new BehaviorAnalysisSidebar(deps);
     await flush();
     expect(capture.start).not.toHaveBeenCalled();
@@ -3134,6 +3168,13 @@ describe('BehaviorAnalysisSidebar', () => {
       'myextension:active-session'
     );
     expect(sidebar.node.textContent).toContain('不会自动分析');
+    expect(sidebar.node.textContent).toContain('提前结束');
+    expect(sidebar.node.textContent).toContain(
+      '建议教师结合过程记录进行询问。'
+    );
+    expect(sidebar.node.textContent).toContain(
+      '本地简报已保存，教师端同步将在后续接入'
+    );
     sidebar.dispose();
   });
 

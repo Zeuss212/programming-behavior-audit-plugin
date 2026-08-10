@@ -26,6 +26,10 @@ import {
 } from '../services/analysisApi';
 import { getProfileVersion, listProfiles } from '../services/profileApi';
 import { abandonSession, deleteSession } from '../services/sessionApi';
+import {
+  getClassroomBrief,
+  IClassroomBrief
+} from '../services/sessionBriefApi';
 import { openLogFolder } from '../services/logFolderApi';
 import { ISessionLogFile, listSessionLogs } from '../services/sessionLogApi';
 import { requestAPI } from '../request';
@@ -61,6 +65,7 @@ export interface IBehaviorAnalysisSidebarDependencies {
   reviewDimension: typeof reviewDimension;
   retryAnalysisJob: typeof retryAnalysisJob;
   getStoredActiveSession: typeof getStoredActiveSession;
+  getClassroomBrief: typeof getClassroomBrief;
   abandonSession: typeof abandonSession;
   deleteSession: typeof deleteSession;
   openLogFolder: typeof openLogFolder;
@@ -108,6 +113,7 @@ export function sidebarDependencies(
     reviewDimension,
     retryAnalysisJob,
     getStoredActiveSession: actions.getStoredActiveSession,
+    getClassroomBrief,
     abandonSession,
     deleteSession,
     openLogFolder: actions.openLogFolder,
@@ -348,6 +354,8 @@ export class BehaviorAnalysisSidebar extends Widget {
   private job: IAnalysisJob | null = null;
   private analysis: IAnalysisResult | null = null;
   private analysisProfile: IDimensionProfileVersion | null = null;
+  private classroomBrief: IClassroomBrief | null = null;
+  private classroomBriefFeedback = '';
   private currentSessionId: string | null = null;
   private pollTimer: TimerHandle | null = null;
   private observationTimer: TimerHandle | null = null;
@@ -512,6 +520,8 @@ export class BehaviorAnalysisSidebar extends Widget {
       this.job = null;
       this.analysis = null;
       this.analysisProfile = null;
+      this.classroomBrief = null;
+      this.classroomBriefFeedback = '';
       this.sessionLogs = emptySessionLogs();
       this.sessionLogsSessionId = started.sessionId;
       this.sessionLogsFeedback = '';
@@ -578,6 +588,7 @@ export class BehaviorAnalysisSidebar extends Widget {
         error_code: null
       };
       this.notice = '分析已排队。';
+      await this.loadClassroomBrief(finalized.session_id, this.generation);
       void this.refreshSessionLogs(finalized.session_id, this.generation);
       this.startPolling();
     } catch {
@@ -843,26 +854,35 @@ export class BehaviorAnalysisSidebar extends Widget {
       this.currentSessionId = session.session_id;
       this.pendingSession = session;
       await this.refreshSessionLogs(session.session_id, generation);
-      if (session.status === 'finalized' && session.analysis_job_id) {
+      if (session.status === 'finalized') {
+        await this.loadClassroomBrief(session.session_id, generation);
+        if (!this.isCurrentGeneration(generation)) return;
         try {
           this.deps.storage.removeItem('myextension:active-session');
         } catch {
           // Finalized server state remains authoritative.
         }
-        this.job = await this.deps.getAnalysisJob(
-          this.deps.settings,
-          session.analysis_job_id
-        );
-        if (!this.isCurrentGeneration(generation)) return;
-        if (this.job.status === 'ready' || this.job.status === 'partial') {
-          await this.loadResult(session.session_id, generation);
-          if (this.job.status === 'ready' && this.analysisLogIsGenerating()) {
+        if (session.analysis_job_id) {
+          this.job = await this.deps.getAnalysisJob(
+            this.deps.settings,
+            session.analysis_job_id
+          );
+          if (!this.isCurrentGeneration(generation)) return;
+          if (this.job.status === 'ready' || this.job.status === 'partial') {
+            await this.loadResult(session.session_id, generation);
+            if (!this.isCurrentGeneration(generation)) return;
+            if (this.job.status === 'ready' && this.analysisLogIsGenerating()) {
+              this.startPolling();
+            }
+          } else {
             this.startPolling();
           }
         } else {
-          this.startPolling();
+          this.notice = '本地简报已保存，AI 分析任务尚未生成。';
         }
       } else if (session.status === 'abandoned') {
+        await this.loadClassroomBrief(session.session_id, generation);
+        if (!this.isCurrentGeneration(generation)) return;
         try {
           this.deps.storage.removeItem('myextension:active-session');
         } catch {
@@ -874,6 +894,19 @@ export class BehaviorAnalysisSidebar extends Widget {
         this.sessionLogsSessionId = null;
         this.sessionLogsFeedback = '';
         this.notice = '检测到已放弃会话；该会话不会自动分析。';
+      } else if (session.status === 'collecting') {
+        try {
+          await this.deps.capture.resume(session);
+          if (!this.isCurrentGeneration(generation)) return;
+          this.pendingSession = null;
+          this.upload = this.deps.capture.snapshot();
+          this.notice = `已恢复本次监控（${session.session_id.slice(0, 8)}…）。`;
+          this.noticeTone = 'info';
+        } catch {
+          if (!this.isCurrentGeneration(generation)) return;
+          this.notice = `检测到未完成会话（${session.session_id.slice(0, 8)}…），自动恢复失败，可放弃后重新开始。`;
+          this.noticeTone = 'error';
+        }
       } else {
         this.notice = `检测到未完成会话（${session.session_id.slice(0, 8)}…），已收到 ${session.received_event_count} 条事件。`;
       }
@@ -883,6 +916,36 @@ export class BehaviorAnalysisSidebar extends Widget {
       this.noticeTone = 'error';
     }
     this.render();
+  }
+
+  private async loadClassroomBrief(
+    sessionId: string,
+    generation: number
+  ): Promise<void> {
+    try {
+      const brief = await this.deps.getClassroomBrief(
+        this.deps.settings,
+        sessionId
+      );
+      if (
+        !this.isCurrentGeneration(generation) ||
+        this.currentSessionId !== sessionId
+      )
+        return;
+      this.classroomBrief = brief;
+      this.classroomBriefFeedback = '';
+    } catch (error) {
+      if (
+        !this.isCurrentGeneration(generation) ||
+        this.currentSessionId !== sessionId
+      )
+        return;
+      this.classroomBrief = null;
+      this.classroomBriefFeedback =
+        error instanceof ApiError && error.status === 409
+          ? '本地简报暂未生成。'
+          : '本地简报读取失败，可刷新页面重试。';
+    }
   }
 
   private async abandonPending(): Promise<void> {
@@ -919,6 +982,12 @@ export class BehaviorAnalysisSidebar extends Widget {
       ) {
         throw new Error('Abandonment receipt does not match the session.');
       }
+      await this.loadClassroomBrief(session.session_id, generation);
+      if (
+        this.abandonInFlight !== operation ||
+        !this.isCurrentGeneration(generation)
+      )
+        return;
       try {
         this.deps.storage.removeItem('myextension:active-session');
       } catch {
@@ -1013,6 +1082,8 @@ export class BehaviorAnalysisSidebar extends Widget {
       this.captureSection(),
       status
     );
+    const classroomBrief = this.classroomBriefSection();
+    if (classroomBrief) this.node.appendChild(classroomBrief);
     if (
       this.pendingSession?.status === 'collecting' ||
       this.pendingSession?.status === 'finalizing'
@@ -1032,6 +1103,69 @@ export class BehaviorAnalysisSidebar extends Widget {
     );
     this.restoreInteractiveState();
     this.syncObservationTimer();
+  }
+
+  private classroomBriefSection(): HTMLElement | null {
+    const brief = this.classroomBrief;
+    if (!brief && !this.classroomBriefFeedback) return null;
+
+    const section = node(
+      'section',
+      'jp-BehaviorAudit-sidebarSection jp-BehaviorAudit-classroomBrief'
+    );
+    const heading = node('h2');
+    heading.textContent = '本节课本地简报';
+    section.appendChild(heading);
+    if (!brief) {
+      const feedback = node('p', 'jp-BehaviorAudit-notice');
+      feedback.setAttribute('role', 'status');
+      feedback.textContent = this.classroomBriefFeedback;
+      section.appendChild(feedback);
+      return section;
+    }
+
+    const summary = node('dl', 'jp-BehaviorAudit-summary');
+    const addItem = (label: string, value: string | HTMLElement): void => {
+      const term = node('dt');
+      term.textContent = label;
+      const description = node('dd');
+      if (typeof value === 'string') description.textContent = value;
+      else description.appendChild(value);
+      summary.append(term, description);
+    };
+    addItem('完成状态', brief.status === 'complete' ? '已完成' : '提前结束');
+    addItem(
+      '数据完整性',
+      brief.data_completeness === 'complete' ? '完整' : '部分'
+    );
+    addItem('有效编辑时长', formatDurationMs(brief.active_duration_ms));
+    addItem('运行概况', brief.run_summary);
+    const highlights = node('ul');
+    const visibleHighlights = brief.process_highlights.slice(0, 3);
+    if (visibleHighlights.length === 0) {
+      const item = node('li');
+      item.textContent = '暂无可展示亮点';
+      highlights.appendChild(item);
+    } else {
+      for (const text of visibleHighlights) {
+        const item = node('li');
+        item.textContent = text;
+        highlights.appendChild(item);
+      }
+    }
+    addItem('过程亮点', highlights);
+    section.appendChild(summary);
+
+    if (brief.attention_message) {
+      const attention = node('p', 'jp-BehaviorAudit-notice');
+      attention.setAttribute('role', 'note');
+      attention.textContent = brief.attention_message;
+      section.appendChild(attention);
+    }
+    const syncNotice = node('p', 'jp-BehaviorAudit-notice');
+    syncNotice.textContent = '本地简报已保存，教师端同步将在后续接入';
+    section.appendChild(syncNotice);
+    return section;
   }
 
   private captureInteractiveState(): void {
@@ -1975,6 +2109,8 @@ export class BehaviorAnalysisSidebar extends Widget {
             this.upload = { ...EMPTY_UPLOAD };
             this.analysis = null;
             this.analysisProfile = null;
+            this.classroomBrief = null;
+            this.classroomBriefFeedback = '';
             this.job = null;
             this.pendingSession = null;
             this.stopFailed = false;

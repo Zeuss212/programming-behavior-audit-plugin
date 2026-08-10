@@ -201,6 +201,20 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '500': {$ref: '#/components/responses/ServerError'}
+  /myextension/sessions/{session_id}/brief:
+    get:
+      operationId: getClassroomBrief
+      description: Returns the private-safe deterministic local classroom brief for a terminal session.
+      security: [{JupyterServerAuth: []}]
+      parameters: [{$ref: '#/components/parameters/SessionId'}]
+      responses:
+        '200': {$ref: '#/components/responses/ClassroomBriefResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/ServerError'}
   /myextension/sessions/{session_id}/logs/{kind}:
     get:
       operationId: viewSessionLog
@@ -382,6 +396,7 @@ components:
         assessment_tests: {$ref: '../../myextension/api_schemas/assessment-tests-response-v1.json#/properties/assessment_tests'}
     LogFolderOpenResponse: {$ref: '../../myextension/api_schemas/log-folder-open-response-v1.json'}
     SessionLogListResponse: {$ref: '../../myextension/api_schemas/session-log-list-response-v1.json'}
+    ClassroomBriefResponse: {$ref: '../../myextension/api_schemas/classroom-brief-response-v1.json'}
     SessionStart: {$ref: '../../myextension/api_schemas/session-start-v1.json'}
     SegmentBatch: {$ref: '../../myextension/api_schemas/segment-batch-v1.json'}
     DimensionResult: {$ref: '../../myextension/api_schemas/dimension-result-v1.json'}
@@ -591,6 +606,7 @@ components:
     AssessmentTestsResponse: {description: Editable, unconfirmed structured test candidates., content: {application/json: {schema: {$ref: '#/components/schemas/AssessmentTestsResponse'}}}}
     LogFolderOpenResponse: {description: Fixed local sessions folder opened without returning its path., content: {application/json: {schema: {$ref: '#/components/schemas/LogFolderOpenResponse'}}}}
     SessionLogListResponse: {description: Fixed current-session log list., content: {application/json: {schema: {$ref: '#/components/schemas/SessionLogListResponse'}}}}
+    ClassroomBriefResponse: {description: Private-safe deterministic local classroom brief., content: {application/json: {schema: {$ref: '#/components/schemas/ClassroomBriefResponse'}}}}
     SessionStartResponse: {description: Session started., content: {application/json: {schema: {$ref: '#/components/schemas/SessionStartResponse'}}}}
     SegmentReceiptResponse: {description: Segments received., content: {application/json: {schema: {$ref: '#/components/schemas/SegmentReceiptResponse'}}}}
     SessionStateResponse: {description: Session state., content: {application/json: {schema: {$ref: '#/components/schemas/SessionStateResponse'}}}}

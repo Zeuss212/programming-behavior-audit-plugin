@@ -472,6 +472,23 @@ class SessionLogService:
                 "Stored session cannot produce a safe classroom brief."
             ) from error
 
+    def get_classroom_brief(
+        self,
+        session_id: str,
+    ) -> dict[str, object] | None:
+        """Read and validate only the stored private-safe classroom brief."""
+
+        try:
+            brief = self.session_store.read_classroom_brief(session_id)
+            if brief is None:
+                return None
+            validate_schema("classroom-brief-v1", brief)
+            return brief
+        except (SessionIntegrityError, ValidationError) as error:
+            raise SessionLogIntegrityError(
+                "Stored classroom brief is unavailable."
+            ) from error
+
     def list_log_artifacts(self, session_id: str) -> list[dict[str, object]]:
         """Return the fixed public artifact order and durable status."""
 

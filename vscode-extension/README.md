@@ -41,4 +41,12 @@ npm run package
 
 `test:integration` 首次运行会从微软官方下载约 249 MB 的 VS Code 1.125.0 测试运行时。
 若外网无法访问 `update.code.visualstudio.com`，该项会保持未验证，而不是被跳过后宣称
-成功。
+成功。也可直接使用已安装的 VS Code：
+
+```bash
+VSCODE_EXECUTABLE_PATH='/Applications/Visual Studio Code.app/Contents/MacOS/Code' \
+  npm run test:integration
+```
+
+集成测试会把 fixture 复制到短临时目录，不会修改仓库中的原始测试文件，并避免 macOS
+IPC socket 路径长度限制。

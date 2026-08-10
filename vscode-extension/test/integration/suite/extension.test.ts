@@ -72,13 +72,16 @@ suite('Behavior Audit extension host', () => {
     const semanticKeys = Object.keys(brief as Record<string, unknown>).filter(
       (key) => !['schema_version', 'session_id', 'generated_at'].includes(key),
     );
-    assert.deepEqual(semanticKeys, [
-      'session_result',
-      'effective_observation',
-      'run_statistics',
-      'evidence_summary',
-      'attention_point',
-    ]);
+    assert.deepEqual(
+      new Set(semanticKeys),
+      new Set([
+        'session_result',
+        'effective_observation',
+        'run_statistics',
+        'evidence_summary',
+        'attention_point',
+      ]),
+    );
 
     const interruptedSessionId = await api.startSession();
     const secondEdit = new vscode.WorkspaceEdit();

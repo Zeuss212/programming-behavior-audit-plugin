@@ -1,13 +1,15 @@
-# 编程行为监控分析插件 0.2.2 Pilot
+# 编程行为监控分析插件 0.3.0 Pilot
 
 这是一个 JupyterLab 4 的本地前后端扩展。教师先输入题目，可选填本题希望考察的
 知识点；系统给出可编辑的知识点和测试建议，教师确认后发布题目方案。学生选择
 已发布方案并明确确认后开始监控；停止监控后，服务端才针对完整会话执行一次 AI
 行为证据分析，生成会话级结果卡和可追加的教师复核。
 
-0.2.2 演示热修复会在知识点显示、确认和发布草稿构建时自动补齐缺失的三个
+0.3.0 包含 0.2.2 的演示热修复：知识点显示、确认和发布草稿构建时自动补齐缺失的三个
 观察字段，避免采用 AI 建议后因旧草稿或不完整响应而卡在“请补全观察依据”。
 已有的教师文案不会被默认内容覆盖；知识点名称仍由教师确认，系统不会凭空编造。
+
+0.3.0 还增加课堂可靠性：未确认事件先保存到浏览器 IndexedDB，刷新后可自动续接服务端仍在采集的会话；正常停止、明确放弃或超时结束后都会生成确定性本地简报。关闭页面后不会再产生新事件；恢复只覆盖已进入 IndexedDB 或 BAMS 的数据。本阶段不会自动将简报发送到 FinColab 教师端。
 
 安装与启动命令见 [启动说明.md](./启动说明.md)，数据边界与功能说明见
 [项目说明.md](./项目说明.md)；BLUEDOT 工作台的基础镜像安装见
@@ -164,7 +166,7 @@ AI 结论只能作为辅助教学判断，教师复核单独追加保存。真�
 - npm 包：`myextension`
 - Python 包：`myextension`
 - JupyterLab 插件 ID：`myextension:plugin`
-- 当前 wheel：`dist/myextension-0.2.2-py3-none-any.whl`
+- 当前 wheel：`dist/myextension-0.3.0-py3-none-any.whl`
 
 Wheel 是预构建扩展，普通部署不需要 Node.js。它包含前端 prebuilt
 labextension、服务端配置、API schemas、维度模板、信号字典和测试资源。
@@ -194,7 +196,7 @@ PATH="$PWD/.venv/bin:$PATH" .venv/bin/python -m build --wheel
 ```
 
 不要手工修改 `myextension/_version.py`；Python 版本由 `package.json` 的
-`0.2.2` 通过 `hatch-nodejs-version` 派生。
+`0.3.0` 通过 `hatch-nodejs-version` 派生。
 
 ## 常见问题
 

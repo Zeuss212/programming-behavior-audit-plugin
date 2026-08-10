@@ -27,7 +27,8 @@ const CANONICAL_UUID_PATTERN =
 const PERSISTENCE_FAILURE_REASON = 'active_session_persistence_failed';
 
 interface IBehaviorCaptureUploader extends IBehaviorSegmentSink {
-  start(session: ISessionStartResponse): void;
+  start(session: ISessionStartResponse): Promise<void>;
+  resume(session: ISessionState): Promise<void>;
   finalize(): Promise<ISessionFinalizeResponse>;
   snapshot(): IUploadSnapshot;
   subscribe(listener: (snapshot: IUploadSnapshot) => void): () => void;
@@ -73,6 +74,7 @@ export interface IBehaviorCaptureController {
   isEnabled(): boolean;
   snapshot(): IUploadSnapshot;
   start(profile: IProfileReference): Promise<void>;
+  resume(session: ISessionState): Promise<void>;
   stop(): Promise<ISessionFinalizeResponse>;
   subscribe(listener: (snapshot: IUploadSnapshot) => void): () => void;
 }
@@ -139,7 +141,7 @@ export function startBehaviorCapture(
   const logger = new BehaviorEventLogger(timelineBuilder);
   logger.setEnabled(false);
   let notebookMonitor: INotebookMonitorBoundary | null = null;
-  let startPromise: Promise<void> | null = null;
+  let activationPromise: Promise<void> | null = null;
 
   const editState = new EditStateMachine(
     logger,
@@ -207,7 +209,7 @@ export function startBehaviorCapture(
     }
 
     try {
-      uploader.start(session);
+      await uploader.start(session);
     } catch (error) {
       await rollbackServerSession(session.session_id);
       throw error;
@@ -217,27 +219,58 @@ export function startBehaviorCapture(
     logger.setEnabled(true);
   };
 
-  const startCapture = (profile: IProfileReference): Promise<void> => {
-    if (startPromise !== null) {
-      return Promise.reject(
-        new Error('A capture session is already starting.')
+  const runResume = async (session: ISessionState): Promise<void> => {
+    if (session.status !== 'collecting') {
+      throw new Error('Only a collecting capture session can be resumed.');
+    }
+    if (!CANONICAL_UUID_PATTERN.test(session.session_id)) {
+      throw new Error('Server session ID must be a canonical lowercase UUID.');
+    }
+    if (readActiveSessionId(dependencies.storage) !== session.session_id) {
+      throw new Error(
+        'Stored active session does not match the server session.'
       );
     }
-    const operation = runStart(profile);
-    startPromise = operation;
+
+    await uploader.resume(session);
+    timelineBuilder.reset();
+    editState.reset();
+    logger.setEnabled(true);
+  };
+
+  const activate = (operation: Promise<void>): Promise<void> => {
+    activationPromise = operation;
     operation.then(
       () => {
-        if (startPromise === operation) {
-          startPromise = null;
+        if (activationPromise === operation) {
+          activationPromise = null;
         }
       },
       () => {
-        if (startPromise === operation) {
-          startPromise = null;
+        if (activationPromise === operation) {
+          activationPromise = null;
         }
       }
     );
     return operation;
+  };
+
+  const startCapture = (profile: IProfileReference): Promise<void> => {
+    if (activationPromise !== null) {
+      return Promise.reject(
+        new Error('A capture session is already starting or active.')
+      );
+    }
+    return activate(runStart(profile));
+  };
+
+  const resumeCapture = (session: ISessionState): Promise<void> => {
+    if (activationPromise !== null) {
+      return Promise.reject(
+        new Error('A capture session is already starting or active.')
+      );
+    }
+    return activate(runResume(session));
   };
 
   return {
@@ -246,10 +279,11 @@ export function startBehaviorCapture(
     snapshot: () => uploader.snapshot(),
     subscribe: listener => uploader.subscribe(listener),
     start: startCapture,
+    resume: resumeCapture,
     stop: async () => {
-      const pendingStart = startPromise;
-      if (pendingStart !== null) {
-        await pendingStart;
+      const pendingActivation = activationPromise;
+      if (pendingActivation !== null) {
+        await pendingActivation;
       }
       editState.close('context_change');
       timelineBuilder.closeObservation(

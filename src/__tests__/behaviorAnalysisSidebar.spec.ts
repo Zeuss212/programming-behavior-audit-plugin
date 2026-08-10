@@ -278,6 +278,7 @@ function createCapture(): jest.Mocked<IBehaviorCaptureController> {
       (_listener: (value: IUploadSnapshot) => void) => () => undefined
     ),
     start: jest.fn(async _profile => undefined),
+    resume: jest.fn(async _session => undefined),
     stop: jest.fn(
       async (): Promise<ISessionFinalizeResponse> => ({
         schema_version: 1,

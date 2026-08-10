@@ -96,9 +96,10 @@ export interface SessionState {
   readonly started_at: string;
   readonly updated_at: string;
   readonly last_event_seq: number;
+  readonly last_persisted_seq: number;
   readonly last_flushed_at?: string;
   readonly ended_at?: string;
-  readonly outcome_reason?: string;
+  readonly status_reason?: string;
 }
 
 export interface EvidenceSummaryItem {

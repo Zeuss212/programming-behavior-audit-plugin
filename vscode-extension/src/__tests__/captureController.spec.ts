@@ -143,6 +143,7 @@ describe('DurableCaptureController', () => {
         await Promise.resolve();
         yield* [] as AuditEvent[];
       },
+      readPlanSnapshot: () => Promise.resolve(plan()),
       writeArtifact: () => Promise.resolve(),
       readArtifact: () => Promise.resolve(undefined),
       findActive: () => Promise.resolve(state),

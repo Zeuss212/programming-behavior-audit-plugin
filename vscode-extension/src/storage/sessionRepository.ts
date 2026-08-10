@@ -63,6 +63,7 @@ export interface SessionRepository {
     reason?: string,
   ): Promise<SessionState>;
   readEvents(sessionId: string): AsyncIterable<AuditEvent>;
+  readPlanSnapshot(sessionId: string): Promise<PublishedPlan | undefined>;
   writeArtifact(
     sessionId: string,
     kind: SessionArtifactKind,
@@ -359,6 +360,32 @@ export class FileSessionRepository implements SessionRepository {
     } finally {
       lines.close();
       stream.destroy();
+    }
+  }
+
+  public async readPlanSnapshot(sessionId: string): Promise<PublishedPlan | undefined> {
+    const location = await this.locateSession(sessionId);
+    if (location === undefined) {
+      return undefined;
+    }
+    try {
+      const value = JSON.parse(await readFile(join(location.directory, 'plan_snapshot.json'), 'utf8')) as unknown;
+      return validatePlan(value);
+    } catch (error) {
+      if (error instanceof AuditError && error.code === 'import_invalid') {
+        throw new AuditError(
+          'storage_corrupt',
+          '本地会话的方案快照损坏。',
+          '请保留原文件并导出诊断信息。',
+          error,
+        );
+      }
+      throw new AuditError(
+        'storage_unavailable',
+        '无法读取本地会话的方案快照。',
+        '请检查本机存储权限后重试。',
+        error,
+      );
     }
   }
 

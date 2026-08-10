@@ -148,6 +148,7 @@ export interface ExportManifestFile {
 
 export interface ExportManifest {
   readonly schema_version: typeof EXPORT_MANIFEST_SCHEMA_VERSION;
+  readonly extension_version: string;
   readonly session_id: string;
   readonly exported_at: string;
   readonly files: readonly ExportManifestFile[];

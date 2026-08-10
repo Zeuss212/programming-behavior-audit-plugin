@@ -28,7 +28,7 @@ from myextension.dimension_analyzer import analyze_session
 from myextension.dimension_profile_store import DimensionProfileStore
 from myextension.llm_transport import LlmTransportError
 from myextension.review_store import ReviewConflictError, ReviewStore
-from myextension.session_janitor import SessionJanitor
+from myextension.session_janitor import SessionJanitor, stale_session_timeout
 from myextension.session_store import SessionStore
 from myextension.tests.test_dimension_analyzer import (
     events as analyzer_events,
@@ -1477,6 +1477,79 @@ def test_janitor_runs_once_on_start_and_is_idempotent():
     assert all(call[0].tzinfo is not None for call in fake.calls)
 
 
+@pytest.mark.parametrize(
+    ("configured", "expected_seconds"),
+    [
+        (None, 1800),
+        ("300", 300),
+        ("3600", 3600),
+        ("299", 1800),
+        ("3601", 1800),
+        ("bad", 1800),
+    ],
+)
+def test_stale_session_timeout_is_bounded(
+    monkeypatch,
+    configured,
+    expected_seconds,
+):
+    variable = "JUPYTERLAB_BEHAVIOR_AUDIT_STALE_SESSION_TIMEOUT_SEC"
+    if configured is None:
+        monkeypatch.delenv(variable, raising=False)
+    else:
+        monkeypatch.setenv(variable, configured)
+
+    assert stale_session_timeout().total_seconds() == expected_seconds
+
+
+def test_janitor_refreshes_one_brief_after_new_stale_abandonment():
+    from datetime import datetime, timedelta, timezone
+
+    session_id = "30000000-0000-4000-8000-000000000099"
+
+    class OneShotStore:
+        def __init__(self):
+            self.calls = 0
+
+        def abandon_stale(self, *, now, timeout):
+            self.calls += 1
+            return [session_id] if self.calls == 1 else []
+
+    refreshed: list[str] = []
+    janitor = SessionJanitor(
+        OneShotStore(),  # type: ignore[arg-type]
+        timeout=timedelta(minutes=5),
+        on_abandoned=refreshed.append,
+    )
+    observed_at = datetime(2026, 8, 10, tzinfo=timezone.utc)
+
+    assert janitor.run_once(now=observed_at) == [session_id]
+    assert janitor.run_once(now=observed_at + timedelta(minutes=1)) == []
+    assert refreshed == [session_id]
+
+
+def test_janitor_isolates_brief_callback_failure():
+    from datetime import datetime, timezone
+
+    session_id = "30000000-0000-4000-8000-000000000099"
+
+    class Store:
+        def abandon_stale(self, *, now, timeout):
+            return [session_id]
+
+    def fail_refresh(_session_id):
+        raise RuntimeError("private callback detail")
+
+    janitor = SessionJanitor(
+        Store(),  # type: ignore[arg-type]
+        on_abandoned=fail_refresh,
+    )
+
+    assert janitor.run_once(
+        now=datetime(2026, 8, 10, tzinfo=timezone.utc)
+    ) == [session_id]
+
+
 def test_extension_lifecycle_reuses_services_and_enqueues_recovery_once(
     tmp_path,
     monkeypatch,
@@ -1918,9 +1991,11 @@ def test_extension_startup_failure_rolls_back_only_new_services(
     class FakeJanitor:
         instances: list["FakeJanitor"] = []
 
-        def __init__(self, session_store):
+        def __init__(self, session_store, *, timeout, on_abandoned):
             self.shutdown_calls = 0
             self.start_calls = 0
+            self.timeout = timeout
+            self.on_abandoned = on_abandoned
             self.instances.append(self)
 
         def start(self):
@@ -1973,6 +2048,8 @@ def test_extension_startup_failure_rolls_back_only_new_services(
     assert FakeWorker.instances[0].autostart is False
     assert callable(FakeWorker.instances[0].terminal_callback)
     assert FakeJanitor.instances[0].shutdown_calls == 1
+    assert FakeJanitor.instances[0].timeout.total_seconds() == 1800
+    assert callable(FakeJanitor.instances[0].on_abandoned)
 
 
 def test_extension_does_not_shutdown_injected_services_on_startup_failure(
@@ -2217,7 +2294,7 @@ def test_failed_loader_then_immediate_retry_has_one_execution_owner(
     class FailFirstJanitor:
         starts = 0
 
-        def __init__(self, session_store):
+        def __init__(self, session_store, *, timeout, on_abandoned):
             self.shutdown_calls = 0
 
         def start(self):

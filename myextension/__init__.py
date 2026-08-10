@@ -13,8 +13,9 @@ from .routes import setup_route_handlers
 from .analysis_job_store import AnalysisJobStore
 from .analysis_worker import AnalysisWorker
 from .behavior_log_store import resolve_log_root
+from .classroom_brief_automation import ClassroomBriefRefresher
 from .review_store import ReviewStore
-from .session_janitor import SessionJanitor
+from .session_janitor import SessionJanitor, stale_session_timeout
 from .session_log_service import SessionLogService
 from .session_store import SessionStore
 from .training_record_automation import TrainingRecordRefresher
@@ -87,6 +88,10 @@ def _load_jupyter_server_extension(server_app):
             session_log_service,
             logger=server_app.log,
         )
+        classroom_brief_refresher = ClassroomBriefRefresher(
+            session_log_service,
+            logger=server_app.log,
+        )
         janitor = settings.get("myextension_session_janitor")
         try:
             if worker is None:
@@ -99,7 +104,11 @@ def _load_jupyter_server_extension(server_app):
                 )
                 worker_created = True
             if janitor is None:
-                janitor = SessionJanitor(session_store)
+                janitor = SessionJanitor(
+                    session_store,
+                    timeout=stale_session_timeout(),
+                    on_abandoned=classroom_brief_refresher.refresh,
+                )
                 janitor_created = True
 
             recovered_job_ids = job_store.recover_interrupted()

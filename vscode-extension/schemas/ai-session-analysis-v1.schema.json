@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bluedot-ai.example/schemas/behavior-audit/ai-session-analysis-v1.schema.json",
+  "title": "Behavior Audit AI Session Analysis v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "summary", "observations", "attention_points"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "summary": { "type": "string", "minLength": 1, "maxLength": 4000 },
+    "observations": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "description", "evidence_event_ids"],
+        "properties": {
+          "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "description": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "evidence_event_ids": {
+            "type": "array",
+            "maxItems": 20,
+            "items": { "type": "string", "minLength": 1, "maxLength": 160 }
+          }
+        }
+      }
+    },
+    "attention_points": {
+      "type": "array",
+      "maxItems": 10,
+      "items": { "type": "string", "minLength": 1, "maxLength": 1000 }
+    }
+  }
+}

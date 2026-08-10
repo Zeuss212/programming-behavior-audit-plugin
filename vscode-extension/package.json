@@ -27,6 +27,21 @@
     }
   },
   "contributes": {
+    "configuration": {
+      "title": "编程行为分析",
+      "properties": {
+        "behaviorAudit.ai.baseUrl": {
+          "type": "string",
+          "default": "https://ark.cn-beijing.volces.com/api/coding/v3",
+          "description": "可选 AI 服务的 OpenAI 兼容基础 URL。除本机地址外必须使用 HTTPS。"
+        },
+        "behaviorAudit.ai.model": {
+          "type": "string",
+          "default": "glm-5-2-260617",
+          "description": "可选 AI 服务使用的模型名称。"
+        }
+      }
+    },
     "commands": [
       {
         "command": "behaviorAudit.pasteAndRecord",

@@ -9,6 +9,7 @@ export const AUDIT_ERROR_CODES = [
   'python_interpreter_missing',
   'python_run_failed',
   'ai_not_configured',
+  'ai_provider_request_rejected',
   'ai_provider_timeout',
   'ai_provider_network_error',
   'ai_provider_auth_failed',

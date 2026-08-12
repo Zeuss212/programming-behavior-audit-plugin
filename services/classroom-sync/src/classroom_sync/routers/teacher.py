@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated, cast
 
 from fastapi import APIRouter, Header, Request, status
@@ -20,6 +21,12 @@ class TeacherReviewRequest(BaseModel):
 
     knowledge_point_reviews: list[dict[str, object]]
     comment: str
+
+
+class TeacherEndSessionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    actual_end_at: datetime
 
 
 def require_teacher_for_session(
@@ -69,3 +76,23 @@ def review_student_brief(
         ),
     )
     return cast(dict[str, object], review.payload)
+
+
+@router.post("/sessions/{session_id}/end")
+def end_session_early(
+    session_id: str,
+    payload: TeacherEndSessionRequest,
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, object]:
+    services, _principal = require_teacher_for_session(request, authorization, session_id)
+    if services.deadline_service is None:
+        raise TypeError("Deadline service is not configured.")
+    monitor_session = services.deadline_service.record_teacher_end(session_id, payload.actual_end_at)
+    if monitor_session.actual_end_at is None:
+        raise TypeError("Teacher end result must include actual_end_at.")
+    return {
+        "session_id": monitor_session.id,
+        "actual_end_at": monitor_session.actual_end_at.isoformat(),
+        "evidence_cutoff_at": monitor_session.evidence_cutoff_at.isoformat(),
+    }

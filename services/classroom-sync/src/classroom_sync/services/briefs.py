@@ -215,6 +215,8 @@ class BriefService:
             for evidence_ref in evidence_refs:
                 if not isinstance(evidence_ref, str):
                     raise ValidationError("brief_evidence_reference_invalid")
+                if evidence_ref == "session#missing-evidence":
+                    continue
                 match = EVIDENCE_REF_PATTERN.fullmatch(evidence_ref)
                 if match is None:
                     raise ValidationError("brief_evidence_reference_invalid")

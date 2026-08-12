@@ -35,7 +35,10 @@
     },
     "evidence_ref": {
       "type": "string",
-      "pattern": "^chunk-[1-9][0-9]*#event-[1-9][0-9]*$"
+      "oneOf": [
+        {"pattern": "^chunk-[1-9][0-9]*#event-[1-9][0-9]*$"},
+        {"const": "session#missing-evidence"}
+      ]
     }
   }
 }

@@ -244,6 +244,21 @@ def test_student_brief_rejects_unknown_mastery_status(
         schema_registry.validate("student-brief", payload)
 
 
+def test_student_brief_can_explain_missing_evidence_after_the_hard_deadline(
+    schema_registry: ClassroomSchemaRegistry,
+):
+    """An auto-closed partial brief needs a truthful non-chunk evidence reference."""
+    payload = valid_student_brief()
+    knowledge_points = payload["knowledge_points"]
+    assert isinstance(knowledge_points, list)
+    first_point = knowledge_points[0]
+    assert isinstance(first_point, dict)
+    first_point["status"] = "not_demonstrated"
+    first_point["evidence_refs"] = ["session#missing-evidence"]
+
+    schema_registry.validate("student-brief", payload)
+
+
 def test_plan_version_requires_a_complete_profile_v2(
     schema_registry: ClassroomSchemaRegistry,
 ):

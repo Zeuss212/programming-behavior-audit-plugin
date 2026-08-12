@@ -27,6 +27,7 @@ from classroom_sync.errors import (
 )
 from classroom_sync.models import (
     AuditEvent,
+    ClassroomDeadlineJob,
     ClassroomTicket,
     EvidenceChunk,
     MonitorSession,
@@ -152,6 +153,20 @@ class PluginSessionService:
             ticket_record.consumed_at = now
             ticket_record.plugin_instance_hash = self._hash(plugin_instance_id)
             session.add(monitor_session)
+            session.add(
+                ClassroomDeadlineJob(
+                    id=str(uuid4()),
+                    session_id=monitor_session.id,
+                    run_at=monitor_session.evidence_cutoff_at,
+                    status="pending",
+                    lease_owner=None,
+                    lease_expires_at=None,
+                    attempts=0,
+                    completed_at=None,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
             self._audit(session, assignment.student_id, "plugin_session_registered", monitor_session.id, now)
 
         return self._credentials_for(monitor_session.id, now)

@@ -2,12 +2,17 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from classroom_sync.domain.schemas import ClassroomSchemaRegistry
 from classroom_sync.errors import AuthenticationError, AuthorizationError
-from classroom_sync.models import Base, ExperimentPlanBinding, StudentAssignment
+from classroom_sync.models import (
+    Base,
+    ClassroomDeadlineJob,
+    ExperimentPlanBinding,
+    StudentAssignment,
+)
 from classroom_sync.services.sessions import PluginSessionService
 
 
@@ -83,6 +88,11 @@ def test_ticket_is_hashed_expires_and_can_only_be_consumed_once():
     assert issued.ticket not in stored_ticket_hash
     credentials = service.register(issued.ticket, plugin_instance_id="plugin-a")
     assert credentials.session_id
+    with factory() as session:
+        deadline_job = session.scalar(select(ClassroomDeadlineJob))
+    assert deadline_job is not None
+    assert deadline_job.status == "pending"
+    assert deadline_job.run_at.replace(tzinfo=UTC) == clock() + timedelta(minutes=45)
 
     with pytest.raises(AuthorizationError, match="ticket_already_consumed"):
         service.register(issued.ticket, plugin_instance_id="plugin-b")

@@ -25,6 +25,7 @@ from classroom_sync.models import (
 )
 from classroom_sync.services.assignments import AssignmentService
 from classroom_sync.services.briefs import BriefContent, BriefService, TeacherReviewInput
+from classroom_sync.services.deadlines import DeadlineService
 from classroom_sync.services.plans import PlanService
 from classroom_sync.services.sessions import PLUGIN_TOKEN_AUDIENCE, PluginSessionService
 
@@ -337,4 +338,35 @@ def test_plugin_can_manually_submit_one_brief_for_its_own_monitor_session():
     assert response.status_code == 201
     assert response.json()["revision"] == 1
     assert response.json()["status"] == "completed"
+
+
+def test_teacher_can_advance_the_hard_deadline_by_ending_class_early():
+    """Teacher early-end is authorized against the same parent experiment as brief review."""
+    now = datetime(2026, 8, 12, 8, 0, tzinfo=UTC)
+    brief_service, factory, registry = seeded_brief_service(now)
+    identity = TeacherIdentityGateway()
+    app = create_app(
+        Settings(database_url="sqlite://"),
+        classroom_services=ClassroomServices(
+            identity_gateway=identity,
+            plan_service=PlanService(factory, registry, clock=lambda: now),
+            assignment_service=AssignmentService(factory, clock=lambda: now),
+            brief_service=brief_service,
+            deadline_service=DeadlineService(factory, brief_service, clock=lambda: now),
+        ),
+    )
+    actual_end_at = now + timedelta(minutes=20)
+
+    response = request(
+        app,
+        "POST",
+        f"/v1/classroom/teacher/sessions/{IDS['session']}/end",
+        headers={"Authorization": "Bearer teacher-token"},
+        json={"actual_end_at": actual_end_at.isoformat()},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["actual_end_at"] == actual_end_at.isoformat()
+    assert response.json()["evidence_cutoff_at"] == (actual_end_at + timedelta(minutes=15)).isoformat()
+    assert identity.calls == [("teacher-1", "space-1", "parent-1")]
 from classroom_sync.auth.fincolab import Principal

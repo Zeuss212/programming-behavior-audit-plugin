@@ -31,6 +31,20 @@ paths:
         '500': { $ref: '#/components/responses/ServerError' }
         '502': { $ref: '#/components/responses/BadGateway' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /myextension/platform/capture/bootstrap:
+    post:
+      operationId: bootstrapPlatformCapture
+      description: Creates or restores the single durable local session bound to the classroom MonitorSession. Browser state cannot choose the assignment, plan, or session ID.
+      security: [{ JupyterServerAuth: [] }]
+      responses:
+        '200':
+          { $ref: '#/components/responses/PlatformCaptureBootstrapResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/ServerError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /myextension/dimension-templates:
     get:
       operationId: listDimensionTemplates
@@ -520,6 +534,10 @@ components:
     PlatformContextResponse:
       {
         $ref: '../../myextension/api_schemas/platform-context-response-v1.json'
+      }
+    PlatformCaptureBootstrapResponse:
+      {
+        $ref: '../../myextension/api_schemas/platform-capture-bootstrap-response-v1.json'
       }
     SessionStart:
       { $ref: '../../myextension/api_schemas/session-start-v1.json' }
@@ -1421,6 +1439,22 @@ components:
             application/json:
               {
                 schema: { $ref: '#/components/schemas/PlatformContextResponse' }
+              }
+          }
+      }
+    PlatformCaptureBootstrapResponse:
+      {
+        description: Classroom capture session created,
+        resumed,
+        or terminal at evidence cutoff.,
+        content:
+          {
+            application/json:
+              {
+                schema:
+                  {
+                    $ref: '#/components/schemas/PlatformCaptureBootstrapResponse'
+                  }
               }
           }
       }

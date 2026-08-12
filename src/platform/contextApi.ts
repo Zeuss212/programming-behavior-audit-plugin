@@ -1,6 +1,7 @@
 import { ServerConnection } from '@jupyterlab/services';
 
 import { IDimensionProfileVersion } from '../models/dimensionProfile';
+import { ISessionState } from '../models/session';
 import { requestAPI } from '../request';
 import {
   capabilitiesForMode,
@@ -27,6 +28,21 @@ export interface IPlatformContext {
   classroom_session: IClassroomPlatformSession | null;
 }
 
+export type IPlatformCaptureSession = Omit<
+  ISessionState,
+  'schema_version' | 'request_id'
+>;
+
+export interface IPlatformCaptureBootstrapResponse {
+  schema_version: 1;
+  request_id: string;
+  outcome: 'created' | 'resumed' | 'terminal';
+  assignment_id: string;
+  plan_id: string;
+  plan_version: number;
+  session: IPlatformCaptureSession | null;
+}
+
 export const LOCAL_PLATFORM_CONTEXT: IPlatformContext = {
   schema_version: 1,
   request_id: 'local',
@@ -49,4 +65,18 @@ export function refreshPlatformContext(
     body: '',
     headers: { 'Content-Type': 'application/json' }
   });
+}
+
+export function bootstrapPlatformCapture(
+  settings: ServerConnection.ISettings
+): Promise<IPlatformCaptureBootstrapResponse> {
+  return requestAPI<IPlatformCaptureBootstrapResponse>(
+    'platform/capture/bootstrap',
+    settings,
+    {
+      method: 'POST',
+      body: '',
+      headers: { 'Content-Type': 'application/json' }
+    }
+  );
 }

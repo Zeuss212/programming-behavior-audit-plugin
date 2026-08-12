@@ -142,46 +142,67 @@ class PluginSessionService:
             )
             if plan_version is None:
                 raise NotFoundError("plan_version_not_found")
-
-            monitor_session = MonitorSession(
-                id=str(uuid4()),
-                assignment_id=assignment.id,
-                plan_id=assignment.plan_id,
-                plan_version=assignment.plan_version,
-                status="collecting",
-                scheduled_end_at=assignment.scheduled_end_at,
-                actual_end_at=assignment.scheduled_end_at,
-                evidence_cutoff_at=assignment.scheduled_end_at + timedelta(minutes=15),
-                last_activity_at=now,
-                last_heartbeat_at=now,
-                last_contiguous_sequence=0,
-                missing_ranges=[],
-                completeness="complete",
-                submission_reason=None,
-                active_slot=1,
-                created_at=now,
-                updated_at=now,
+            monitor_session = session.scalar(
+                select(MonitorSession)
+                .where(
+                    MonitorSession.assignment_id == assignment.id,
+                    MonitorSession.active_slot == 1,
+                )
+                .with_for_update()
             )
+            resumed = monitor_session is not None
+            if monitor_session is None:
+                monitor_session = MonitorSession(
+                    id=str(uuid4()),
+                    assignment_id=assignment.id,
+                    plan_id=assignment.plan_id,
+                    plan_version=assignment.plan_version,
+                    status="collecting",
+                    scheduled_end_at=assignment.scheduled_end_at,
+                    actual_end_at=assignment.scheduled_end_at,
+                    evidence_cutoff_at=assignment.scheduled_end_at + timedelta(minutes=15),
+                    last_activity_at=now,
+                    last_heartbeat_at=now,
+                    last_contiguous_sequence=0,
+                    missing_ranges=[],
+                    completeness="complete",
+                    submission_reason=None,
+                    active_slot=1,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(monitor_session)
+                session.add(
+                    ClassroomDeadlineJob(
+                        id=str(uuid4()),
+                        session_id=monitor_session.id,
+                        run_at=monitor_session.evidence_cutoff_at,
+                        status="pending",
+                        lease_owner=None,
+                        lease_expires_at=None,
+                        attempts=0,
+                        completed_at=None,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+            elif monitor_session.status in {"collecting", "temporarily_offline"}:
+                monitor_session.status = "collecting"
+                monitor_session.last_heartbeat_at = now
+                monitor_session.updated_at = now
+            else:
+                raise AuthorizationError("assignment_not_ready_for_monitoring")
             assignment.status = "active"
             assignment.updated_at = now
             ticket_record.consumed_at = now
             ticket_record.plugin_instance_hash = self._hash(plugin_instance_id)
-            session.add(monitor_session)
-            session.add(
-                ClassroomDeadlineJob(
-                    id=str(uuid4()),
-                    session_id=monitor_session.id,
-                    run_at=monitor_session.evidence_cutoff_at,
-                    status="pending",
-                    lease_owner=None,
-                    lease_expires_at=None,
-                    attempts=0,
-                    completed_at=None,
-                    created_at=now,
-                    updated_at=now,
-                )
+            self._audit(
+                session,
+                assignment.student_id,
+                "plugin_session_resumed" if resumed else "plugin_session_registered",
+                monitor_session.id,
+                now,
             )
-            self._audit(session, assignment.student_id, "plugin_session_registered", monitor_session.id, now)
 
         return self._credentials_for(monitor_session, assignment, plan_version.profile, now)
 

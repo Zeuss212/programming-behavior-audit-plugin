@@ -20,6 +20,7 @@ import {
 import { requestAPI } from './request';
 import { registerClassroomTicket } from './platform/classroomApi';
 import { getPlatformContext, IPlatformContext } from './platform/contextApi';
+import { PlatformSessionController } from './platform/platformSessionController';
 import { bootstrapClassroomTicket } from './platform/ticketBootstrap';
 import { openLogFolder } from './services/logFolderApi';
 import {
@@ -163,6 +164,22 @@ const plugin: JupyterFrontEndPlugin<void> = {
           void sidebar.refreshProfiles();
         });
         showFirstRunView(app);
+      } else if (
+        platformContext.mode === 'student' &&
+        platformContext.capabilities.canCapture &&
+        platformContext.classroom_session !== null
+      ) {
+        void new PlatformSessionController(
+          app.serviceManager.serverSettings,
+          platformContext,
+          capture
+        )
+          .bootstrap()
+          .then(
+            result =>
+              console.info(`myextension_platform_capture_${result.outcome}`),
+            () => console.error('myextension_platform_capture_unavailable')
+          );
       }
     };
 

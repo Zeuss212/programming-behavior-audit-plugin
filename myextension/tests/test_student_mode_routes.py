@@ -71,6 +71,7 @@ async def test_student_mode_returns_private_context_without_exposing_plugin_toke
         ),
         (("myextension", "assessment-assist", "knowledge-points"), "POST", "{}"),
         (("myextension", "assessment-assist", "tests"), "POST", "{}"),
+        (("myextension", "sessions", "start"), "POST", "{}"),
     ],
 )
 async def test_student_mode_rejects_teacher_configuration_mutations(

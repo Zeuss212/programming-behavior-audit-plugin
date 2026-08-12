@@ -749,6 +749,7 @@ def test_openapi_contract_has_authenticated_typed_operations_and_resolvable_refe
     expected_success_responses = {
         ("/myextension/platform/context", "get"): "PlatformContextResponse",
         ("/myextension/platform/context", "post"): "PlatformContextResponse",
+        ("/myextension/platform/capture/bootstrap", "post"): "PlatformCaptureBootstrapResponse",
         ("/myextension/dimension-templates", "get"): "TemplateListResponse",
         ("/myextension/dimension-profiles", "get"): "ProfileListResponse",
         ("/myextension/dimension-profiles", "post"): "ProfileDraftResponse",
@@ -790,6 +791,7 @@ def test_openapi_contract_has_authenticated_typed_operations_and_resolvable_refe
     expected_parameters = {
         ("/myextension/platform/context", "get"): [],
         ("/myextension/platform/context", "post"): [],
+        ("/myextension/platform/capture/bootstrap", "post"): [],
         ("/myextension/dimension-templates", "get"): [],
         ("/myextension/dimension-profiles", "get"): ["ProblemId"],
         ("/myextension/dimension-profiles", "post"): [],
@@ -850,6 +852,9 @@ def test_openapi_contract_has_authenticated_typed_operations_and_resolvable_refe
         },
         ("/myextension/platform/context", "post"): {
             "200", "401", "403", "404", "409", "422", "500", "502", "503"
+        },
+        ("/myextension/platform/capture/bootstrap", "post"): {
+            "200", "401", "403", "404", "409", "500", "503"
         },
         ("/myextension/log-folder/open", "post"): {
             "200", "401", "403", "409", "413", "422", "500"

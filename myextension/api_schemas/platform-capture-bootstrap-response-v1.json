@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Platform capture bootstrap response v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "request_id",
+    "outcome",
+    "assignment_id",
+    "plan_id",
+    "plan_version",
+    "session"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "request_id": {"type": "string", "minLength": 1},
+    "outcome": {"enum": ["created", "resumed", "terminal"]},
+    "assignment_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "plan_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "plan_version": {"type": "integer", "minimum": 1},
+    "session": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "session_id",
+            "problem_id",
+            "profile_id",
+            "profile_version",
+            "profile_content_hash",
+            "status",
+            "last_contiguous_sequence",
+            "received_event_count",
+            "analysis_job_id"
+          ],
+          "properties": {
+            "session_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "problem_id": {"type": "string", "minLength": 1},
+            "profile_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "profile_version": {"type": "integer", "minimum": 1},
+            "profile_content_hash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "status": {
+              "enum": ["collecting", "finalizing", "finalized", "abandoned"]
+            },
+            "last_contiguous_sequence": {"type": "integer", "minimum": 0},
+            "received_event_count": {"type": "integer", "minimum": 0},
+            "analysis_job_id": {"type": ["string", "null"]}
+          }
+        }
+      ]
+    }
+  }
+}

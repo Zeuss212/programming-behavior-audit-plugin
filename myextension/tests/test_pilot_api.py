@@ -1673,6 +1673,7 @@ async def test_unexpected_error_is_generic_and_does_not_leak_private_data(
         ("POST", "myextension/platform/register", "{}"),
         ("GET", "myextension/platform/context", None),
         ("POST", "myextension/platform/context", ""),
+        ("POST", "myextension/platform/capture/bootstrap", ""),
     ],
 )
 async def test_every_new_api_verb_rejects_unauthenticated_requests(

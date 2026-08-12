@@ -102,6 +102,6 @@ it('renders only the classroom task card in student mode and never loads teacher
   expect(sidebar.node.textContent).not.toContain('创建题目考核方案');
   expect(sidebar.node.textContent).not.toContain('AI 服务配置');
   expect(sidebar.node.textContent).not.toContain('题目与分析方案');
-  expect(capture.subscribe).not.toHaveBeenCalled();
+  expect(capture.subscribe).toHaveBeenCalledTimes(1);
   sidebar.dispose();
 });

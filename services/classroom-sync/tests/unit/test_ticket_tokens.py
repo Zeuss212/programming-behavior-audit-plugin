@@ -11,6 +11,7 @@ from classroom_sync.models import (
     Base,
     ClassroomDeadlineJob,
     ExperimentPlanBinding,
+    MonitorSession,
     PlanVersion,
     StudentAssignment,
 )
@@ -115,6 +116,39 @@ def test_ticket_is_hashed_expires_and_can_only_be_consumed_once():
 
     with pytest.raises(AuthorizationError, match="ticket_already_consumed"):
         service.register(issued.ticket, plugin_instance_id="plugin-b")
+
+
+def test_new_ticket_resumes_the_existing_collecting_monitor_session():
+    """A page reopen consumes a fresh ticket without creating a second session."""
+
+    clock = Clock(datetime(2026, 8, 12, 8, 0, tzinfo=UTC))
+    factory = session_factory_with_assignment(clock())
+    repository_root = Path(__file__).resolve().parents[4]
+    service = PluginSessionService(
+        factory,
+        storage=DiscardingStorage(),
+        plugin_jwt_secret="test-plugin-secret-012345678901234567",
+        clock=clock,
+        schema_registry=ClassroomSchemaRegistry(
+            repository_root / "contracts" / "classroom" / "v1"
+        ),
+    )
+
+    first = service.register(
+        service.issue_ticket("assignment-1").ticket,
+        plugin_instance_id="plugin-a",
+    )
+    clock.now += timedelta(minutes=2)
+    resumed = service.register(
+        service.issue_ticket("assignment-1").ticket,
+        plugin_instance_id="plugin-b",
+    )
+
+    assert resumed.session_id == first.session_id
+    assert resumed.last_sync_at == clock()
+    with factory() as session:
+        assert len(session.scalars(select(MonitorSession)).all()) == 1
+        assert len(session.scalars(select(ClassroomDeadlineJob)).all()) == 1
 
 
 def test_expired_ticket_and_cross_session_plugin_token_are_rejected():

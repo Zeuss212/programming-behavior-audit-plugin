@@ -436,6 +436,12 @@ export class BehaviorAnalysisSidebar extends Widget {
     this.title.className = 'jp-BehaviorAudit-sidebarTab';
     this.upload = deps.capture.snapshot();
     if (this.isStudentMode()) {
+      this.unsubscribe = deps.capture.subscribe(snapshot => {
+        if (!this.isDisposed) {
+          this.upload = snapshot;
+          this.render();
+        }
+      });
       this.render();
       return;
     }

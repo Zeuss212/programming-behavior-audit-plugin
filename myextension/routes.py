@@ -1538,10 +1538,76 @@ class LogFolderOpenRouteHandler(PilotAPIHandler):
             )
 
 
+class PlatformCaptureBootstrapRouteHandler(PilotAPIHandler):
+    """Bind the current browser reload to its one durable classroom session."""
+
+    @tornado.web.authenticated
+    def post(self):
+        try:
+            config = _platform_config()
+            if not config.student_mode:
+                raise ApiRequestError(
+                    404,
+                    "platform_capture_bootstrap_disabled",
+                    "当前运行环境未启用课堂学生模式。",
+                )
+            context = PlatformContextStore(
+                config.log_root
+            ).read_registered_context()
+            if context is None:
+                raise ApiRequestError(
+                    409,
+                    "platform_context_not_registered",
+                    "尚未注册课堂会话，请从课堂平台重新进入。",
+                )
+            _, session_store, _ = self._services()
+            outcome, session = session_store.bootstrap_platform_session(
+                assignment_id=context.assignment_id,
+                plan_id=context.plan_id,
+                plan_version=context.plan_version,
+                monitor_session_id=context.session_id,
+                profile=context.profile,
+                scheduled_end_at=context.scheduled_end_at,
+                evidence_cutoff_at=context.evidence_cutoff_at,
+            )
+            payload = {
+                "outcome": outcome,
+                "assignment_id": context.assignment_id,
+                "plan_id": context.plan_id,
+                "plan_version": context.plan_version,
+                "session": _session_projection(session)
+                if session is not None
+                else None,
+            }
+            validate_schema(
+                "platform-capture-bootstrap-response-v1",
+                {**payload, "schema_version": 1, "request_id": self.request_id()},
+            )
+            self.finish_json(payload)
+        except ApiRequestError as error:
+            self._finish_request_error(error)
+        except SessionIntegrityError:
+            self.finish_error(
+                409,
+                "platform_session_identity_conflict",
+                "当前课堂会话与本地持久化记录不一致，请联系教师处理。",
+            )
+        except OSError:
+            self.finish_error(
+                503,
+                "platform_session_unavailable",
+                "课堂会话暂时无法恢复，请稍后重试。",
+                retryable=True,
+            )
+        except Exception:
+            self._finish_internal_error()
+
+
 class SessionStartRouteHandler(PilotAPIHandler):
     @tornado.web.authenticated
     def post(self):
         try:
+            _require_platform_capability("canAuthorPlan")
             body = self._validate_schema_body(
                 "session-start-v1",
                 code="session_validation_failed",
@@ -2362,6 +2428,13 @@ def setup_route_handlers(web_app):
         "platform",
         "context",
     )
+    platform_capture_bootstrap_route_pattern = url_path_join(
+        base_url,
+        "myextension",
+        "platform",
+        "capture",
+        "bootstrap",
+    )
     dimension_templates_route_pattern = url_path_join(
         base_url,
         "myextension",
@@ -2517,6 +2590,10 @@ def setup_route_handlers(web_app):
         (ai_config_route_pattern, AiConfigRouteHandler),
         (platform_registration_route_pattern, PlatformRegistrationRouteHandler),
         (platform_context_route_pattern, PlatformContextRouteHandler),
+        (
+            platform_capture_bootstrap_route_pattern,
+            PlatformCaptureBootstrapRouteHandler,
+        ),
         (dimension_templates_route_pattern, DimensionTemplatesRouteHandler),
         (dimension_profiles_route_pattern, DimensionProfilesRouteHandler),
         (

@@ -252,6 +252,8 @@ class SessionStore:
         *,
         problem_id: str,
         profile: Mapping[str, object],
+        session_id: str | None = None,
+        platform_metadata: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
         problem = _require_nonempty(problem_id, field="problem_id")
         if not isinstance(profile, Mapping):
@@ -284,14 +286,22 @@ class SessionStore:
         self._assert_safe_path(self._sessions_root)
         self._sessions_root.mkdir(mode=0o700, parents=True, exist_ok=True)
 
-        while True:
-            session_id = str(uuid4())
+        if session_id is None:
+            while True:
+                session_id = str(uuid4())
+                session_dir = self._session_dir(session_id)
+                try:
+                    session_dir.mkdir(mode=0o700)
+                except FileExistsError:
+                    continue
+                break
+        else:
+            session_id = _canonical_uuid(session_id, field="session_id")
             session_dir = self._session_dir(session_id)
             try:
                 session_dir.mkdir(mode=0o700)
-            except FileExistsError:
-                continue
-            break
+            except FileExistsError as error:
+                raise SessionStateError("Requested session already exists.") from error
 
         with self._lock_for(session_id):
             (session_dir / "batches").mkdir(mode=0o700)
@@ -325,8 +335,100 @@ class SessionStore:
                 "started_at": started_at,
                 "ended_at": None,
             }
+            if platform_metadata is not None:
+                session.update(dict(platform_metadata))
             self._write_json(session_dir / "session.json", session)
             return dict(session)
+
+    def bootstrap_platform_session(
+        self,
+        *,
+        assignment_id: str,
+        plan_id: str,
+        plan_version: int,
+        monitor_session_id: str,
+        profile: Mapping[str, object],
+        scheduled_end_at: str,
+        evidence_cutoff_at: str,
+        now: datetime | None = None,
+    ) -> tuple[str, dict[str, object] | None]:
+        """Create or restore exactly one local session for a classroom assignment."""
+
+        assignment = _canonical_uuid(assignment_id, field="assignment_id")
+        plan = _canonical_uuid(plan_id, field="plan_id")
+        monitor_session = _canonical_uuid(
+            monitor_session_id, field="session_id"
+        )
+        if (
+            not isinstance(plan_version, int)
+            or isinstance(plan_version, bool)
+            or plan_version < 1
+        ):
+            raise SessionIntegrityError("platform plan_version must be positive.")
+        scheduled = _parse_aware_time(
+            scheduled_end_at, field="platform scheduled_end_at"
+        )
+        cutoff = _parse_aware_time(
+            evidence_cutoff_at, field="platform evidence_cutoff_at"
+        )
+        current = now or datetime.now(timezone.utc)
+        if current.tzinfo is None:
+            raise SessionIntegrityError("platform bootstrap time must include a UTC offset.")
+        current = current.astimezone(timezone.utc)
+        metadata = {
+            "platform_assignment_id": assignment,
+            "platform_plan_id": plan,
+            "platform_plan_version": plan_version,
+            "platform_scheduled_end_at": scheduled.isoformat(),
+            "platform_evidence_cutoff_at": cutoff.isoformat(),
+        }
+
+        try:
+            existing = self.read(monitor_session)
+        except SessionNotFoundError:
+            if current > cutoff.astimezone(timezone.utc):
+                return "terminal", None
+            try:
+                created = self.start(
+                    problem_id=_require_nonempty(
+                        profile.get("problem_id"), field="profile.problem_id"
+                    ),
+                    profile=profile,
+                    session_id=monitor_session,
+                    platform_metadata=metadata,
+                )
+            except SessionStateError:
+                existing = self.read(monitor_session)
+            else:
+                return "created", created
+
+        self._validate_platform_session_identity(existing, metadata, profile)
+        if current > cutoff.astimezone(timezone.utc):
+            return "terminal", existing
+        if existing.get("status") != "collecting":
+            return "terminal", existing
+        return "resumed", existing
+
+    @staticmethod
+    def _validate_platform_session_identity(
+        session: Mapping[str, object],
+        metadata: Mapping[str, object],
+        profile: Mapping[str, object],
+    ) -> None:
+        for field, expected in metadata.items():
+            if session.get(field) != expected:
+                raise SessionIntegrityError(
+                    f"Stored platform {field.removeprefix('platform_').replace('_', ' ')} does not match."
+                )
+        for field in ("profile_id", "version", "problem_id", "content_hash"):
+            session_field = {
+                "version": "profile_version",
+                "content_hash": "profile_content_hash",
+            }.get(field, field)
+            if session.get(session_field) != profile.get(field):
+                raise SessionIntegrityError(
+                    "Stored platform profile does not match the assigned plan."
+                )
 
     def _validate_snapshots(
         self,

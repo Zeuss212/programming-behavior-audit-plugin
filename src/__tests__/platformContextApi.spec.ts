@@ -1,6 +1,7 @@
 import { ServerConnection } from '@jupyterlab/services';
 
 import {
+  bootstrapPlatformCapture,
   getPlatformContext,
   refreshPlatformContext
 } from '../platform/contextApi';
@@ -32,4 +33,18 @@ it('refreshes a classroom context through the local server without browser crede
     body: '',
     headers: { 'Content-Type': 'application/json' }
   });
+});
+
+it('bootstraps capture through the local server without browser credentials', async () => {
+  await bootstrapPlatformCapture(settings);
+
+  expect(mockedRequest).toHaveBeenCalledWith(
+    'platform/capture/bootstrap',
+    settings,
+    {
+      method: 'POST',
+      body: '',
+      headers: { 'Content-Type': 'application/json' }
+    }
+  );
 });

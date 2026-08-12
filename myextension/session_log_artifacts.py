@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
+from datetime import datetime
+from gzip import compress
 from typing import Final
+from uuid import UUID
+
+from .canonical_json import canonical_json_bytes
+from .evidence_outbox import EvidenceChunk
 
 
 SESSION_LOG_DEFINITIONS: Final[tuple[dict[str, str], ...]] = (
@@ -37,6 +43,8 @@ SESSION_LOG_BY_KIND: Final[dict[str, dict[str, str]]] = {
     row["kind"]: row for row in SESSION_LOG_DEFINITIONS
 }
 MAX_INLINE_LOG_BYTES: Final[int] = 2 * 1024 * 1024
+MAX_COMPRESSED_EVIDENCE_BYTES: Final[int] = 2 * 1024 * 1024
+MAX_UNCOMPRESSED_EVIDENCE_BYTES: Final[int] = 10 * 1024 * 1024
 
 
 def _require_mapping(value: object, *, field: str) -> Mapping[str, object]:
@@ -61,6 +69,68 @@ def _pretty_json(value: object) -> bytes:
         )
         + "\n"
     ).encode("utf-8")
+
+
+def build_evidence_chunk(
+    session_id: str,
+    *,
+    sequence: int,
+    events: Sequence[Mapping[str, object]],
+    created_at: datetime,
+) -> EvidenceChunk:
+    """Serialize a consecutive local event range into one deterministic gzip body.
+
+    The sequence used by the classroom service is supplied by the caller;
+    ``session_seq`` remains the canonical event sequence preserved in the
+    evidence payload and HTTP metadata.
+    """
+
+    try:
+        if str(UUID(session_id)) != session_id:
+            raise ValueError
+    except (AttributeError, TypeError, ValueError) as error:
+        raise ValueError("session_id must be a canonical UUID.") from error
+    if not events:
+        raise ValueError("events must not be empty.")
+    normalized_events: list[dict[str, object]] = []
+    for expected_sequence, event in enumerate(events, start=1):
+        if not isinstance(event, Mapping):
+            raise ValueError("events must contain objects.")
+        event_sequence = event.get("session_seq")
+        if (
+            not isinstance(event_sequence, int)
+            or isinstance(event_sequence, bool)
+            or (normalized_events and event_sequence != normalized_events[-1]["session_seq"] + 1)
+        ):
+            raise ValueError("events must have continuous session_seq values.")
+        event_id = event.get("event_id")
+        if event_id != f"{session_id}:{event_sequence}":
+            raise ValueError("events must retain their canonical event_id values.")
+        if expected_sequence == 1 and event_sequence < 1:
+            raise ValueError("events must have positive session_seq values.")
+        normalized_events.append(dict(event))
+    first_event_sequence = int(normalized_events[0]["session_seq"])
+    last_event_sequence = int(normalized_events[-1]["session_seq"])
+    payload = {
+        "schema_version": 1,
+        "session_id": session_id,
+        "first_event_sequence": first_event_sequence,
+        "last_event_sequence": last_event_sequence,
+        "events": normalized_events,
+    }
+    body_source = canonical_json_bytes(payload)
+    if len(body_source) > MAX_UNCOMPRESSED_EVIDENCE_BYTES:
+        raise ValueError("Evidence content exceeds the uncompressed size limit.")
+    body = compress(body_source, mtime=0)
+    if len(body) > MAX_COMPRESSED_EVIDENCE_BYTES:
+        raise ValueError("Evidence content exceeds the compressed size limit.")
+    return EvidenceChunk(
+        sequence=sequence,
+        first_event_sequence=first_event_sequence,
+        last_event_sequence=last_event_sequence,
+        body=body,
+        created_at=created_at,
+    )
 
 
 def render_operation_log(record: Mapping[str, object]) -> bytes:

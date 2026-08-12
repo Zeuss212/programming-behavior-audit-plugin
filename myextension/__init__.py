@@ -14,6 +14,10 @@ from .analysis_job_store import AnalysisJobStore
 from .analysis_worker import AnalysisWorker
 from .behavior_log_store import resolve_log_root
 from .classroom_brief_automation import ClassroomBriefRefresher
+from .evidence_outbox import EvidenceOutbox, EvidenceOutboxWorker
+from .platform_client import PlatformSyncClient
+from .platform_config import PlatformConfig
+from .platform_context_store import PlatformContextStore
 from .review_store import ReviewStore
 from .session_janitor import SessionJanitor, stale_session_timeout
 from .session_log_service import SessionLogService
@@ -52,12 +56,15 @@ def _load_jupyter_server_extension(server_app):
         worker = settings.get("myextension_analysis_worker")
         worker_created = False
         janitor_created = False
+        evidence_worker_created = False
         registered_shutdowns = []
         published = False
         service_keys = (
             "myextension_analysis_job_store",
             "myextension_analysis_worker",
             "myextension_session_janitor",
+            "myextension_evidence_outbox",
+            "myextension_evidence_worker",
             lifecycle_key,
         )
         prior_settings = {
@@ -93,6 +100,12 @@ def _load_jupyter_server_extension(server_app):
             logger=server_app.log,
         )
         janitor = settings.get("myextension_session_janitor")
+        evidence_outbox = settings.get("myextension_evidence_outbox")
+        evidence_worker = settings.get("myextension_evidence_worker")
+        try:
+            platform_config = PlatformConfig.from_env()
+        except RuntimeError:
+            platform_config = None
         try:
             if worker is None:
                 worker = AnalysisWorker(
@@ -110,6 +123,20 @@ def _load_jupyter_server_extension(server_app):
                     on_abandoned=classroom_brief_refresher.refresh,
                 )
                 janitor_created = True
+            if (
+                platform_config is not None
+                and platform_config.student_mode
+                and platform_config.sync_base_url is not None
+            ):
+                if evidence_outbox is None:
+                    evidence_outbox = EvidenceOutbox(
+                        root,
+                        client=PlatformSyncClient(platform_config.sync_base_url),
+                        context_store=PlatformContextStore(root),
+                    )
+                if evidence_worker is None:
+                    evidence_worker = EvidenceOutboxWorker(evidence_outbox)
+                    evidence_worker_created = True
 
             recovered_job_ids = job_store.recover_interrupted()
             queued_job_ids = job_store.list_queued()
@@ -118,16 +145,25 @@ def _load_jupyter_server_extension(server_app):
             ):
                 worker.enqueue(job_id)
             janitor.start()
+            if evidence_worker is not None:
+                evidence_worker.start()
 
             atexit.register(worker.shutdown)
             registered_shutdowns.append(worker.shutdown)
             atexit.register(janitor.shutdown)
             registered_shutdowns.append(janitor.shutdown)
+            if evidence_worker is not None:
+                atexit.register(evidence_worker.shutdown)
+                registered_shutdowns.append(evidence_worker.shutdown)
 
             published = True
             settings["myextension_analysis_job_store"] = job_store
             settings["myextension_analysis_worker"] = worker
             settings["myextension_session_janitor"] = janitor
+            if evidence_outbox is not None:
+                settings["myextension_evidence_outbox"] = evidence_outbox
+            if evidence_worker is not None:
+                settings["myextension_evidence_worker"] = evidence_worker
             settings[lifecycle_key] = True
             # This is the final fallible startup operation. Once it succeeds,
             # the worker may execute and no lifecycle mutation remains.
@@ -148,6 +184,11 @@ def _load_jupyter_server_extension(server_app):
             if janitor_created and janitor is not None:
                 try:
                     janitor.shutdown()
+                except Exception:
+                    pass
+            if evidence_worker_created and evidence_worker is not None:
+                try:
+                    evidence_worker.shutdown()
                 except Exception:
                     pass
             if worker_created and worker is not None:

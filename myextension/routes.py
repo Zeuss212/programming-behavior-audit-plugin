@@ -5,6 +5,8 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Mapping
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
 
@@ -39,6 +41,7 @@ from .dimension_profile_store import (
     ProfileIntegrityError,
 )
 from .dimension_template_store import list_templates
+from .session_log_artifacts import build_evidence_chunk
 from .llm_labeler import ai_config_status, save_ai_config
 from .llm_transport import (
     AiConfigValidationError,
@@ -136,6 +139,52 @@ def _require_platform_capability(capability: str) -> PlatformConfig:
             "课堂学生模式不允许此操作。",
         )
     return config
+
+
+def _enqueue_classroom_evidence(
+    settings: Mapping[str, object],
+    config: PlatformConfig,
+    session_id: str,
+    batch: Mapping[str, object],
+    *,
+    created_at: datetime | None = None,
+) -> None:
+    """Queue a locally accepted batch for the private classroom service.
+
+    This is intentionally called only after ``SessionStore.append_batch`` has
+    created both its immutable batch journal and local receipt.  If queue
+    persistence fails, the HTTP handler returns an error so the browser can
+    replay the same idempotent local batch; no browser credential is involved.
+    """
+
+    if not config.student_mode:
+        return
+    outbox = settings.get("myextension_evidence_outbox")
+    worker = settings.get("myextension_evidence_worker")
+    if outbox is None or worker is None:
+        raise RuntimeError("Classroom evidence delivery is not available.")
+    first_sequence = batch.get("first_sequence")
+    last_sequence = batch.get("last_sequence")
+    segments = batch.get("segments")
+    if (
+        not isinstance(first_sequence, int)
+        or isinstance(first_sequence, bool)
+        or not isinstance(last_sequence, int)
+        or isinstance(last_sequence, bool)
+        or not isinstance(segments, list)
+        or not all(isinstance(segment, dict) for segment in segments)
+    ):
+        raise ValueError("A persisted batch must contain canonical event data.")
+    chunk = build_evidence_chunk(
+        session_id,
+        sequence=first_sequence,
+        events=segments,
+        created_at=created_at or datetime.now(timezone.utc),
+    )
+    if chunk.last_event_sequence != last_sequence:
+        raise ValueError("A persisted batch has inconsistent event bounds.")
+    outbox.enqueue(session_id, chunk)
+    worker.notify()
 
 
 class HelloRouteHandler(APIHandler):
@@ -1688,6 +1737,12 @@ class SessionSegmentsRouteHandler(PilotAPIHandler):
                     for key, value in body.items()
                     if key != "schema_version"
                 },
+            )
+            _enqueue_classroom_evidence(
+                self.settings,
+                _platform_config(),
+                canonical_id,
+                body,
             )
             self.finish_json(receipt, status=202)
         except ApiRequestError as error:

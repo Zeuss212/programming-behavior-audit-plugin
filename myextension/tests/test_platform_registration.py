@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import stat
+from hashlib import sha256
 from pathlib import Path
 from urllib.error import HTTPError
 
@@ -150,6 +151,53 @@ def test_platform_client_refreshes_context_with_the_private_session_token():
 
     assert refreshed.access_token == "refreshed-plugin-token"
     assert refreshed.last_sync_at == "2026-08-12T08:05:00Z"
+
+
+def test_platform_client_uploads_compressed_evidence_with_the_private_session_token():
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {
+                    "evidence_id": "4ea8479f-c4bb-4645-9c1f-1593afdc187a",
+                    "session_id": context().session_id,
+                    "sequence": 7,
+                    "content_sha256": sha256(b"gzip-evidence").hexdigest(),
+                }
+            ).encode("utf-8")
+
+    def evidence_transport(request, *, timeout: float):
+        assert timeout > 0
+        assert request.full_url.endswith(
+            f"/v1/classroom/plugin/sessions/{context().session_id}/evidence/7"
+        )
+        assert request.get_method() == "PUT"
+        assert request.get_header("Authorization") == "Bearer short-lived-plugin-token"
+        assert request.get_header("Content-type") == "application/gzip"
+        assert request.get_header("X-first-event-sequence") == "11"
+        assert request.get_header("X-last-event-sequence") == "13"
+        assert request.data == b"gzip-evidence"
+        return Response()
+
+    receipt = PlatformSyncClient(
+        "https://classroom.example", transport=evidence_transport
+    ).upload_evidence(
+        context(),
+        sequence=7,
+        body=b"gzip-evidence",
+        first_event_sequence=11,
+        last_event_sequence=13,
+    )
+
+    assert receipt.evidence_id == "4ea8479f-c4bb-4645-9c1f-1593afdc187a"
+    assert receipt.session_id == context().session_id
+    assert receipt.sequence == 7
+    assert receipt.content_sha256 == sha256(b"gzip-evidence").hexdigest()
 
 
 async def test_jupyter_registration_route_exchanges_ticket_without_returning_credentials(

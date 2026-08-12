@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
+from gzip import decompress
 from pathlib import Path
 
 import pytest
@@ -10,6 +12,7 @@ from myextension.analysis_worker import AnalysisWorker
 from myextension.analysis_job_store import AnalysisJobStore
 from myextension.dimension_profile_store import DimensionProfileStore
 from myextension.review_store import ReviewStore
+from myextension.session_log_artifacts import build_evidence_chunk
 from myextension.session_log_service import SessionLogService
 from myextension.session_store import SessionIntegrityError, SessionStore
 from myextension.tests.test_assessment_profile import make_assessment_profile
@@ -85,6 +88,39 @@ def _finalized_behavior_session(tmp_path: Path):
         )
     store.finalize(session_id, last_sequence=len(rows))
     return store, session_id
+
+
+def test_evidence_chunk_is_a_deterministic_gzip_projection_of_canonical_events():
+    session_id = "39e65774-a89a-4f05-961e-3527b13a6dd2"
+    events = [
+        {"event_id": f"{session_id}:1", "session_seq": 1, "segment_type": "code_writing"},
+        {"event_id": f"{session_id}:2", "session_seq": 2, "segment_type": "code_execution"},
+    ]
+    created_at = datetime(2026, 8, 13, 9, 0, tzinfo=timezone.utc)
+
+    chunk = build_evidence_chunk(
+        session_id,
+        sequence=3,
+        events=events,
+        created_at=created_at,
+    )
+
+    assert chunk.sequence == 3
+    assert chunk.first_event_sequence == 1
+    assert chunk.last_event_sequence == 2
+    assert json.loads(decompress(chunk.body)) == {
+        "schema_version": 1,
+        "session_id": session_id,
+        "first_event_sequence": 1,
+        "last_event_sequence": 2,
+        "events": events,
+    }
+    assert build_evidence_chunk(
+        session_id,
+        sequence=3,
+        events=events,
+        created_at=created_at,
+    ).body == chunk.body
 
 
 def test_finalize_export_writes_human_readable_local_logs_without_ai(

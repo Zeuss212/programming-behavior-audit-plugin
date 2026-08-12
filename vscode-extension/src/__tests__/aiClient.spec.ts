@@ -110,6 +110,99 @@ describe('CompatibleAiClient', () => {
     await expect(client.suggestPlan(planInput())).rejects.toMatchObject({ code });
   });
 
+  it('shows a redacted provider 400 reason without exposing secrets or paths', async () => {
+    const client = new CompatibleAiClient({
+      runtime,
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              error: {
+                code: 'invalid_request_error',
+                param: 'max_tokens',
+                message: 'bad token sk-secret-value /Users/student/private.py',
+              },
+            }),
+            { status: 400 },
+          ),
+        ),
+    });
+
+    const error = await client.suggestPlan(planInput()).catch((reason: unknown) => reason);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).toMatchObject({ code: 'ai_provider_unavailable' });
+    expect((error as Error).message).toContain('max_tokens');
+    expect((error as Error).message).not.toContain('sk-secret-value');
+    expect((error as Error).message).not.toContain('/Users/student/private.py');
+  });
+
+  it('retries once without response_format only when the provider rejects that field', async () => {
+    const fetcher = vi
+      .fn<(input: string | URL | Request, init?: RequestInit) => Promise<Response>>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error: {
+              param: 'response_format',
+              message: 'response_format is unsupported',
+            },
+          }),
+          { status: 400 },
+        ),
+      )
+      .mockResolvedValueOnce(providerResponse(planSuggestion));
+    const client = new CompatibleAiClient({ runtime, fetch: fetcher });
+
+    await expect(client.suggestPlan(planInput())).resolves.toEqual(planSuggestion);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(requestBody(fetcher, 0)).toContain('"response_format"');
+    expect(requestBody(fetcher, 1)).not.toContain('"response_format"');
+  });
+
+  it('does not retry an unrelated HTTP 400', async () => {
+    const fetcher = vi
+      .fn<(input: string | URL | Request, init?: RequestInit) => Promise<Response>>()
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({ error: { param: 'model', message: 'model is unavailable' } }),
+          { status: 400 },
+        ),
+      );
+    const client = new CompatibleAiClient({ runtime, fetch: fetcher });
+
+    await expect(client.suggestPlan(planInput())).rejects.toMatchObject({
+      code: 'ai_provider_unavailable',
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('repairs blank knowledge point text but still rejects invalid containers', async () => {
+    const repairClient = new CompatibleAiClient({
+      runtime,
+      fetch: () =>
+        Promise.resolve(
+          providerResponse({
+            schema_version: 1,
+            knowledge_points: [{ name: '边界处理', description: ' ', observation_basis: '' }],
+            tests: [],
+          }),
+        ),
+    });
+    const repaired = await repairClient.suggestPlan(planInput());
+    expect(repaired.knowledge_points[0]?.name).toBe('边界处理');
+    expect(repaired.knowledge_points[0]?.description).toContain('边界处理');
+    expect(repaired.knowledge_points[0]?.observation_basis).toContain('观察依据');
+
+    const invalidClient = new CompatibleAiClient({
+      runtime,
+      fetch: () =>
+        Promise.resolve(providerResponse({ schema_version: 1, knowledge_points: {}, tests: [] })),
+    });
+    await expect(invalidClient.suggestPlan(planInput())).rejects.toMatchObject({
+      code: 'ai_response_invalid',
+    });
+  });
+
   it('maps abort timeout and network failures to stable error codes', async () => {
     const timeoutClient = new CompatibleAiClient({
       runtime,

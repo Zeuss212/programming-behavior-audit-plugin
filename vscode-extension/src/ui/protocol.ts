@@ -3,6 +3,7 @@ import { AuditError } from '../domain/errors';
 export const AUDIT_COMMAND_IDS = [
   'behaviorAudit.openTeacher',
   'behaviorAudit.openStudent',
+  'behaviorAudit.openPlanWizard',
   'behaviorAudit.publishPlan',
   'behaviorAudit.suggestPlan',
   'behaviorAudit.importPlan',

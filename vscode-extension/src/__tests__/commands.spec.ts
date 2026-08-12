@@ -85,6 +85,7 @@ describe('registerAuditCommands', () => {
   it('registers exactly the locked command IDs', () => {
     const { handlers } = setup();
     expect([...handlers.keys()].sort()).toEqual([...AUDIT_COMMAND_IDS].sort());
+    expect(handlers.has('behaviorAudit.openPlanWizard')).toBe(true);
   });
 
   it('keeps manifest commands and the single sidebar view synchronized with code', () => {

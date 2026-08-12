@@ -67,8 +67,20 @@ interface ProviderChoice {
   readonly content: string;
 }
 
+interface ProviderFailureDetail {
+  readonly param?: string;
+  readonly code?: string;
+  readonly type?: string;
+  readonly message?: string;
+  readonly rejectsResponseFormat: boolean;
+}
+
 function isUnknownArray(value: unknown): value is readonly unknown[] {
   return Array.isArray(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 const ajv = new Ajv2020({ allErrors: true, strict: true });
@@ -99,7 +111,52 @@ function endpoint(baseUrl: URL): URL {
   return new URL('chat/completions', url);
 }
 
-function providerError(status: number): AuditError {
+function redactProviderText(value: string): string {
+  return value
+    .replace(/Bearer\s+\S+/giu, 'Bearer [REDACTED]')
+    .replace(/\b(?:sk|ark)-[A-Za-z0-9_-]{8,}\b/gu, '[REDACTED]')
+    .replace(/(?:[A-Za-z]:\\|\/Users\/|\/home\/)[^\s"']+/gu, '[PATH]')
+    .replaceAll('\n', ' ')
+    .replaceAll('\r', ' ')
+    .replaceAll('\t', ' ')
+    .trim()
+    .slice(0, 300);
+}
+
+function optionalText(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0
+    ? redactProviderText(value.trim())
+    : undefined;
+}
+
+function providerFailureDetail(body: string): ProviderFailureDetail {
+  let error: Record<string, unknown> = {};
+  try {
+    const parsed = JSON.parse(body.slice(0, 4096)) as unknown;
+    if (isRecord(parsed)) {
+      error = isRecord(parsed.error) ? parsed.error : parsed;
+    }
+  } catch {
+    error = { message: body.slice(0, 4096) };
+  }
+  const param = optionalText(error.param);
+  const code = optionalText(error.code);
+  const type = optionalText(error.type);
+  const message = optionalText(error.message);
+  const searchable = [param, code, type, message].filter(Boolean).join(' ').toLowerCase();
+  return {
+    ...(param === undefined ? {} : { param }),
+    ...(code === undefined ? {} : { code }),
+    ...(type === undefined ? {} : { type }),
+    ...(message === undefined ? {} : { message }),
+    rejectsResponseFormat:
+      searchable.includes('response_format') ||
+      searchable.includes('json mode') ||
+      searchable.includes('structured output'),
+  };
+}
+
+function providerError(status: number, detail: ProviderFailureDetail): AuditError {
   if (status === 401 || status === 403) {
     return new AuditError(
       'ai_provider_auth_failed',
@@ -114,11 +171,42 @@ function providerError(status: number): AuditError {
       '请稍后重试，核心本地功能不受影响。',
     );
   }
+  const reason = [detail.param, detail.code, detail.type, detail.message]
+    .filter((value, index, values): value is string => value !== undefined && values.indexOf(value) === index)
+    .join('：');
   return new AuditError(
     'ai_provider_unavailable',
-    `AI 服务返回 HTTP ${String(status)}。`,
+    `AI 服务返回 HTTP ${String(status)}${reason.length === 0 ? '。' : `：${reason}`}`,
     '请稍后重试，或继续使用不依赖 AI 的功能。',
   );
+}
+
+function nonBlank(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function repairPlanSuggestion(value: unknown): unknown {
+  if (!isRecord(value) || !Array.isArray(value.knowledge_points) || !Array.isArray(value.tests)) {
+    return value;
+  }
+  return {
+    ...value,
+    schema_version: 1,
+    knowledge_points: value.knowledge_points.map((item, index) => {
+      if (!isRecord(item)) {
+        return item as unknown;
+      }
+      const name = nonBlank(item.name) ?? `知识点 ${String(index + 1)}`;
+      return {
+        name,
+        description:
+          nonBlank(item.description) ?? `观察与“${name}”相关的代码实现与运行过程。`,
+        observation_basis:
+          nonBlank(item.observation_basis) ??
+          `以“${name}”相关的代码编辑、运行结果或错误修正记录作为观察依据。`,
+      };
+    }),
+  };
 }
 
 function parseChoice(value: unknown): ProviderChoice {
@@ -257,50 +345,61 @@ export class CompatibleAiClient implements AiClient {
     validate: ValidateFunction<T>,
     purpose: string,
   ): Promise<T> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    let response: Response;
-    try {
-      response = await this.options.fetch(endpoint(runtime.baseUrl), {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${runtime.apiKey}`,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: runtime.model,
-          max_tokens: maximumTokens,
-          response_format: { type: 'json_object' },
-          messages: [
-            {
-              role: 'system',
-              content: `你是课堂编程行为审计助手。生成${purpose}时只能依据引用数据，不评分、不排名、不判断能力或掌握程度。`,
-            },
-            { role: 'user', content: JSON.stringify(data) },
-          ],
-        }),
-        signal: controller.signal,
-      });
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
+    let response: Response | undefined;
+    for (const includeResponseFormat of [true, false]) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        response = await this.options.fetch(endpoint(runtime.baseUrl), {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${runtime.apiKey}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: runtime.model,
+            max_tokens: maximumTokens,
+            ...(includeResponseFormat ? { response_format: { type: 'json_object' } } : {}),
+            messages: [
+              {
+                role: 'system',
+                content: `你是课堂编程行为审计助手。生成${purpose}时只能依据引用数据，不评分、不排名、不判断能力或掌握程度。只返回一个有效 JSON 对象，不得包含 Markdown 或额外解释。`,
+              },
+              { role: 'user', content: JSON.stringify(data) },
+            ],
+          }),
+          signal: controller.signal,
+        });
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') {
+          throw new AuditError(
+            'ai_provider_timeout',
+            'AI 服务请求超时。',
+            '请稍后重试；本地功能不受影响。',
+            error,
+          );
+        }
         throw new AuditError(
-          'ai_provider_timeout',
-          'AI 服务请求超时。',
-          '请稍后重试；本地功能不受影响。',
+          'ai_provider_network_error',
+          '无法连接 AI 服务。',
+          '请检查网络和基础 URL，或继续使用本地功能。',
           error,
         );
+      } finally {
+        clearTimeout(timer);
       }
-      throw new AuditError(
-        'ai_provider_network_error',
-        '无法连接 AI 服务。',
-        '请检查网络和基础 URL，或继续使用本地功能。',
-        error,
-      );
-    } finally {
-      clearTimeout(timer);
+      if (response.ok) {
+        break;
+      }
+      const detail = providerFailureDetail(await response.text());
+      if (!(response.status === 400 && includeResponseFormat && detail.rejectsResponseFormat)) {
+        throw providerError(response.status, detail);
+      }
     }
-    if (!response.ok) {
-      throw providerError(response.status);
+    if (response === undefined || !response.ok) {
+      throw providerError(response?.status ?? 503, {
+        rejectsResponseFormat: false,
+      });
     }
 
     let envelope: unknown;
@@ -323,9 +422,10 @@ export class CompatibleAiClient implements AiClient {
     } catch (error) {
       throw invalidResponse('AI 返回内容不是有效 JSON。', error);
     }
-    if (!validate(value)) {
+    const normalized = purpose === '方案建议' ? repairPlanSuggestion(value) : value;
+    if (!validate(normalized)) {
       throw invalidResponse(`AI 返回的${purpose}格式无效：${validationMessage(validate.errors)}`);
     }
-    return value;
+    return normalized;
   }
 }

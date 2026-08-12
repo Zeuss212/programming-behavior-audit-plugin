@@ -13,6 +13,8 @@ import { canonicalJson } from './domain/canonicalJson';
 import type { JsonObject, JsonValue, PublishedPlan, SessionState } from './domain/types';
 import { StableNotebookCollector, type NotebookCollectorHost } from './notebooks/notebookCollector';
 import { FilePlanRepository } from './plans/planRepository';
+import { applySuggestion, toPublishPlanInput } from './plans/planDraft';
+import { PlanDraftStore } from './plans/planDraftStore';
 import { FileReportService, FileSessionExporter } from './reports/exporter';
 import { VsCodePythonRunner, type PythonTextDocument } from './runners/pythonRunner';
 import { FileSessionRepository } from './storage/sessionRepository';
@@ -28,6 +30,12 @@ import {
   type SidebarWebview,
 } from './ui/sidebarProvider';
 import { AuditStatusBar, type StatusBarItemLike } from './ui/statusBar';
+import {
+  PlanWizardPanel,
+  type WizardPanel,
+  type WizardUri,
+} from './ui/planWizardPanel';
+import type { PlanWizardMessage } from './ui/planWizardProtocol';
 
 interface ActiveRuntime {
   readonly capture: DurableCaptureController;
@@ -100,6 +108,44 @@ class VsCodeWebviewAdapter implements SidebarWebview {
   }
 }
 
+class VsCodePlanWizardPanelAdapter implements WizardPanel {
+  public constructor(private readonly panel: VSCode.WebviewPanel) {}
+
+  public get webview() {
+    const webview = this.panel.webview;
+    return {
+      cspSource: webview.cspSource,
+      get html(): string {
+        return webview.html;
+      },
+      set html(value: string) {
+        webview.html = value;
+      },
+      asWebviewUri: (uri: WizardUri) => {
+        if (uri.raw === undefined) {
+          throw new Error('Missing VS Code media URI.');
+        }
+        return { text: webview.asWebviewUri(uri.raw as VSCode.Uri).toString() };
+      },
+      onDidReceiveMessage: (listener: (value: unknown) => void) =>
+        webview.onDidReceiveMessage(listener),
+      postMessage: (value: unknown) => webview.postMessage(value),
+    };
+  }
+
+  public reveal(): void {
+    this.panel.reveal();
+  }
+
+  public onDidDispose(listener: () => void): VSCode.Disposable {
+    return this.panel.onDidDispose(listener);
+  }
+
+  public dispose(): void {
+    this.panel.dispose();
+  }
+}
+
 function textCollectorHost(
   vscode: typeof import('vscode'),
   workspaceRootPath: string,
@@ -164,7 +210,7 @@ export async function activate(
   const reportService = new FileReportService(sessionRepository, () => new Date());
   const sessionExporter = new FileSessionExporter(
     sessionRepository,
-    '0.1.0',
+    '0.1.1',
     () => new Date(),
   );
   const aiSettings = new FileAiSettingsService(
@@ -179,6 +225,7 @@ export async function activate(
   );
   await aiSettings.initialize();
   const aiClient = new CompatibleAiClient({ runtime: aiSettings, fetch: globalThis.fetch });
+  const planDraftStore = new PlanDraftStore(context.workspaceState, () => new Date());
   const pythonRunner = new VsCodePythonRunner({
     pythonExtensionAvailable: () => vscode.extensions.getExtension('ms-python.python') !== undefined,
     pythonApi: async () => {
@@ -205,6 +252,7 @@ export async function activate(
       return { path: uri.path, raw: uri };
     },
   };
+  const wizardMediaRoot: WizardUri = mediaRoot;
 
   const statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   statusItem.command = 'behaviorAudit.openStudent';
@@ -278,80 +326,6 @@ export async function activate(
     await refreshPresentation();
   };
 
-  const publishPlan = async (): Promise<void> => {
-    const problemText = await vscode.window.showInputBox({
-      title: '发布考核方案',
-      prompt: '输入本次编程题目',
-      ignoreFocusOut: true,
-    });
-    if (problemText === undefined || problemText.trim().length === 0) {
-      return;
-    }
-    const name = await vscode.window.showInputBox({
-      title: '知识点名称',
-      prompt: '例如：空列表边界处理',
-      ignoreFocusOut: true,
-    });
-    if (name === undefined || name.trim().length === 0) {
-      return;
-    }
-    const basis = await vscode.window.showInputBox({
-      title: '观察依据',
-      prompt: '输入可由编辑或运行事件客观观察到的依据',
-      ignoreFocusOut: true,
-    });
-    if (basis === undefined || basis.trim().length === 0) {
-      return;
-    }
-    selectedPlan = await planRepository.publish({
-      problem_text: problemText.trim(),
-      knowledge_points: [
-        {
-          knowledge_point_id: 'kp-1',
-          name: name.trim(),
-          description: name.trim(),
-          observation_basis: basis.trim(),
-        },
-      ],
-      tests: [],
-    });
-    await vscode.window.showInformationMessage(`已发布方案版本 ${String(selectedPlan.version)}。`);
-  };
-
-  const suggestPlan = async (): Promise<void> => {
-    const problemText = await vscode.window.showInputBox({
-      title: '生成可选 AI 方案建议',
-      prompt: '输入题目；发送前不会包含 API Key 或绝对路径',
-      ignoreFocusOut: true,
-    });
-    if (problemText === undefined || problemText.trim().length === 0) {
-      return;
-    }
-    const suggestion = await aiClient.suggestPlan({
-      problemText: problemText.trim(),
-      workspaceRoot: workspaceRoot ?? '',
-      codeFragments: [],
-    });
-    selectedPlan = await planRepository.publish({
-      problem_text: problemText.trim(),
-      knowledge_points: suggestion.knowledge_points.map((item, index) => ({
-        knowledge_point_id: `kp-${String(index + 1)}`,
-        name: item.name,
-        description: item.description,
-        observation_basis: item.observation_basis,
-      })),
-      tests: suggestion.tests.map((item, index) => ({
-        test_id: `test-${String(index + 1)}`,
-        title: item.title,
-        description: item.description,
-        expected_behavior: item.expected_behavior,
-      })),
-    });
-    await vscode.window.showInformationMessage(
-      `AI 建议已作为方案版本 ${String(selectedPlan.version)} 发布，请在开始前人工复核。`,
-    );
-  };
-
   const importPlan = async (): Promise<void> => {
     const selected = await vscode.window.showOpenDialog({
       canSelectMany: false,
@@ -379,6 +353,96 @@ export async function activate(
         await planRepository.export(selectedPlan.plan_id, selectedPlan.version),
       );
     }
+  };
+
+  const postWizardError = async (error: unknown): Promise<void> => {
+    const message = error instanceof Error ? error.message : '操作失败，请重试。';
+    await planWizard.postState({
+      draft: planDraftStore.load(),
+      aiConfigured: aiSettings.getPublic().hasApiKey,
+      busy: false,
+      notice: { kind: 'error', message },
+    });
+  };
+  const onPlanWizardMessage = async (message: PlanWizardMessage): Promise<void> => {
+    try {
+      if (message.type === 'ready') {
+        await planWizard.postState({
+          draft: planDraftStore.load(),
+          aiConfigured: aiSettings.getPublic().hasApiKey,
+          busy: false,
+        });
+        return;
+      }
+      if (message.type === 'saveDraft') {
+        await planDraftStore.save(message.draft);
+        return;
+      }
+      if (message.type === 'requestSuggestion') {
+        const draft = { ...planDraftStore.load(), problemText: message.problemText.trim() };
+        await planDraftStore.save(draft);
+        await planWizard.postState({ draft, busy: true, aiConfigured: true, notice: { kind: 'info', message: 'AI 正在生成建议……' } });
+        const suggestion = await aiClient.suggestPlan({
+          problemText: draft.problemText,
+          workspaceRoot: workspaceRoot ?? '',
+          codeFragments: [],
+        });
+        const suggestedDraft = applySuggestion(draft, suggestion, new Date().toISOString());
+        await planDraftStore.save(suggestedDraft);
+        await planWizard.postState({
+          draft: suggestedDraft,
+          aiConfigured: true,
+          busy: false,
+          notice: { kind: 'info', message: 'AI 建议已生成，请人工复核后继续。' },
+        });
+        return;
+      }
+      if (message.type === 'publishDraft') {
+        await planDraftStore.save(message.draft);
+        selectedPlan = await planRepository.publish(toPublishPlanInput(message.draft));
+        await planDraftStore.clear();
+        await refreshPresentation();
+        await planWizard.postState({
+          busy: false,
+          published: { planId: selectedPlan.plan_id, version: selectedPlan.version },
+          notice: { kind: 'info', message: '方案已发布，可以导出给学生端。' },
+        });
+        return;
+      }
+      if (message.type === 'exportPublishedPlan') {
+        await exportPlan();
+        return;
+      }
+      if (message.type === 'closeWizard') {
+        planWizard.dispose();
+      }
+    } catch (error) {
+      await postWizardError(error);
+    }
+  };
+  const planWizard = new PlanWizardPanel({
+    createPanel: () =>
+      new VsCodePlanWizardPanelAdapter(
+        vscode.window.createWebviewPanel(
+          'behaviorAudit.planWizard',
+          '创建考核方案',
+          vscode.ViewColumn.One,
+          {
+            enableScripts: true,
+            retainContextWhenHidden: true,
+            localResourceRoots: [mediaUri],
+          },
+        ),
+      ),
+    mediaRoot: wizardMediaRoot,
+    nonce,
+    onMessage: onPlanWizardMessage,
+  });
+  context.subscriptions.push({ dispose: () => planWizard.dispose() });
+
+  const openPlanWizard = (): Promise<void> => {
+    planWizard.show();
+    return Promise.resolve();
   };
 
   const analyzeSession = async (): Promise<void> => {
@@ -427,8 +491,9 @@ export async function activate(
   const actions: CommandActions = {
     'behaviorAudit.openTeacher': async () => showDataView('teacher'),
     'behaviorAudit.openStudent': async () => showDataView('student'),
-    'behaviorAudit.publishPlan': publishPlan,
-    'behaviorAudit.suggestPlan': suggestPlan,
+    'behaviorAudit.openPlanWizard': openPlanWizard,
+    'behaviorAudit.publishPlan': openPlanWizard,
+    'behaviorAudit.suggestPlan': openPlanWizard,
     'behaviorAudit.importPlan': importPlan,
     'behaviorAudit.exportPlan': exportPlan,
     'behaviorAudit.startCapture': async () => Promise.resolve(),

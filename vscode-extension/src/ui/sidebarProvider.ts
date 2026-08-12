@@ -62,9 +62,8 @@ export function createSidebarHtml(input: SidebarHtmlInput): string {
       <h2>教师端</h2>
       <p>发布可携带考核方案，供学生导入后开始采集。</p>
       <div class="action-list">
-        <button type="button" data-command="behaviorAudit.publishPlan">发布方案</button>
-        <button type="button" data-command="behaviorAudit.suggestPlan">生成 AI 建议（可选）</button>
-        <button type="button" data-command="behaviorAudit.exportPlan">导出方案</button>
+        <button type="button" data-command="behaviorAudit.openPlanWizard">创建考核方案</button>
+        <button type="button" data-command="behaviorAudit.exportPlan">导出已发布方案</button>
       </div>
     </section>
     <section id="student-route" data-route-panel="student" hidden>

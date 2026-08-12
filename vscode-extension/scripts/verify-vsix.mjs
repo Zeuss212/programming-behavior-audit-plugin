@@ -83,6 +83,8 @@ const required = [
   'extension/media/activity.svg',
   'extension/media/sidebar.css',
   'extension/media/sidebar.js',
+  'extension/media/plan-wizard.css',
+  'extension/media/plan-wizard.js',
   'extension/schemas/plan-v1.schema.json',
   'extension/schemas/export-manifest-v1.schema.json',
   'extension/schemas/ai-plan-suggestion-v1.schema.json',
@@ -95,7 +97,7 @@ for (const name of required) {
 const manifest = JSON.parse(entries.get('extension/package.json').toString('utf8'));
 assert(manifest.publisher === 'bluedot-ai', 'Unexpected VSIX publisher.');
 assert(manifest.name === 'behavior-audit-vscode', 'Unexpected VSIX extension name.');
-assert(manifest.version === '0.1.0', 'Unexpected VSIX version.');
+assert(manifest.version === '0.1.1', 'Unexpected VSIX version.');
 assert(manifest.engines?.vscode === '^1.125.0', 'Unexpected VS Code engine.');
 assert(manifest.main === './dist/extension.js', 'Unexpected production entry point.');
 

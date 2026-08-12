@@ -10,8 +10,6 @@ import {
 export { AUDIT_COMMAND_IDS } from '../ui/protocol';
 
 export const CONFIRMATION_COMMAND_IDS = [
-  'behaviorAudit.publishPlan',
-  'behaviorAudit.suggestPlan',
   'behaviorAudit.importPlan',
   'behaviorAudit.finishCapture',
   'behaviorAudit.abandonCapture',

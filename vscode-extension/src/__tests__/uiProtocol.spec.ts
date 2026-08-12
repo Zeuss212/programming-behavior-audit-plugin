@@ -16,6 +16,10 @@ describe('parseWebviewMessage', () => {
       type: 'command',
       command: 'behaviorAudit.startCapture',
     });
+    expect(parseWebviewMessage({ type: 'command', command: 'behaviorAudit.openPlanWizard' })).toEqual({
+      type: 'command',
+      command: 'behaviorAudit.openPlanWizard',
+    });
     expect(parseWebviewMessage({ type: 'refresh' })).toEqual({ type: 'refresh' });
   });
 

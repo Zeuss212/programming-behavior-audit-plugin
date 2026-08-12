@@ -128,6 +128,26 @@ def test_student_server_startup_owns_one_evidence_delivery_worker(
         def shutdown(self):
             return None
 
+    class Coordinator:
+        instances = []
+
+        def __init__(self, *_args, **_kwargs) -> None:
+            self.instances.append(self)
+
+    class DeadlineWorker:
+        instances = []
+
+        def __init__(self, coordinator, _submission_coordinator, **_kwargs) -> None:
+            self.coordinator = coordinator
+            self.started = 0
+            self.instances.append(self)
+
+        def start(self):
+            self.started += 1
+
+        def shutdown(self):
+            return None
+
     class WebApp:
         def __init__(self) -> None:
             self.settings = {"base_url": "/"}
@@ -156,6 +176,8 @@ def test_student_server_startup_owns_one_evidence_delivery_worker(
         EvidenceWorker,
         raising=False,
     )
+    monkeypatch.setattr(myextension, "SubmissionCoordinator", Coordinator)
+    monkeypatch.setattr(myextension, "PlatformDeadlineWorker", DeadlineWorker)
     monkeypatch.setattr(myextension.atexit, "register", registrations.append)
 
     myextension._load_jupyter_server_extension(server)
@@ -163,5 +185,8 @@ def test_student_server_startup_owns_one_evidence_delivery_worker(
     assert len(Outbox.instances) == 1
     assert len(EvidenceWorker.instances) == 1
     assert EvidenceWorker.instances[0].started == 1
+    assert len(Coordinator.instances) == 1
+    assert len(DeadlineWorker.instances) == 1
+    assert DeadlineWorker.instances[0].started == 1
     assert server.web_app.settings["myextension_evidence_outbox"] is Outbox.instances[0]
     assert server.web_app.settings["myextension_evidence_worker"] is EvidenceWorker.instances[0]

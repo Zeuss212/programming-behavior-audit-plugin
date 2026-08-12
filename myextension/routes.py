@@ -42,6 +42,7 @@ from .dimension_profile_store import (
 )
 from .dimension_template_store import list_templates
 from .session_log_artifacts import build_evidence_chunk
+from .submission_coordinator import SubmissionCoordinatorError
 from .llm_labeler import ai_config_status, save_ai_config
 from .llm_transport import (
     AiConfigValidationError,
@@ -1652,6 +1653,83 @@ class PlatformCaptureBootstrapRouteHandler(PilotAPIHandler):
             self._finish_internal_error()
 
 
+class PlatformSessionSubmitRouteHandler(PilotAPIHandler):
+    """Submit the current student session without exposing its plugin token."""
+
+    @tornado.web.authenticated
+    def post(self, session_id):
+        try:
+            config = _platform_config()
+            if not config.student_mode:
+                raise ApiRequestError(
+                    404,
+                    "platform_submission_disabled",
+                    "当前运行环境未启用课堂学生模式。",
+                )
+            canonical_id = _canonical_resource_uuid(session_id, field="session_id")
+            context = PlatformContextStore(config.log_root).read_registered_context()
+            if context is None or context.session_id != canonical_id:
+                raise ApiRequestError(
+                    409,
+                    "platform_context_not_registered",
+                    "尚未注册当前课堂会话，请从课堂平台重新进入。",
+                )
+            body = _closed_body(
+                self.read_json_object(max_bytes=4_096),
+                {"schema_version", "reason"},
+                code="platform_submission_validation_failed",
+            )
+            if body["schema_version"] != 1 or body["reason"] != "student_manual":
+                raise ApiRequestError(
+                    422,
+                    "platform_submission_validation_failed",
+                    "课堂提交请求未通过校验。",
+                )
+            coordinator = self.settings.get("myextension_submission_coordinator")
+            if coordinator is None:
+                raise ApiRequestError(
+                    503,
+                    "platform_submission_unavailable",
+                    "课堂提交服务暂时不可用，请稍后重试。",
+                )
+            cutoff_at = datetime.fromisoformat(
+                context.evidence_cutoff_at.replace("Z", "+00:00")
+            )
+            result = coordinator.submit(
+                canonical_id,
+                reason="student_manual",
+                cutoff_at=cutoff_at,
+            )
+            self.finish_json(
+                {
+                    "session_id": result.session_id,
+                    "status": result.status,
+                    "reason": result.reason,
+                    "brief_id": result.brief_id,
+                    "revision": result.revision,
+                    "remote_status": result.remote_status,
+                },
+                status=202 if result.status == "pending_upload" else 200,
+            )
+        except ApiRequestError as error:
+            self._finish_request_error(error)
+        except SubmissionCoordinatorError:
+            self.finish_error(
+                409,
+                "platform_submission_conflict",
+                "课堂会话当前无法安全提交，请稍后重试。",
+            )
+        except (OSError, ValueError):
+            self.finish_error(
+                503,
+                "platform_submission_unavailable",
+                "课堂提交服务暂时不可用，请稍后重试。",
+                retryable=True,
+            )
+        except Exception:
+            self._finish_internal_error()
+
+
 class SessionStartRouteHandler(PilotAPIHandler):
     @tornado.web.authenticated
     def post(self):
@@ -2490,6 +2568,14 @@ def setup_route_handlers(web_app):
         "capture",
         "bootstrap",
     )
+    platform_session_submit_route_pattern = url_path_join(
+        base_url,
+        "myextension",
+        "platform",
+        "sessions",
+        r"([^/]+)",
+        "submit",
+    )
     dimension_templates_route_pattern = url_path_join(
         base_url,
         "myextension",
@@ -2648,6 +2734,10 @@ def setup_route_handlers(web_app):
         (
             platform_capture_bootstrap_route_pattern,
             PlatformCaptureBootstrapRouteHandler,
+        ),
+        (
+            platform_session_submit_route_pattern,
+            PlatformSessionSubmitRouteHandler,
         ),
         (dimension_templates_route_pattern, DimensionTemplatesRouteHandler),
         (dimension_profiles_route_pattern, DimensionProfilesRouteHandler),

@@ -29,6 +29,16 @@ class EvidenceUploadReceipt:
     content_sha256: str
 
 
+@dataclass(frozen=True)
+class BriefSubmissionReceipt:
+    """The classroom service receipt for one logical student brief revision."""
+
+    brief_id: str
+    session_id: str
+    revision: int
+    status: str
+
+
 class PlatformSyncClient:
     """Exchange an ephemeral launch ticket without persisting or logging it."""
 
@@ -179,6 +189,67 @@ class PlatformSyncClient:
             session_id=context.session_id,
             sequence=sequence,
             content_sha256=expected_hash,
+        )
+
+    def submit_brief(
+        self,
+        context: RegisteredPlatformContext,
+        payload: dict[str, object],
+    ) -> BriefSubmissionReceipt:
+        """Submit one structured brief without exposing the plugin token."""
+
+        if not isinstance(payload, dict):
+            raise PlatformClientError("platform_submission_invalid")
+        try:
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        except (TypeError, ValueError) as error:
+            raise PlatformClientError("platform_submission_invalid") from error
+        request = Request(
+            f"{self._base_url}/v1/classroom/plugin/sessions/{context.session_id}/submit",
+            data=body,
+            headers={
+                "Authorization": f"Bearer {context.access_token}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with self._transport(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+                raw = response.read()
+        except HTTPError as error:
+            if error.code in {401, 403}:
+                raise PlatformClientError("platform_submission_unauthorized") from error
+            if error.code == 409:
+                raise PlatformClientError("platform_submission_conflict") from error
+            if 400 <= error.code < 500:
+                raise PlatformClientError("platform_submission_invalid") from error
+            raise PlatformClientError("platform_submission_failed") from error
+        except (OSError, URLError) as error:
+            raise PlatformClientError("platform_submission_unavailable") from error
+        try:
+            response_payload = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError) as error:
+            raise PlatformClientError("platform_submission_invalid_response") from error
+        if not isinstance(response_payload, dict):
+            raise PlatformClientError("platform_submission_invalid_response")
+        brief_id = response_payload.get("brief_id")
+        revision = response_payload.get("revision")
+        status = response_payload.get("status")
+        if (
+            response_payload.get("session_id") != context.session_id
+            or not isinstance(brief_id, str)
+            or not brief_id.strip()
+            or not isinstance(revision, int)
+            or isinstance(revision, bool)
+            or revision < 1
+            or status not in {"completed", "partial"}
+        ):
+            raise PlatformClientError("platform_submission_invalid_response")
+        return BriefSubmissionReceipt(
+            brief_id=brief_id,
+            session_id=context.session_id,
+            revision=revision,
+            status=status,
         )
 
     @staticmethod

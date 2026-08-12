@@ -18,10 +18,12 @@ from .evidence_outbox import EvidenceOutbox, EvidenceOutboxWorker
 from .platform_client import PlatformSyncClient
 from .platform_config import PlatformConfig
 from .platform_context_store import PlatformContextStore
+from .platform_deadline_worker import PlatformDeadlineWorker
 from .review_store import ReviewStore
 from .session_janitor import SessionJanitor, stale_session_timeout
 from .session_log_service import SessionLogService
 from .session_store import SessionStore
+from .submission_coordinator import SubmissionCoordinator
 from .training_record_automation import TrainingRecordRefresher
 
 
@@ -57,6 +59,7 @@ def _load_jupyter_server_extension(server_app):
         worker_created = False
         janitor_created = False
         evidence_worker_created = False
+        deadline_worker_created = False
         registered_shutdowns = []
         published = False
         service_keys = (
@@ -65,6 +68,8 @@ def _load_jupyter_server_extension(server_app):
             "myextension_session_janitor",
             "myextension_evidence_outbox",
             "myextension_evidence_worker",
+            "myextension_submission_coordinator",
+            "myextension_platform_deadline_worker",
             lifecycle_key,
         )
         prior_settings = {
@@ -102,6 +107,8 @@ def _load_jupyter_server_extension(server_app):
         janitor = settings.get("myextension_session_janitor")
         evidence_outbox = settings.get("myextension_evidence_outbox")
         evidence_worker = settings.get("myextension_evidence_worker")
+        submission_coordinator = settings.get("myextension_submission_coordinator")
+        deadline_worker = settings.get("myextension_platform_deadline_worker")
         try:
             platform_config = PlatformConfig.from_env()
         except RuntimeError:
@@ -137,6 +144,22 @@ def _load_jupyter_server_extension(server_app):
                 if evidence_worker is None:
                     evidence_worker = EvidenceOutboxWorker(evidence_outbox)
                     evidence_worker_created = True
+                if submission_coordinator is None:
+                    submission_coordinator = SubmissionCoordinator(
+                        root,
+                        session_store=session_store,
+                        session_log_service=session_log_service,
+                        outbox=evidence_outbox,
+                        client=PlatformSyncClient(platform_config.sync_base_url),
+                        context_store=PlatformContextStore(root),
+                    )
+                if deadline_worker is None:
+                    deadline_worker = PlatformDeadlineWorker(
+                        PlatformContextStore(root),
+                        submission_coordinator,
+                        interval_seconds=platform_config.deadline_poll_seconds,
+                    )
+                    deadline_worker_created = True
 
             recovered_job_ids = job_store.recover_interrupted()
             queued_job_ids = job_store.list_queued()
@@ -147,6 +170,8 @@ def _load_jupyter_server_extension(server_app):
             janitor.start()
             if evidence_worker is not None:
                 evidence_worker.start()
+            if deadline_worker is not None:
+                deadline_worker.start()
 
             atexit.register(worker.shutdown)
             registered_shutdowns.append(worker.shutdown)
@@ -155,6 +180,9 @@ def _load_jupyter_server_extension(server_app):
             if evidence_worker is not None:
                 atexit.register(evidence_worker.shutdown)
                 registered_shutdowns.append(evidence_worker.shutdown)
+            if deadline_worker is not None:
+                atexit.register(deadline_worker.shutdown)
+                registered_shutdowns.append(deadline_worker.shutdown)
 
             published = True
             settings["myextension_analysis_job_store"] = job_store
@@ -164,6 +192,10 @@ def _load_jupyter_server_extension(server_app):
                 settings["myextension_evidence_outbox"] = evidence_outbox
             if evidence_worker is not None:
                 settings["myextension_evidence_worker"] = evidence_worker
+            if submission_coordinator is not None:
+                settings["myextension_submission_coordinator"] = submission_coordinator
+            if deadline_worker is not None:
+                settings["myextension_platform_deadline_worker"] = deadline_worker
             settings[lifecycle_key] = True
             # This is the final fallible startup operation. Once it succeeds,
             # the worker may execute and no lifecycle mutation remains.
@@ -189,6 +221,11 @@ def _load_jupyter_server_extension(server_app):
             if evidence_worker_created and evidence_worker is not None:
                 try:
                     evidence_worker.shutdown()
+                except Exception:
+                    pass
+            if deadline_worker_created and deadline_worker is not None:
+                try:
+                    deadline_worker.shutdown()
                 except Exception:
                     pass
             if worker_created and worker is not None:

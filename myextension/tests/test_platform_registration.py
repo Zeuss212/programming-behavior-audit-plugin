@@ -13,6 +13,7 @@ from myextension.platform_context_store import (
     PlatformContextStore,
     RegisteredPlatformContext,
 )
+from myextension.submission_coordinator import SubmissionResult
 from myextension.tests.test_assessment_profile import make_assessment_profile
 
 
@@ -200,6 +201,54 @@ def test_platform_client_uploads_compressed_evidence_with_the_private_session_to
     assert receipt.content_sha256 == sha256(b"gzip-evidence").hexdigest()
 
 
+def test_platform_client_submits_one_structured_brief_with_the_private_session_token():
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {
+                    "brief_id": "4ea8479f-c4bb-4645-9c1f-1593afdc187a",
+                    "session_id": context().session_id,
+                    "revision": 1,
+                    "status": "completed",
+                }
+            ).encode("utf-8")
+
+    payload = {
+        "summary": "已生成基础简报。",
+        "knowledge_points": [],
+        "process_overview": [],
+        "issues": [],
+        "ai_analysis_status": "not_requested",
+        "reason": "student_manual",
+    }
+
+    def submit_transport(request, *, timeout: float):
+        assert timeout > 0
+        assert request.full_url.endswith(
+            f"/v1/classroom/plugin/sessions/{context().session_id}/submit"
+        )
+        assert request.get_method() == "POST"
+        assert request.get_header("Authorization") == "Bearer short-lived-plugin-token"
+        assert request.get_header("Content-type") == "application/json"
+        assert json.loads(request.data) == payload
+        return Response()
+
+    receipt = PlatformSyncClient(
+        "https://classroom.example", transport=submit_transport
+    ).submit_brief(context(), payload)
+
+    assert receipt.brief_id == "4ea8479f-c4bb-4645-9c1f-1593afdc187a"
+    assert receipt.session_id == context().session_id
+    assert receipt.revision == 1
+    assert receipt.status == "completed"
+
+
 async def test_jupyter_registration_route_exchanges_ticket_without_returning_credentials(
     jp_fetch, monkeypatch, tmp_path: Path
 ):
@@ -323,4 +372,56 @@ async def test_jupyter_context_refresh_keeps_plugin_credentials_private(
     assert _captured == [context()]
     assert payload["classroom_session"]["session_id"] == context().session_id
     assert "access_token" not in payload
+    assert "short-lived-plugin-token" not in response.body.decode("utf-8")
+
+
+async def test_jupyter_manual_submission_uses_the_server_side_coordinator(
+    jp_fetch,
+    jp_web_app,
+    monkeypatch,
+    tmp_path: Path,
+):
+    class Coordinator:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def submit(self, session_id, *, reason, cutoff_at):
+            self.calls.append((session_id, reason, cutoff_at))
+            return SubmissionResult(
+                session_id=session_id,
+                status="submitted",
+                reason=reason,
+                brief_id="4ea8479f-c4bb-4645-9c1f-1593afdc187a",
+                revision=1,
+                remote_status="completed",
+            )
+
+    coordinator = Coordinator()
+    monkeypatch.setenv("JUPYTERLAB_BEHAVIOR_AUDIT_PLATFORM_MODE", "student")
+    monkeypatch.setenv("JUPYTERLAB_BEHAVIOR_AUDIT_SYNC_BASE_URL", "https://sync.example")
+    monkeypatch.setenv("JUPYTERLAB_BEHAVIOR_AUDIT_LOG_DIR", str(tmp_path))
+    PlatformContextStore(tmp_path).save_registered_context(context())
+    monkeypatch.setitem(
+        jp_web_app.settings,
+        "myextension_submission_coordinator",
+        coordinator,
+    )
+
+    response = await jp_fetch(
+        "myextension",
+        "platform",
+        "sessions",
+        context().session_id,
+        "submit",
+        method="POST",
+        body=json.dumps({"schema_version": 1, "reason": "student_manual"}),
+        headers={"Content-Type": "application/json"},
+        raise_error=False,
+    )
+
+    assert response.code == 200
+    payload = json.loads(response.body)
+    assert payload["status"] == "submitted"
+    assert payload["brief_id"] == "4ea8479f-c4bb-4645-9c1f-1593afdc187a"
+    assert coordinator.calls[0][:2] == (context().session_id, "student_manual")
     assert "short-lived-plugin-token" not in response.body.decode("utf-8")

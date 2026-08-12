@@ -49,6 +49,7 @@ def test_outbox_persists_a_chunk_before_retry_and_recovers_it_after_restart(
     assert recovered[0].session_id == session_id
     assert recovered[0].sequence == 1
     assert recovered[0].body == body
+    assert EvidenceOutbox(tmp_path).list_entries(session_id) == recovered
 
     duplicate = EvidenceOutbox(tmp_path).enqueue(session_id, chunk)
 

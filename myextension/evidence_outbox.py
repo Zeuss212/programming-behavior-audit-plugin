@@ -257,6 +257,26 @@ class EvidenceOutbox:
             key=lambda entry: (entry.session_id, entry.sequence, entry.content_sha256),
         )
 
+    def list_entries(self, session_id: str) -> list[OutboxEntry]:
+        """Return every durable entry for one session, including delivered receipts."""
+
+        canonical_session_id = _canonical_session_id(session_id)
+        session_dir = self._session_directory(canonical_session_id)
+        if not session_dir.exists():
+            return []
+        if session_dir.is_symlink() or not session_dir.is_dir():
+            raise EvidenceOutboxIntegrityError("Outbox session directory is unsafe.")
+        state = self._read_state(session_dir)
+        entries: list[OutboxEntry] = []
+        for path in sorted(session_dir.glob("????????-*.json"), key=lambda item: item.name):
+            entry = self._read_entry(path)
+            if entry.session_id != canonical_session_id:
+                raise EvidenceOutboxIntegrityError(
+                    "Stored evidence session does not match its directory."
+                )
+            entries.append(self._with_state(entry, state.get(path.name)))
+        return entries
+
     def flush_once(self, limit: int = 20) -> FlushReport:
         """Deliver at most ``limit`` due chunks, retaining all source evidence.
 

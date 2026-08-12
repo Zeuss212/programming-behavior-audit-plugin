@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict
 
 from classroom_sync.errors import AuthenticationError
 from classroom_sync.routers.plans import get_services
+from classroom_sync.services.briefs import BriefContent
 
 router = APIRouter(prefix="/v1/classroom/plugin", tags=["classroom-plugin"])
 
@@ -18,6 +19,17 @@ class RegisterPluginSessionRequest(BaseModel):
 
     ticket: str
     plugin_instance_id: str
+
+
+class SubmitBriefRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    summary: str
+    knowledge_points: list[dict[str, object]]
+    process_overview: list[str]
+    issues: list[str]
+    ai_analysis_status: str
+    reason: str
 
 
 def get_plugin_bearer(authorization: str | None) -> str:
@@ -91,4 +103,35 @@ def upload_evidence(
         "session_id": receipt.session_id,
         "sequence": receipt.sequence,
         "content_sha256": receipt.content_sha256,
+    }
+
+
+@router.post("/sessions/{session_id}/submit", status_code=status.HTTP_201_CREATED)
+def submit_brief(
+    session_id: str,
+    payload: SubmitBriefRequest,
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, object]:
+    services = get_services(request)
+    if services.plugin_session_service is None or services.brief_service is None:
+        raise TypeError("Plugin brief dependencies are not configured.")
+    access_token = get_plugin_bearer(authorization)
+    services.plugin_session_service.refresh_plugin_token(access_token, session_id=session_id)
+    brief = services.brief_service.submit(
+        session_id,
+        BriefContent(
+            summary=payload.summary,
+            knowledge_points=tuple(payload.knowledge_points),
+            process_overview=tuple(payload.process_overview),
+            issues=tuple(payload.issues),
+            ai_analysis_status=payload.ai_analysis_status,
+        ),
+        reason=payload.reason,
+    )
+    return {
+        "brief_id": brief.payload["brief_id"],
+        "session_id": brief.session_id,
+        "revision": brief.revision,
+        "status": brief.status,
     }

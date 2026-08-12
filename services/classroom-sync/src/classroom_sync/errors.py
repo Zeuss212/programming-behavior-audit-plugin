@@ -22,6 +22,10 @@ class AuthorizationError(ClassroomServiceError):
     status_code = 403
 
 
+class NotFoundError(ClassroomServiceError):
+    status_code = 404
+
+
 class RosterConflictError(ClassroomServiceError):
     status_code = 409
 

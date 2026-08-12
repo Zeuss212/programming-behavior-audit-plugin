@@ -2,16 +2,39 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from .application import ClassroomServices
 from .config import Settings
+from .errors import ClassroomServiceError
+from .routers.plans import router as plans_router
+from .routers.student import router as student_router
 
 
-def create_app(settings: Settings) -> FastAPI:
+def create_app(
+    settings: Settings,
+    *,
+    classroom_services: ClassroomServices | None = None,
+) -> FastAPI:
     """Build an app whose readiness is safe to expose to a load balancer."""
 
     app = FastAPI(title="Classroom Sync", version="0.1.0")
+
+    @app.exception_handler(ClassroomServiceError)
+    def classroom_service_error(
+        _request: Request, error: ClassroomServiceError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=error.status_code,
+            content={
+                "error": {
+                    "code": error.code,
+                    "message": "课堂服务请求未能完成。",
+                    "retryable": error.retryable,
+                }
+            },
+        )
 
     @app.get("/health/live")
     def live() -> dict[str, str]:
@@ -30,5 +53,10 @@ def create_app(settings: Settings) -> FastAPI:
                 },
             )
         return {"status": "ready"}
+
+    if classroom_services is not None:
+        app.state.classroom_services = classroom_services
+        app.include_router(plans_router)
+        app.include_router(student_router)
 
     return app

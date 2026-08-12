@@ -57,6 +57,7 @@ def test_core_migration_round_trip_and_uniqueness(tmp_path: Path):
                 "plan_id": "plan-1",
                 "profile_id": "profile-1",
                 "version": 1,
+                "source_draft_revision": 0,
                 "space_id": "space-1",
                 "parent_algorithm_id": "parent-1",
                 "profile": {"schema_version": 2},

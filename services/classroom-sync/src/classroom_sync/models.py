@@ -17,6 +17,7 @@ class PlanDraft(Base):
     __tablename__ = "plan_drafts"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    profile_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     space_id: Mapped[str] = mapped_column(String(128), nullable=False)
     parent_algorithm_id: Mapped[str] = mapped_column(String(128), nullable=False)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -25,6 +26,7 @@ class PlanDraft(Base):
     scheduled_end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ai_policy: Mapped[str] = mapped_column(String(32), nullable=False)
     revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    published_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
     teacher_id: Mapped[str] = mapped_column(String(128), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -41,6 +43,7 @@ class PlanVersion(Base):
     plan_id: Mapped[str] = mapped_column(String(64), nullable=False)
     profile_id: Mapped[str] = mapped_column(String(64), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_draft_revision: Mapped[int] = mapped_column(Integer, nullable=False)
     space_id: Mapped[str] = mapped_column(String(128), nullable=False)
     parent_algorithm_id: Mapped[str] = mapped_column(String(128), nullable=False)
     profile: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)

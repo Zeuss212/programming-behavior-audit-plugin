@@ -20,6 +20,7 @@ def upgrade() -> None:
     op.create_table(
         "plan_drafts",
         sa.Column("id", sa.String(length=64), primary_key=True),
+        sa.Column("profile_id", sa.String(length=64), nullable=False, unique=True),
         sa.Column("space_id", sa.String(length=128), nullable=False),
         sa.Column("parent_algorithm_id", sa.String(length=128), nullable=False),
         sa.Column("title", sa.String(length=200), nullable=False),
@@ -28,6 +29,7 @@ def upgrade() -> None:
         sa.Column("scheduled_end_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("ai_policy", sa.String(length=32), nullable=False),
         sa.Column("revision", sa.Integer(), nullable=False),
+        sa.Column("published_revision", sa.Integer(), nullable=True),
         sa.Column("teacher_id", sa.String(length=128), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
@@ -38,6 +40,7 @@ def upgrade() -> None:
         sa.Column("plan_id", sa.String(length=64), nullable=False),
         sa.Column("profile_id", sa.String(length=64), nullable=False),
         sa.Column("version", sa.Integer(), nullable=False),
+        sa.Column("source_draft_revision", sa.Integer(), nullable=False),
         sa.Column("space_id", sa.String(length=128), nullable=False),
         sa.Column("parent_algorithm_id", sa.String(length=128), nullable=False),
         sa.Column("profile", sa.JSON(), nullable=False),

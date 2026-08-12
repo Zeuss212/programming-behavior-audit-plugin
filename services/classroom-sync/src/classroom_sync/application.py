@@ -8,6 +8,7 @@ from typing import Protocol
 from classroom_sync.auth.fincolab import Principal, StudentChildExperiment
 from classroom_sync.services.assignments import AssignmentService
 from classroom_sync.services.plans import PlanService
+from classroom_sync.services.sessions import PluginSessionService
 
 
 class ClassroomIdentityGateway(Protocol):
@@ -31,3 +32,4 @@ class ClassroomServices:
     identity_gateway: ClassroomIdentityGateway
     plan_service: PlanService
     assignment_service: AssignmentService
+    plugin_session_service: PluginSessionService | None = None

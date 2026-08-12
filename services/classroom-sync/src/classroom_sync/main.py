@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
@@ -9,6 +11,7 @@ from .application import ClassroomServices
 from .config import Settings
 from .errors import ClassroomServiceError
 from .routers.plans import router as plans_router
+from .routers.plugin import router as plugin_router
 from .routers.student import router as student_router
 
 
@@ -28,10 +31,12 @@ def create_app(
         return JSONResponse(
             status_code=error.status_code,
             content={
+                "schema_version": 1,
                 "error": {
                     "code": error.code,
                     "message": "课堂服务请求未能完成。",
                     "retryable": error.retryable,
+                    "request_id": _request.headers.get("X-Request-ID") or str(uuid4()),
                 }
             },
         )
@@ -57,6 +62,7 @@ def create_app(
     if classroom_services is not None:
         app.state.classroom_services = classroom_services
         app.include_router(plans_router)
+        app.include_router(plugin_router)
         app.include_router(student_router)
 
     return app

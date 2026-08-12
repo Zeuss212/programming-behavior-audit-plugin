@@ -22,6 +22,10 @@ class AuthorizationError(ClassroomServiceError):
     status_code = 403
 
 
+class ConflictError(ClassroomServiceError):
+    status_code = 409
+
+
 class NotFoundError(ClassroomServiceError):
     status_code = 404
 
@@ -33,6 +37,10 @@ class RosterConflictError(ClassroomServiceError):
 class UpstreamContractError(ClassroomServiceError):
     status_code = 503
     retryable = True
+
+
+class ValidationError(ClassroomServiceError):
+    status_code = 422
 
 
 class UpstreamUnavailableError(ClassroomServiceError):

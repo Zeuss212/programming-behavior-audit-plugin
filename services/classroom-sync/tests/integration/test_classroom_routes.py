@@ -1,4 +1,5 @@
 import asyncio
+import gzip
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from classroom_sync.main import create_app
 from classroom_sync.models import Base
 from classroom_sync.services.assignments import AssignmentService
 from classroom_sync.services.plans import PlanService
+from classroom_sync.services.sessions import PluginSessionService
 from tests.integration.test_plan_assignment_flow import profile_draft
 
 
@@ -44,6 +46,15 @@ class FakeIdentityGateway:
         assert principal.user_id == "teacher-1"
         assert (space_id, parent_algorithm_id) == ("space-1", "parent-1")
         return (StudentChildExperiment("student-1", "student-a", "child-1", "workbench-1"),)
+
+
+class RecordingStorage:
+    def __init__(self) -> None:
+        self.objects: dict[str, bytes] = {}
+
+    def put_bytes(self, key: str, body: bytes, *, content_type: str) -> None:
+        assert content_type == "application/gzip"
+        self.objects[key] = body
 
 
 def request(app, method: str, path: str, **kwargs: object) -> httpx.Response:
@@ -128,3 +139,115 @@ def test_teacher_publish_sync_and_student_acceptance_use_trusted_router_boundari
         ("teacher-1", "space-1", "parent-1"),
     ]
     assert identity_gateway.student_checks == [("student-1", "space-1")]
+
+
+def test_student_launches_plugin_with_one_time_ticket_and_uploads_evidence():
+    """The HTTP boundary preserves student and plugin authentication separation."""
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    repository_root = Path(__file__).resolve().parents[4]
+    schema_registry = ClassroomSchemaRegistry(repository_root / "contracts" / "classroom" / "v1")
+    now = datetime(2026, 8, 12, 8, 0, tzinfo=UTC)
+    identity_gateway = FakeIdentityGateway()
+    application = create_app(
+        Settings(database_url="sqlite://"),
+        classroom_services=ClassroomServices(
+            identity_gateway=identity_gateway,
+            plan_service=PlanService(session_factory, schema_registry, clock=lambda: now),
+            assignment_service=AssignmentService(session_factory, clock=lambda: now),
+            plugin_session_service=PluginSessionService(
+                session_factory,
+                storage=RecordingStorage(),
+                plugin_jwt_secret="test-plugin-secret-012345678901234567",
+                clock=lambda: now,
+                schema_registry=schema_registry,
+            ),
+        ),
+    )
+    with session_factory.begin() as session:
+        from classroom_sync.models import ExperimentPlanBinding, StudentAssignment
+
+        session.add(
+            ExperimentPlanBinding(
+                id="binding-1",
+                space_id="space-1",
+                parent_algorithm_id="parent-1",
+                plan_id="plan-1",
+                plan_version=1,
+                teacher_id="teacher-1",
+                created_at=now,
+                updated_at=None,
+            )
+        )
+        session.add(
+            StudentAssignment(
+                id="assignment-1",
+                binding_id="binding-1",
+                space_id="space-1",
+                parent_algorithm_id="parent-1",
+                child_algorithm_id="child-1",
+                workbench_id="workbench-1",
+                student_id="student-1",
+                plan_id="plan-1",
+                plan_version=1,
+                status="ready",
+                scheduled_start_at=now,
+                scheduled_end_at=now + timedelta(minutes=30),
+                accepted_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+    launch_response = request(
+        application,
+        "POST",
+        "/v1/classroom/student/assignments/assignment-1/launch-ticket",
+        headers={"Authorization": "Bearer student-token"},
+    )
+    assert launch_response.status_code == 201
+    ticket = launch_response.json()["ticket"]
+
+    register_response = request(
+        application,
+        "POST",
+        "/v1/classroom/plugin/sessions/register",
+        json={"ticket": ticket, "plugin_instance_id": "plugin-instance-a"},
+    )
+    assert register_response.status_code == 201
+    credentials = register_response.json()
+    plugin_headers = {"Authorization": f"Bearer {credentials['access_token']}"}
+
+    heartbeat_response = request(
+        application,
+        "POST",
+        f"/v1/classroom/plugin/sessions/{credentials['session_id']}/heartbeat",
+        headers=plugin_headers,
+    )
+    assert heartbeat_response.status_code == 200
+    evidence_response = request(
+        application,
+        "PUT",
+        f"/v1/classroom/plugin/sessions/{credentials['session_id']}/evidence/1",
+        headers={
+            **plugin_headers,
+            "Content-Type": "application/gzip",
+            "X-First-Event-Sequence": "1",
+            "X-Last-Event-Sequence": "1",
+        },
+        content=gzip.compress(b'{"events":[{"sequence":1}]}'),
+    )
+    assert evidence_response.status_code == 201
+    assert evidence_response.json()["sequence"] == 1
+    missing_token_response = request(
+        application,
+        "POST",
+        f"/v1/classroom/plugin/sessions/{credentials['session_id']}/heartbeat",
+    )
+    assert missing_token_response.status_code == 401
+    schema_registry.validate("error", missing_token_response.json())

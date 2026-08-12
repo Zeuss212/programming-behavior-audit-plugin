@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://classroom.local/contracts/v1/common.schema.json",
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "assignment_status": {
+      "enum": ["pending_acceptance", "ready", "active", "submitted"]
+    },
+    "session_status": {
+      "enum": [
+        "collecting",
+        "temporarily_offline",
+        "submitting",
+        "pending_upload",
+        "completed",
+        "partial"
+      ]
+    },
+    "submission_reason": {
+      "enum": ["student_manual", "teacher_ended", "system_deadline"]
+    },
+    "mastery_status": {
+      "enum": ["mastered", "partial", "not_demonstrated", "review_required"]
+    },
+    "evidence_ref": {
+      "type": "string",
+      "pattern": "^chunk-[1-9][0-9]*#event-[1-9][0-9]*$"
+    }
+  }
+}

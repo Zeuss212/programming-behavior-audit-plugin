@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://classroom.local/contracts/v1/error.schema.json",
+  "title": "Classroom API error v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "error"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "retryable", "request_id"],
+      "properties": {
+        "code": {"type": "string", "pattern": "^[a-z][a-z0-9_]{2,63}$"},
+        "message": {"type": "string", "minLength": 1, "maxLength": 500},
+        "retryable": {"type": "boolean"},
+        "request_id": {"type": "string", "minLength": 1, "maxLength": 128}
+      }
+    }
+  }
+}

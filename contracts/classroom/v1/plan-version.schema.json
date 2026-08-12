@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://classroom.local/contracts/v1/plan-version.schema.json",
+  "title": "Published classroom plan version v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "plan_id",
+    "version",
+    "space_id",
+    "parent_algorithm_id",
+    "profile",
+    "content_hash",
+    "scheduled_start_at",
+    "scheduled_end_at",
+    "ai_policy",
+    "published_at"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "plan_id": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/uuid"},
+    "version": {"type": "integer", "minimum": 1},
+    "space_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "parent_algorithm_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "profile": {
+      "$ref": "https://classroom.local/plugin/api-schemas/profile-version-v2.json"
+    },
+    "content_hash": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/sha256"},
+    "scheduled_start_at": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/timestamp"},
+    "scheduled_end_at": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/timestamp"},
+    "ai_policy": {"enum": ["prohibited", "allowed"]},
+    "published_at": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/timestamp"}
+  }
+}

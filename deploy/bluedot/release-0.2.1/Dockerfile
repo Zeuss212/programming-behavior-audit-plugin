@@ -12,7 +12,7 @@ RUN python -c "from importlib.metadata import version; assert version('jupyterla
     && rm -f /tmp/myextension-0.2.1-py3-none-any.whl
 
 ENV JUPYTERLAB_BEHAVIOR_AUDIT_LOG_DIR=/workspace/result/behavior-audit \
-    JUPYTERLAB_BEHAVIOR_AUDIT_ANALYSIS_TIMEOUT_SEC=120
+    JUPYTERLAB_BEHAVIOR_AUDIT_ANALYSIS_TIMEOUT_SEC=180
 
 # ARK_API_KEY must be injected by the platform secret manager at runtime.
 # This image intentionally keeps the base image ENTRYPOINT and CMD unchanged.

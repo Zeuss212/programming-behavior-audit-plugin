@@ -7,12 +7,18 @@ import {
 } from '../behaviorEventUploader';
 import { IBehaviorSegment } from '../behaviorSegments';
 import { BehaviorTimelineBuilder } from '../behaviorTimelineBuilder';
+import {
+  DurableStorageError,
+  IDurableSegmentStore
+} from '../durableSegmentStore';
 import { ApiError } from '../models/apiError';
 import {
   ISegmentBatchReceipt,
   ISegmentBatchRequest,
   ISessionFinalizeResponse,
-  ISessionStartResponse
+  ISessionStartResponse,
+  ISessionState,
+  IQueuedBehaviorSegment
 } from '../models/session';
 import { sha256Json } from '../utils/canonicalJson';
 
@@ -44,6 +50,20 @@ const FINALIZE_RESPONSE: ISessionFinalizeResponse = {
   analysis_job_id: JOB_ID
 };
 
+const STORED_COLLECTING_SESSION: ISessionState = {
+  schema_version: 1,
+  request_id: 'request-stored',
+  session_id: SESSION_ID,
+  problem_id: START_RESPONSE.problem_id,
+  profile_id: START_RESPONSE.profile_id,
+  profile_version: START_RESPONSE.profile_version,
+  profile_content_hash: START_RESPONSE.profile_content_hash,
+  status: 'collecting',
+  last_contiguous_sequence: 0,
+  received_event_count: 0,
+  analysis_job_id: null
+};
+
 const SEGMENT: IBehaviorSegment = {
   segment_type: 'code_writing',
   started_at: '2026-07-28T10:00:00Z',
@@ -56,6 +76,27 @@ const SEGMENT: IBehaviorSegment = {
   inserted_char_count: 4,
   cell_source: 'x = 1'
 };
+
+function queued(sequence: number): IQueuedBehaviorSegment {
+  return {
+    ...SEGMENT,
+    event_id: `${SESSION_ID}:${sequence}`,
+    session_seq: sequence,
+    started_at: `2026-07-28T10:00:0${sequence}Z`
+  };
+}
+
+function createDurableStore(
+  overrides: Partial<IDurableSegmentStore> = {}
+): jest.Mocked<IDurableSegmentStore> {
+  return {
+    load: jest.fn(async () => []),
+    append: jest.fn(async () => undefined),
+    removeThrough: jest.fn(async () => undefined),
+    clear: jest.fn(async () => undefined),
+    ...overrides
+  } as jest.Mocked<IDurableSegmentStore>;
+}
 
 function receipt(batch: ISegmentBatchRequest): ISegmentBatchReceipt {
   return {
@@ -106,6 +147,7 @@ function createHarness(
     Promise<ISessionFinalizeResponse>,
     [unknown, string, number]
   >;
+  durableStore: jest.Mocked<IDurableSegmentStore>;
   sleeps: number[];
 } {
   const upload = jest.fn(
@@ -119,6 +161,7 @@ function createHarness(
     Promise<ISessionFinalizeResponse>,
     [unknown, string, number]
   >(async () => FINALIZE_RESPONSE);
+  const durableStore = createDurableStore();
   const sleeps: number[] = [];
   const uploader = new BehaviorEventUploader(SETTINGS, {
     uploadSegmentBatch: upload,
@@ -128,13 +171,179 @@ function createHarness(
       sleeps.push(delay);
     },
     subtle: webcrypto.subtle as SubtleCrypto,
+    durableStore,
     flushIntervalMs: 60_000,
     ...overrides
   });
-  return { uploader, upload, finalize, sleeps };
+  return {
+    uploader,
+    upload,
+    finalize,
+    durableStore:
+      (overrides.durableStore as jest.Mocked<IDurableSegmentStore>) ??
+      durableStore,
+    sleeps
+  };
 }
 
 describe('BehaviorEventUploader session sequencing', () => {
+  it('does not upload a new segment before durable append completes', async () => {
+    const appended = deferred<void>();
+    const durableStore = createDurableStore({
+      append: jest.fn(() => appended.promise)
+    });
+    const { uploader, upload } = createHarness({ durableStore });
+    await uploader.start(START_RESPONSE);
+
+    uploader.enqueue(SEGMENT);
+    const flushing = uploader.flush();
+    await Promise.resolve();
+
+    expect(upload).not.toHaveBeenCalled();
+    appended.resolve(undefined);
+    await flushing;
+    expect(upload).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes only acknowledged durable segments after a receipt', async () => {
+    const { uploader, durableStore } = createHarness();
+    await uploader.start(START_RESPONSE);
+    uploader.enqueue(SEGMENT);
+
+    await uploader.flush();
+
+    expect(durableStore.removeThrough).toHaveBeenCalledWith(SESSION_ID, 1);
+  });
+
+  it('keeps an accepted receipt when durable cleanup fails', async () => {
+    const durableStore = createDurableStore({
+      removeThrough: jest.fn(async () => {
+        throw new Error('synthetic cleanup failure');
+      })
+    });
+    const { uploader } = createHarness({ durableStore });
+    await uploader.start(START_RESPONSE);
+    uploader.enqueue(SEGMENT);
+
+    await expect(uploader.flush()).resolves.toBeUndefined();
+    expect(uploader.snapshot()).toEqual(
+      expect.objectContaining({ queuedCount: 0, lastServerSequence: 1 })
+    );
+  });
+
+  it('resumes only sequences after the server receipt', async () => {
+    const durableStore = createDurableStore({
+      load: jest.fn(async () => [queued(1), queued(2), queued(3)])
+    });
+    const { uploader, upload } = createHarness({ durableStore });
+
+    await uploader.resume({
+      ...STORED_COLLECTING_SESSION,
+      last_contiguous_sequence: 1,
+      received_event_count: 1
+    });
+    await uploader.drain();
+
+    expect(durableStore.removeThrough).toHaveBeenCalledWith(SESSION_ID, 1);
+    expect(
+      upload.mock.calls[0][2].segments.map(item => item.session_seq)
+    ).toEqual([2, 3]);
+    expect(uploader.snapshot()).toEqual(
+      expect.objectContaining({
+        eventCount: 3,
+        lastSequence: 3,
+        lastServerSequence: 3
+      })
+    );
+  });
+
+  it('rejects resume for a terminal server session', async () => {
+    const { uploader } = createHarness();
+
+    await expect(
+      uploader.resume({ ...STORED_COLLECTING_SESSION, status: 'abandoned' })
+    ).rejects.toThrow(/collecting/i);
+  });
+
+  it('rejects a resumed durable queue with a sequence gap', async () => {
+    const durableStore = createDurableStore({
+      load: jest.fn(async () => [queued(2)])
+    });
+    const { uploader, upload } = createHarness({ durableStore });
+
+    await expect(uploader.resume(STORED_COLLECTING_SESSION)).rejects.toEqual(
+      expect.objectContaining({ code: 'durable_storage_invalid' })
+    );
+    expect(upload).not.toHaveBeenCalled();
+    expect(uploader.snapshot()).toEqual(
+      expect.objectContaining({
+        queuedCount: 0,
+        uploadState: 'error',
+        errorCode: 'durable_storage_invalid'
+      })
+    );
+  });
+
+  it('stops before upload when durable append fails', async () => {
+    const failure = new DurableStorageError(
+      'durable_storage_unavailable',
+      'synthetic durable failure'
+    );
+    const durableStore = createDurableStore({
+      append: jest.fn(async () => {
+        throw failure;
+      })
+    });
+    const { uploader, upload } = createHarness({ durableStore });
+    await uploader.start(START_RESPONSE);
+    uploader.enqueue(SEGMENT);
+
+    await expect(uploader.flush()).rejects.toBe(failure);
+    expect(upload).not.toHaveBeenCalled();
+    expect(uploader.snapshot()).toEqual(
+      expect.objectContaining({
+        uploadState: 'error',
+        errorCode: 'durable_storage_unavailable'
+      })
+    );
+  });
+
+  it('does not resume accepting after finalization hits a durable failure', async () => {
+    const failure = new DurableStorageError(
+      'durable_storage_unavailable',
+      'synthetic durable failure'
+    );
+    const durableStore = createDurableStore({
+      append: jest.fn(async () => {
+        throw failure;
+      })
+    });
+    const { uploader } = createHarness({ durableStore });
+    await uploader.start(START_RESPONSE);
+    uploader.enqueue(SEGMENT);
+
+    await expect(uploader.finalize()).rejects.toBe(failure);
+    uploader.enqueue({ ...SEGMENT, started_at: '2026-07-28T10:00:02Z' });
+
+    expect(uploader.snapshot()).toEqual(
+      expect.objectContaining({
+        eventCount: 1,
+        queuedCount: 1,
+        errorCode: 'durable_storage_unavailable'
+      })
+    );
+  });
+
+  it('best-effort clears durable entries after successful finalization', async () => {
+    const { uploader, durableStore } = createHarness();
+    await uploader.start(START_RESPONSE);
+    uploader.enqueue(SEGMENT);
+
+    await uploader.finalize();
+
+    expect(durableStore.clear).toHaveBeenCalledWith(SESSION_ID);
+  });
+
   it('publishes observation progress from enqueued finalized segments', () => {
     const { uploader } = createHarness();
     uploader.start(START_RESPONSE);

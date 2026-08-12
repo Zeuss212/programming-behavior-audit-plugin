@@ -5,27 +5,42 @@
   "purpose": "BLUEDOT JupyterLab 4 image delivery",
   "artifact": {
     "path": "artifacts/myextension-0.2.1-py3-none-any.whl",
-    "sha256": "8436b8e69f9e25c58df68c0024723c660e9fe8751c52a60b320c1e97f28ea16e"
+    "sha256": "047367eb210819eddd7850f29324a05df7172278b289ec9d7cbb411cdc1e7e29"
   },
   "source": {
     "fixed_delivery_commit": "2a3dc75",
     "fixed_delivery_tag": "bluedot-delivery-0.2.1-fixed",
-    "folder_design_commit": "8c53a7e"
+    "folder_design_commit": "8c53a7e",
+    "ui_hotfix_design_commit": "5b05674",
+    "ui_hotfix_source_commit": "e4ae0b5",
+    "assessment_assist_design_commit": "05628ef",
+    "assessment_assist_plan_commit": "439005a",
+    "assessment_assist_source_commit": "4180d2e",
+    "analysis_retry_design_commit": "4dad09d",
+    "analysis_retry_plan_commit": "7d81685",
+    "analysis_retry_backend_commit": "b3a178a",
+    "analysis_retry_frontend_commit": "5a14c49"
   },
   "validated": {
-    "backend": "668 passed, 23 subtests passed",
-    "frontend": "20 suites, 287 passed",
-    "lint": "passed",
-    "production_build": "passed",
+    "backend": "673 passed",
+    "frontend": "20 suites, 302 passed",
+    "lint": "stylelint, Prettier, and ESLint passed",
+    "production_build": "TypeScript and JupyterLab prebuilt build passed",
     "wheel_structure": "passed",
     "wheel_zip_integrity": "passed",
-    "isolated_install": "myextension 0.2.1, analysis budget 120, provider timeout 60",
+    "isolated_install": "myextension 0.2.1 imported from /private/tmp/myextension-analysis-retry.bXxaIn/site; labextension enabled and OK",
+    "labextension_artifact": "artifact and release 9 passed; remoteEntry.80d52557487e4002.js matches the wheel",
+    "analysis_retry_unit": "164 passed; 60/120/180 second budgets limit calls to 1/2/3",
+    "synthetic_provider_acceptance": "one synthetic call, 5 closed tests, 6.356 seconds; no actual draft or student data",
+    "assessment_fix_preview": "HTTP 200 before the final retry fix; profile count 0; remoteEntry.cb43c0aff88bc38a.js; 行为分析 vertical-rl, upright, transform none",
     "release_script_tests": "8 passed"
   },
   "not_validated": [
     "Docker image build and run because the local Docker daemon was unavailable",
     "Real BLUEDOT base image, registry push, framework registration, and workspace acceptance",
-    "Real or paid AI provider"
+    "Automatic third-call recovery against a real Provider after this fix",
+    "Fresh browser preview of the final auto-retry wheel because active user test sessions were preserved",
+    "Real course content, actual draft, or student data with an AI provider"
   ],
   "entrypoints": {
     "human": "00_从这里开始.md",

@@ -719,6 +719,31 @@ class DimensionProfileVersionRouteHandler(ProfileAPIHandler):
             self._finish_internal_error()
 
 
+def _assessment_assist_transport_code(
+    error: LlmTransportError,
+    fallback: str,
+) -> str:
+    if error.error_code == "provider_timeout":
+        return "ai_provider_timeout"
+    if error.error_code == "provider_network_error":
+        return "ai_provider_network_error"
+    if error.error_code == "provider_response_truncated":
+        return "ai_response_truncated"
+    if error.error_code == "provider_response_invalid":
+        return "ai_response_invalid"
+    if error.error_code != "provider_http_error":
+        return fallback
+    if error.http_status in {401, 403}:
+        return "ai_provider_auth_failed"
+    if error.http_status == 429:
+        return "ai_provider_rate_limited"
+    if error.http_status is not None and 400 <= error.http_status < 500:
+        return "ai_provider_request_rejected"
+    if error.http_status is not None and 500 <= error.http_status < 600:
+        return "ai_provider_unavailable"
+    return fallback
+
+
 class AssessmentAssistRouteHandler(JsonAPIHandler):
     """Shared safe validation and error mapping for stateless AI assistance."""
 
@@ -766,7 +791,10 @@ class AssessmentAssistRouteHandler(JsonAPIHandler):
         if isinstance(error, LlmTransportError):
             self.finish_error(
                 502,
-                self.failure_code,
+                _assessment_assist_transport_code(
+                    error,
+                    self.failure_code,
+                ),
                 self.failure_message,
                 retryable=True,
             )
@@ -999,6 +1027,17 @@ class PilotAPIHandler(JsonAPIHandler):
         except Exception:
             try:
                 self.log.warning("training_record_refresh_failed")
+            except Exception:
+                pass
+            return False
+
+    def _refresh_classroom_brief(self, session_id: str) -> bool:
+        try:
+            self._session_log_service().export_classroom_brief(session_id)
+            return True
+        except Exception:
+            try:
+                self.log.warning("classroom_brief_refresh_failed")
             except Exception:
                 pass
             return False
@@ -1389,6 +1428,7 @@ class SessionFinalizeRouteHandler(PilotAPIHandler):
                 str(job["job_id"]),
             )
             self._refresh_training_record(canonical_id)
+            self._refresh_classroom_brief(canonical_id)
             if job.get("status") == "queued":
                 worker.enqueue(str(job["job_id"]))
             self.finish_json(
@@ -1471,6 +1511,42 @@ class SessionLogsRouteHandler(PilotAPIHandler):
                 500,
                 "session_log_unavailable",
                 "本次日志暂时无法读取。",
+                retryable=True,
+            )
+
+
+class SessionBriefRouteHandler(PilotAPIHandler):
+    """Return only the private-safe deterministic classroom brief."""
+
+    @tornado.web.authenticated
+    def get(self, session_id):
+        try:
+            canonical_id = _canonical_resource_uuid(
+                session_id,
+                field="session_id",
+            )
+            brief = self._session_log_service().get_classroom_brief(
+                canonical_id
+            )
+            if brief is None:
+                self.finish_error(
+                    409,
+                    "classroom_brief_not_ready",
+                    "本地课堂简报尚未生成。",
+                    retryable=True,
+                )
+                return
+            self.set_header("Cache-Control", "no-store")
+            self.finish_json(brief)
+        except ApiRequestError as error:
+            self._finish_request_error(error)
+        except SessionNotFoundError:
+            self._finish_not_found("session_not_found")
+        except (SessionIntegrityError, SessionLogIntegrityError):
+            self.finish_error(
+                500,
+                "classroom_brief_unavailable",
+                "本地课堂简报暂时无法读取。",
                 retryable=True,
             )
 
@@ -1610,6 +1686,7 @@ class SessionLifecycleRouteHandler(PilotAPIHandler):
                         code="session_validation_failed",
                     ),
                 )
+                self._refresh_classroom_brief(canonical_id)
             else:
                 _closed_body(
                     body,
@@ -2069,6 +2146,13 @@ def setup_route_handlers(web_app):
         r"([^/]+)",
         "logs",
     )
+    session_brief_route_pattern = url_path_join(
+        base_url,
+        "myextension",
+        "sessions",
+        r"([^/]+)",
+        "brief",
+    )
     session_log_content_route_pattern = url_path_join(
         base_url,
         "myextension",
@@ -2167,6 +2251,7 @@ def setup_route_handlers(web_app):
         (session_start_route_pattern, SessionStartRouteHandler),
         (session_segments_route_pattern, SessionSegmentsRouteHandler),
         (session_finalize_route_pattern, SessionFinalizeRouteHandler),
+        (session_brief_route_pattern, SessionBriefRouteHandler),
         (session_logs_route_pattern, SessionLogsRouteHandler),
         (session_log_download_route_pattern, SessionLogDownloadRouteHandler),
         (session_log_content_route_pattern, SessionLogContentRouteHandler),

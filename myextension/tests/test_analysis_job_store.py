@@ -28,7 +28,7 @@ from myextension.dimension_analyzer import analyze_session
 from myextension.dimension_profile_store import DimensionProfileStore
 from myextension.llm_transport import LlmTransportError
 from myextension.review_store import ReviewConflictError, ReviewStore
-from myextension.session_janitor import SessionJanitor
+from myextension.session_janitor import SessionJanitor, stale_session_timeout
 from myextension.session_store import SessionStore
 from myextension.tests.test_dimension_analyzer import (
     events as analyzer_events,
@@ -926,20 +926,27 @@ def test_worker_ai_not_configured_is_partial_with_no_private_leak(
 
 
 @pytest.mark.parametrize(
-    ("failure", "expected_error"),
+    ("failure", "expected_error", "expected_waits"),
     [
         (
             LlmTransportError("provider_network_error"),
             "ai_provider_network_error",
+            [2.0, 2.0],
         ),
-        (LlmTransportError("provider_timeout"), "ai_analysis_timeout"),
+        (
+            LlmTransportError("provider_timeout"),
+            "ai_analysis_timeout",
+            [],
+        ),
         (
             LlmTransportError("provider_http_error", http_status=429),
             "ai_provider_rate_limited",
+            [2.0, 2.0],
         ),
         (
             LlmTransportError("provider_http_error", http_status=503),
             "ai_provider_unavailable",
+            [2.0, 2.0],
         ),
     ],
 )
@@ -947,6 +954,7 @@ def test_worker_retries_transient_provider_calls_only(
     tmp_path,
     failure,
     expected_error,
+    expected_waits,
 ):
     session_store, job_store, job = create_worker_job(tmp_path)
     calls = 0
@@ -966,11 +974,88 @@ def test_worker_retries_transient_provider_calls_only(
         synchronous=True,
     )
     worker.enqueue(str(job["job_id"]))
-    assert calls == 2
-    assert waits == [2.0]
+    assert calls == 3
+    assert waits == expected_waits
     updated = job_store.get(str(job["job_id"]))
     assert updated["status"] == "partial"
     assert updated["error_code"] == expected_error
+    worker.shutdown()
+
+
+def test_worker_recovers_after_two_provider_timeouts_in_one_attempt(
+    tmp_path,
+):
+    session_store, job_store, job = create_worker_job(tmp_path)
+    clock = FakeMonotonic()
+    timeouts: list[int] = []
+    waits: list[float] = []
+
+    def provider(request, *, timeout_sec):
+        timeouts.append(timeout_sec)
+        if len(timeouts) <= 2:
+            clock.advance(float(timeout_sec))
+            raise LlmTransportError("provider_timeout")
+        clock.advance(57.0)
+        return provider_response(str(job["session_id"]))
+
+    worker = AnalysisWorker(
+        tmp_path,
+        job_store=job_store,
+        session_store=session_store,
+        provider_client=provider,
+        wait=waits.append,
+        clock=clock,
+        synchronous=True,
+    )
+    worker.enqueue(str(job["job_id"]))
+
+    updated = job_store.get(str(job["job_id"]))
+    assert updated["status"] == "ready"
+    assert len(updated["attempt_ids"]) == 1
+    assert timeouts == [60, 60, 60]
+    assert waits == []
+    worker.shutdown()
+
+
+@pytest.mark.parametrize(
+    ("budget", "expected_calls"),
+    [("60", 1), ("120", 2), ("180", 3)],
+)
+def test_worker_provider_timeout_calls_follow_total_budget(
+    tmp_path,
+    monkeypatch,
+    budget,
+    expected_calls,
+):
+    monkeypatch.setenv(
+        "JUPYTERLAB_BEHAVIOR_AUDIT_ANALYSIS_TIMEOUT_SEC",
+        budget,
+    )
+    session_store, job_store, job = create_worker_job(tmp_path)
+    clock = FakeMonotonic()
+    timeouts: list[int] = []
+
+    def provider(request, *, timeout_sec):
+        timeouts.append(timeout_sec)
+        clock.advance(float(timeout_sec))
+        raise LlmTransportError("provider_timeout")
+
+    worker = AnalysisWorker(
+        tmp_path,
+        job_store=job_store,
+        session_store=session_store,
+        provider_client=provider,
+        wait=clock.sleep,
+        clock=clock,
+        synchronous=True,
+    )
+    worker.enqueue(str(job["job_id"]))
+
+    assert len(timeouts) == expected_calls
+    updated = job_store.get(str(job["job_id"]))
+    assert updated["status"] == "partial"
+    assert updated["error_code"] == "ai_analysis_timeout"
+    worker.shutdown()
 
 
 @pytest.mark.parametrize(
@@ -1053,7 +1138,7 @@ def test_one_logical_repair_shares_deadline_with_independent_retries(
     updated = job_store.get(str(job["job_id"]))
     assert updated["status"] == "ready"
     assert calls == 4
-    assert waits == [2.0, 2.0]
+    assert waits == [2.0]
     raw_path = (
         tmp_path
         / "jobs"
@@ -1104,7 +1189,7 @@ def test_worker_shares_budget_across_truncation_and_repair(tmp_path):
     worker.enqueue(str(job["job_id"]))
 
     assert job_store.get(str(job["job_id"]))["status"] == "ready"
-    assert timeouts == [60, 60, 30]
+    assert timeouts == [60, 60, 60]
     assert [request["max_tokens"] for request in requests] == [
         8192,
         16384,
@@ -1120,7 +1205,7 @@ def test_worker_does_not_call_provider_after_shared_deadline(tmp_path):
     def provider(request, *, timeout_sec):
         nonlocal calls
         calls += 1
-        clock.advance(121.0)
+        clock.advance(181.0)
         return truncated_provider_response()
 
     worker = AnalysisWorker(
@@ -1390,6 +1475,79 @@ def test_janitor_runs_once_on_start_and_is_idempotent():
     janitor.shutdown()
     assert len(fake.calls) == 2
     assert all(call[0].tzinfo is not None for call in fake.calls)
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected_seconds"),
+    [
+        (None, 1800),
+        ("300", 300),
+        ("3600", 3600),
+        ("299", 1800),
+        ("3601", 1800),
+        ("bad", 1800),
+    ],
+)
+def test_stale_session_timeout_is_bounded(
+    monkeypatch,
+    configured,
+    expected_seconds,
+):
+    variable = "JUPYTERLAB_BEHAVIOR_AUDIT_STALE_SESSION_TIMEOUT_SEC"
+    if configured is None:
+        monkeypatch.delenv(variable, raising=False)
+    else:
+        monkeypatch.setenv(variable, configured)
+
+    assert stale_session_timeout().total_seconds() == expected_seconds
+
+
+def test_janitor_refreshes_one_brief_after_new_stale_abandonment():
+    from datetime import datetime, timedelta, timezone
+
+    session_id = "30000000-0000-4000-8000-000000000099"
+
+    class OneShotStore:
+        def __init__(self):
+            self.calls = 0
+
+        def abandon_stale(self, *, now, timeout):
+            self.calls += 1
+            return [session_id] if self.calls == 1 else []
+
+    refreshed: list[str] = []
+    janitor = SessionJanitor(
+        OneShotStore(),  # type: ignore[arg-type]
+        timeout=timedelta(minutes=5),
+        on_abandoned=refreshed.append,
+    )
+    observed_at = datetime(2026, 8, 10, tzinfo=timezone.utc)
+
+    assert janitor.run_once(now=observed_at) == [session_id]
+    assert janitor.run_once(now=observed_at + timedelta(minutes=1)) == []
+    assert refreshed == [session_id]
+
+
+def test_janitor_isolates_brief_callback_failure():
+    from datetime import datetime, timezone
+
+    session_id = "30000000-0000-4000-8000-000000000099"
+
+    class Store:
+        def abandon_stale(self, *, now, timeout):
+            return [session_id]
+
+    def fail_refresh(_session_id):
+        raise RuntimeError("private callback detail")
+
+    janitor = SessionJanitor(
+        Store(),  # type: ignore[arg-type]
+        on_abandoned=fail_refresh,
+    )
+
+    assert janitor.run_once(
+        now=datetime(2026, 8, 10, tzinfo=timezone.utc)
+    ) == [session_id]
 
 
 def test_extension_lifecycle_reuses_services_and_enqueues_recovery_once(
@@ -1833,9 +1991,11 @@ def test_extension_startup_failure_rolls_back_only_new_services(
     class FakeJanitor:
         instances: list["FakeJanitor"] = []
 
-        def __init__(self, session_store):
+        def __init__(self, session_store, *, timeout, on_abandoned):
             self.shutdown_calls = 0
             self.start_calls = 0
+            self.timeout = timeout
+            self.on_abandoned = on_abandoned
             self.instances.append(self)
 
         def start(self):
@@ -1888,6 +2048,8 @@ def test_extension_startup_failure_rolls_back_only_new_services(
     assert FakeWorker.instances[0].autostart is False
     assert callable(FakeWorker.instances[0].terminal_callback)
     assert FakeJanitor.instances[0].shutdown_calls == 1
+    assert FakeJanitor.instances[0].timeout.total_seconds() == 1800
+    assert callable(FakeJanitor.instances[0].on_abandoned)
 
 
 def test_extension_does_not_shutdown_injected_services_on_startup_failure(
@@ -2132,7 +2294,7 @@ def test_failed_loader_then_immediate_retry_has_one_execution_owner(
     class FailFirstJanitor:
         starts = 0
 
-        def __init__(self, session_store):
+        def __init__(self, session_store, *, timeout, on_abandoned):
             self.shutdown_calls = 0
 
         def start(self):

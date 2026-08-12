@@ -102,15 +102,15 @@ def test_missing_bluedot_workspace_keeps_local_default(monkeypatch, tmp_path):
 @pytest.mark.parametrize(
     ("configured", "expected"),
     [
-        (None, 120),
+        (None, 180),
         ("60", 60),
         ("120", 120),
         ("180", 180),
-        ("59", 120),
-        ("181", 120),
-        ("120.0", 120),
-        ("invalid", 120),
-        ("", 120),
+        ("59", 180),
+        ("181", 180),
+        ("120.0", 180),
+        ("invalid", 180),
+        ("", 180),
     ],
 )
 def test_analysis_timeout_is_bounded(monkeypatch, configured, expected):

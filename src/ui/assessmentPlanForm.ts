@@ -127,6 +127,80 @@ function defaultEvidence(name: string): {
   };
 }
 
+export type KnowledgePointRequiredField =
+  | 'name'
+  | 'evidenceQuestion'
+  | 'supportStatement'
+  | 'exclusionStatement';
+
+export const KNOWLEDGE_POINT_REQUIRED_FIELD_LABELS: Record<
+  KnowledgePointRequiredField,
+  string
+> = {
+  name: '知识点名称',
+  evidenceQuestion: '过程观察问题',
+  supportStatement: '支持表现',
+  exclusionStatement: '排除情况'
+};
+
+export function missingKnowledgePointFields(
+  point: IAssessmentKnowledgePointEditor
+): KnowledgePointRequiredField[] {
+  return (
+    Object.keys(
+      KNOWLEDGE_POINT_REQUIRED_FIELD_LABELS
+    ) as KnowledgePointRequiredField[]
+  ).filter(field => {
+    const value: unknown = point[field];
+    return typeof value !== 'string' || !value.trim();
+  });
+}
+
+function normalizedSuggestionText(value: unknown, fallback: string): string {
+  return typeof value === 'string' && value.trim() ? value.trim() : fallback;
+}
+
+export function normalizeKnowledgePointEvidence(
+  state: IAssessmentPlanState
+): IAssessmentPlanState {
+  let changed = false;
+  const knowledgePoints = state.knowledgePoints.map(point => {
+    const name =
+      typeof point.name === 'string' && point.name.trim()
+        ? point.name.trim()
+        : '该知识点';
+    const evidence = defaultEvidence(name);
+    const evidenceQuestion = normalizedSuggestionText(
+      point.evidenceQuestion,
+      evidence.evidenceQuestion
+    );
+    const supportStatement = normalizedSuggestionText(
+      point.supportStatement,
+      evidence.supportStatement
+    );
+    const exclusionStatement = normalizedSuggestionText(
+      point.exclusionStatement,
+      evidence.exclusionStatement
+    );
+    if (
+      evidenceQuestion === point.evidenceQuestion &&
+      supportStatement === point.supportStatement &&
+      exclusionStatement === point.exclusionStatement
+    ) {
+      return point;
+    }
+    changed = true;
+    return {
+      ...point,
+      evidenceQuestion,
+      supportStatement,
+      exclusionStatement
+    };
+  });
+  if (!changed) return state;
+  return invalidateKnowledge({ ...state, knowledgePoints });
+}
+
 export function createAssessmentPlanState(): IAssessmentPlanState {
   return {
     title: '',
@@ -234,15 +308,25 @@ export function mergeKnowledgeSuggestions(
     }
     usedNames.add(normalizedName);
     usedIds.add(suggestion.id);
+    const evidence = defaultEvidence(name);
     added.push({
       id: suggestion.id,
       name,
       description: suggestion.description.trim(),
       source: 'ai_suggestion',
       order: 0,
-      evidenceQuestion: suggestion.evidence_question.trim(),
-      supportStatement: suggestion.support_statement.trim(),
-      exclusionStatement: suggestion.exclusion_statement.trim()
+      evidenceQuestion: normalizedSuggestionText(
+        suggestion.evidence_question,
+        evidence.evidenceQuestion
+      ),
+      supportStatement: normalizedSuggestionText(
+        suggestion.support_statement,
+        evidence.supportStatement
+      ),
+      exclusionStatement: normalizedSuggestionText(
+        suggestion.exclusion_statement,
+        evidence.exclusionStatement
+      )
     });
   }
   if (added.length === 0) return state;
@@ -469,18 +553,16 @@ export function validateAssessmentPlanState(
   ) {
     errors.entrypoint = '请输入学生需要实现的函数名';
   }
+  const incompletePointIndex = state.knowledgePoints.findIndex(
+    point => missingKnowledgePointFields(point).length > 0
+  );
   if (state.knowledgePoints.length === 0) {
     errors.knowledgePoints = '请至少确认一个知识点';
-  } else if (
-    state.knowledgePoints.some(
-      point =>
-        !point.name.trim() ||
-        !point.evidenceQuestion.trim() ||
-        !point.supportStatement.trim() ||
-        !point.exclusionStatement.trim()
-    )
-  ) {
-    errors.knowledgePoints = '请补全每个知识点的名称和观察依据';
+  } else if (incompletePointIndex >= 0) {
+    const labels = missingKnowledgePointFields(
+      state.knowledgePoints[incompletePointIndex]
+    ).map(field => KNOWLEDGE_POINT_REQUIRED_FIELD_LABELS[field]);
+    errors.knowledgePoints = `知识点 ${incompletePointIndex + 1} 缺少：${labels.join('、')}`;
   }
   if (
     state.assessmentTests.some(
@@ -532,14 +614,15 @@ export async function confirmKnowledgePoints(
   state: IAssessmentPlanState,
   subtle: SubtleCrypto = globalThis.crypto.subtle
 ): Promise<IAssessmentPlanState> {
+  const normalized = normalizeKnowledgePointEvidence(state);
   const { assessmentTests: _assessmentTests, ...blockingErrors } =
-    validateAssessmentPlanState(state);
+    validateAssessmentPlanState(normalized);
   if (Object.keys(blockingErrors).length > 0) {
     throw new Error('请先完成题目和知识点');
   }
-  const knowledgeHash = await currentKnowledgeHash(state, subtle);
+  const knowledgeHash = await currentKnowledgeHash(normalized, subtle);
   return {
-    ...state,
+    ...normalized,
     confirmations: {
       knowledge_points_hash: knowledgeHash,
       tests_hash: null
@@ -616,22 +699,23 @@ export function canPublishAssessmentPlan(state: IAssessmentPlanState): boolean {
 export function buildAssessmentProfileDraft(
   state: IAssessmentPlanState
 ): IAssessmentProfileDraftInput {
-  const context = assessmentProblemContext(state);
+  const normalized = normalizeKnowledgePointEvidence(state);
+  const context = assessmentProblemContext(normalized);
   return {
     schema_version: 2,
-    problem_id: state.problemId.trim(),
-    title: state.title.trim(),
+    problem_id: normalized.problemId.trim(),
+    title: normalized.title.trim(),
     problem_context: context,
-    knowledge_points: state.knowledgePoints.map(point => ({
+    knowledge_points: normalized.knowledgePoints.map(point => ({
       id: point.id,
       name: point.name.trim(),
       description: point.description.trim(),
       source: point.source,
       order: point.order
     })),
-    assessment_tests: assessmentTestsForProfile(state),
-    confirmations: { ...state.confirmations },
-    dimensions: state.knowledgePoints.map(point => ({
+    assessment_tests: assessmentTestsForProfile(normalized),
+    confirmations: { ...normalized.confirmations },
+    dimensions: normalized.knowledgePoints.map(point => ({
       ...(point.dimensionCode ? { code: point.dimensionCode } : {}),
       knowledge_point_id: point.id,
       name: `知识点：${point.name.trim()}`.slice(0, 50),

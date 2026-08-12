@@ -736,6 +736,14 @@ textarea.jp-BehaviorAudit-input {
   margin-top: 8px;
 }
 
+.jp-SideBar.lm-TabBar.jp-mod-left[data-orientation='vertical']
+  .lm-TabBar-tab.jp-BehaviorAudit-sidebarTab
+  .lm-TabBar-tabLabel {
+  writing-mode: vertical-rl;
+  text-orientation: upright;
+  transform: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .jp-BehaviorAudit-sidebar * {
     scroll-behavior: auto;

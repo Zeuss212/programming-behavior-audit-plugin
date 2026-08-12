@@ -10,14 +10,14 @@ DEMO_DIR = ROOT / "demo" / "macos_real_ai"
 
 
 class DemoAssetTests(unittest.TestCase):
-    def test_release_assets_target_0_2_1_and_the_three_session_logs(self) -> None:
+    def test_release_assets_target_0_3_0_and_the_three_session_logs(self) -> None:
         package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
         deploy = (DEMO_DIR / "deploy_demo.sh").read_text(encoding="utf-8")
         readme = (DEMO_DIR / "README.md").read_text(encoding="utf-8")
 
-        self.assertEqual(package["version"], "0.2.1")
-        self.assertIn("myextension-0.2.1-py3-none-any.whl", deploy)
-        self.assertNotIn("myextension-0.2.0-py3-none-any.whl", deploy)
+        self.assertEqual(package["version"], "0.3.0")
+        self.assertIn("myextension-0.3.0-py3-none-any.whl", deploy)
+        self.assertNotIn("myextension-0.2.1-py3-none-any.whl", deploy)
         for filename in (
             "operation_log.json",
             "process_log.md",

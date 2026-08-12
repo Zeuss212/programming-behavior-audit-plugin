@@ -1,7 +1,9 @@
 import { IKnowledgePointSuggestion } from '../models/assessmentPlan';
 import {
   IAssessmentKnowledgePointEditor,
-  IAssessmentPlanState
+  IAssessmentPlanState,
+  KNOWLEDGE_POINT_REQUIRED_FIELD_LABELS,
+  missingKnowledgePointFields
 } from './assessmentPlanForm';
 import {
   advancedSettings,
@@ -27,6 +29,17 @@ export interface IKnowledgePointStepCallbacks {
   onConfirm: () => void;
 }
 
+function showRequiredFieldError(
+  field: HTMLInputElement | HTMLTextAreaElement,
+  error: HTMLElement,
+  label: string,
+  isMissing: boolean
+): void {
+  if (!isMissing) return;
+  field.setAttribute('aria-invalid', 'true');
+  error.textContent = `请填写${label}`;
+}
+
 function pointCard(
   instanceId: string,
   point: IAssessmentKnowledgePointEditor,
@@ -34,6 +47,7 @@ function pointCard(
   total: number,
   callbacks: IKnowledgePointStepCallbacks
 ): HTMLElement {
+  const missing = new Set(missingKnowledgePointFields(point));
   const card = document.createElement('section');
   card.className = 'jp-BehaviorAudit-dimensionCard';
   const header = document.createElement('div');
@@ -100,12 +114,40 @@ function pointCard(
       exclusionStatement: exclusion.textarea.value
     });
   });
+  showRequiredFieldError(
+    name.input,
+    name.error,
+    KNOWLEDGE_POINT_REQUIRED_FIELD_LABELS.name,
+    missing.has('name')
+  );
+  showRequiredFieldError(
+    evidenceQuestion.textarea,
+    evidenceQuestion.error,
+    KNOWLEDGE_POINT_REQUIRED_FIELD_LABELS.evidenceQuestion,
+    missing.has('evidenceQuestion')
+  );
+  showRequiredFieldError(
+    support.textarea,
+    support.error,
+    KNOWLEDGE_POINT_REQUIRED_FIELD_LABELS.supportStatement,
+    missing.has('supportStatement')
+  );
+  showRequiredFieldError(
+    exclusion.textarea,
+    exclusion.error,
+    KNOWLEDGE_POINT_REQUIRED_FIELD_LABELS.exclusionStatement,
+    missing.has('exclusionStatement')
+  );
   const advanced = advancedSettings(
     '高级观察设置',
     evidenceQuestion.container,
     support.container,
     exclusion.container
   );
+  advanced.open =
+    missing.has('evidenceQuestion') ||
+    missing.has('supportStatement') ||
+    missing.has('exclusionStatement');
 
   const actions = document.createElement('div');
   actions.className = 'jp-BehaviorAudit-inlineActions';

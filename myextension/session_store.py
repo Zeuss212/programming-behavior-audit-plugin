@@ -547,6 +547,63 @@ class SessionStore:
             )
             return True
 
+    def read_classroom_brief(
+        self,
+        session_id: str,
+    ) -> dict[str, object] | None:
+        """Read the private classroom brief after rejecting unsafe entries."""
+
+        session_dir = self._session_dir(session_id)
+        with self._lock_for(session_id):
+            self.read(session_id)
+            path = self._assert_safe_path(session_dir / "classroom_brief.json")
+            if not path.exists():
+                return None
+            try:
+                mode = path.lstat().st_mode
+            except FileNotFoundError as error:
+                raise SessionIntegrityError(
+                    "Classroom brief disappeared while reading."
+                ) from error
+            except OSError as error:
+                raise SessionIntegrityError(
+                    "Classroom brief cannot be safely inspected."
+                ) from error
+            if not stat.S_ISREG(mode):
+                raise SessionIntegrityError(
+                    "Classroom brief is not a safe file."
+                )
+            try:
+                return self._read_json(path)
+            except KeyError as error:
+                raise SessionIntegrityError(
+                    "Classroom brief disappeared while reading."
+                ) from error
+
+    def write_classroom_brief(
+        self,
+        session_id: str,
+        brief: Mapping[str, object],
+    ) -> None:
+        """Atomically write one private classroom brief."""
+
+        session_dir = self._session_dir(session_id)
+        with self._lock_for(session_id):
+            self.read(session_id)
+            path = self._assert_safe_path(session_dir / "classroom_brief.json")
+            if path.exists():
+                try:
+                    mode = path.lstat().st_mode
+                except OSError as error:
+                    raise SessionIntegrityError(
+                        "Classroom brief cannot be safely inspected."
+                    ) from error
+                if not stat.S_ISREG(mode):
+                    raise SessionIntegrityError(
+                        "Classroom brief is not a safe file."
+                    )
+            self._write_json(path, brief)
+
     @staticmethod
     def _validated_log_filename(filename: object) -> str:
         if not isinstance(filename, str) or filename not in SESSION_LOG_FILENAMES:

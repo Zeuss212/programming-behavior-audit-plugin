@@ -1,9 +1,23 @@
-# 编程行为监控分析插件 0.2.1 Pilot
+# 编程行为监控分析插件 0.3.0 Pilot
+
+## 独立 VS Code 版本
+
+仓库同时包含独立的 VS Code Desktop 扩展 0.1.0，它不依赖本页所述 JupyterLab
+wheel。源码和开发说明见 [`vscode-extension/README.md`](./vscode-extension/README.md)，
+安装交付目录见 [`deploy/vscode/release-0.1.0/`](./deploy/vscode/release-0.1.0/)。
+当前 VS Code 版本已通过自动化与 40 分钟加速模拟；真实桌面 5 分钟/40 分钟验收状态
+以交付目录中的验证记录为准。
 
 这是一个 JupyterLab 4 的本地前后端扩展。教师先输入题目，可选填本题希望考察的
 知识点；系统给出可编辑的知识点和测试建议，教师确认后发布题目方案。学生选择
 已发布方案并明确确认后开始监控；停止监控后，服务端才针对完整会话执行一次 AI
 行为证据分析，生成会话级结果卡和可追加的教师复核。
+
+0.3.0 包含 0.2.2 的演示热修复：知识点显示、确认和发布草稿构建时自动补齐缺失的三个
+观察字段，避免采用 AI 建议后因旧草稿或不完整响应而卡在“请补全观察依据”。
+已有的教师文案不会被默认内容覆盖；知识点名称仍由教师确认，系统不会凭空编造。
+
+0.3.0 还增加课堂可靠性：未确认事件先保存到浏览器 IndexedDB，刷新后可自动续接服务端仍在采集的会话；正常停止、明确放弃或超时结束后都会生成确定性本地简报。关闭页面后不会再产生新事件；恢复只覆盖已进入 IndexedDB 或 BAMS 的数据。本阶段不会自动将简报发送到 FinColab 教师端。
 
 安装与启动命令见 [启动说明.md](./启动说明.md)，数据边界与功能说明见
 [项目说明.md](./项目说明.md)；BLUEDOT 工作台的基础镜像安装见
@@ -120,6 +134,30 @@ AI 结论只能作为辅助教学判断，教师复核单独追加保存。真�
 
 不要将 `log/` 或任何包含真实会话/密钥的目录提交或共享。
 
+## 建议生成性能与故障排查
+
+知识点和测试建议属于短时作者辅助请求，内部固定使用 `2048 → 4096` 的结构化
+输出预算、关闭深度思考，并要求 JSON 对象。只有第一次响应因长度截断时才使用
+4096 再恢复一次。会话停止后的完整行为分析继续使用 `8192 → 16384` 预算，
+单次 Provider 调用最多 60 秒；默认 180 秒总预算内最多调用三次。Provider 超时
+后立即重试，网络错误、429 和 5xx 在重试前短暂等待；不需要更换当前模型。
+
+建议生成失败时，页面保留当前草稿并允许手工继续。按页面稳定错误码排查：
+
+| 错误码                         | 建议操作                                         |
+| ------------------------------ | ------------------------------------------------ |
+| `ai_provider_timeout`          | 请求超过 60 秒；重试一次，仍失败时检查模型延迟。 |
+| `ai_provider_network_error`    | 检查网络、DNS、TLS、代理和出口策略。             |
+| `ai_provider_auth_failed`      | 检查 API Key、模型权限和 Secret 注入。           |
+| `ai_provider_rate_limited`     | 稍后重试，并检查额度、QPS 和并发限制。           |
+| `ai_provider_request_rejected` | 检查 Base URL、模型名和 Provider 参数兼容性。    |
+| `ai_provider_unavailable`      | Provider 返回 5xx；稍后重试并查看其服务状态。    |
+| `ai_response_truncated`        | 减少知识点数量或描述长度后重试。                 |
+| `ai_response_invalid`          | 检查模型是否支持结构化 JSON 对象输出。           |
+
+页面不会显示 Provider 原始响应；排查时也不要复制 API Key、真实题目、学生代码
+或完整请求/响应正文。
+
 ## Pilot 限制
 
 本工具输出的是“基于当前已采集证据的教学观察”，不是事实判决：
@@ -136,7 +174,7 @@ AI 结论只能作为辅助教学判断，教师复核单独追加保存。真�
 - npm 包：`myextension`
 - Python 包：`myextension`
 - JupyterLab 插件 ID：`myextension:plugin`
-- 当前 wheel：`dist/myextension-0.2.1-py3-none-any.whl`
+- 当前 wheel：`dist/myextension-0.3.0-py3-none-any.whl`
 
 Wheel 是预构建扩展，普通部署不需要 Node.js。它包含前端 prebuilt
 labextension、服务端配置、API schemas、维度模板、信号字典和测试资源。
@@ -166,7 +204,7 @@ PATH="$PWD/.venv/bin:$PATH" .venv/bin/python -m build --wheel
 ```
 
 不要手工修改 `myextension/_version.py`；Python 版本由 `package.json` 的
-`0.2.1` 通过 `hatch-nodejs-version` 派生。
+`0.3.0` 通过 `hatch-nodejs-version` 派生。
 
 ## 常见问题
 

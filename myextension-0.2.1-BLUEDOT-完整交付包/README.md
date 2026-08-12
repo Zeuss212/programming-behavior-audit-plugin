@@ -1,6 +1,6 @@
 # myextension 0.2.1 BLUEDOT 镜像交付包
 
-本目录是修复“分析慢、偶发失败”后的独立交付包。它安装 JupyterLab 4 的 prebuilt 前端扩展和 Jupyter Server 2 后端扩展，不需要在目标镜像中安装 Node.js，也不会修改基础镜像原有的 `ENTRYPOINT` 或 `CMD`。
+本目录是同时包含完整会话分析可靠性修复、2026-08-06 界面热修复和测试建议延迟修复的最新独立交付包。界面热修复确保采用 AI 建议后隐藏观察字段可完整确认，并让左侧“行为分析”标签正向直立显示；建议修复关闭作者辅助请求的不必要深度思考，避免约 60 秒后失败。它安装 JupyterLab 4 的 prebuilt 前端扩展和 Jupyter Server 2 后端扩展，不需要在目标镜像中安装 Node.js，也不会修改基础镜像原有的 `ENTRYPOINT` 或 `CMD`。
 
 本包只提供文件和管理员执行步骤；没有登录镜像仓库、没有推送镜像、没有调用真实 AI，也没有修改 BLUEDOT 工作台。
 
@@ -19,7 +19,7 @@
 插件版本保持 `0.2.1`，本次新 wheel 通过所在目录和 SHA-256 与旧 `dist/` wheel 区分：
 
 ```text
-8436b8e69f9e25c58df68c0024723c660e9fe8751c52a60b320c1e97f28ea16e  artifacts/myextension-0.2.1-py3-none-any.whl
+2461f4e24e3a1914b6471e8444d92de5719b83ad41b1df389ae18e627a20a3f2  artifacts/myextension-0.2.1-py3-none-any.whl
 ```
 
 ## 2. 基础镜像要求
@@ -153,19 +153,27 @@ docker image inspect "$TARGET_IMAGE" --format '{{json .RepoDigests}}'
 
 ## 9. 0.2.1 最新运行配置逻辑
 
+### 知识点和测试建议请求
+
+- 作者辅助请求内部固定使用 `2048 → 4096` 输出预算、关闭深度思考并要求 JSON 对象；
+- 只有第一次响应因长度截断时才使用 4096 恢复一次；
+- 完整会话分析继续使用下节的独立预算，不会被缩短；
+- 本项修复不需要新环境变量，也不更换当前 `glm-5-2-260617` 模型。
+
 ### 分析时间预算
 
 ```text
-JUPYTERLAB_BEHAVIOR_AUDIT_ANALYSIS_TIMEOUT_SEC=120
+JUPYTERLAB_BEHAVIOR_AUDIT_ANALYSIS_TIMEOUT_SEC=180
 ```
 
-- 默认整次 AI 分析预算为 120 秒；
-- 仅接受 `60` 到 `180` 的整数，越界或非法值回退到 120；
+- 默认整次 AI 分析预算为 180 秒；
+- 仅接受 `60` 到 `180` 的整数，越界或非法值回退到 180；
 - 单次 Provider 请求最多 60 秒，且不能超过整次分析剩余时间；
-- 网络错误、Provider 超时、HTTP 429 或 5xx 最多重试一次，等待 2 秒；
+- `60`、`120`、`180` 秒预算分别最多调用 Provider 1、2、3 次；
+- Provider 超时后立即重试；网络错误、HTTP 429 或 5xx 重试前等待 2 秒；
 - 初始请求、一次截断恢复、一次无效维度修复和瞬时重试共享同一预算。
 
-若真实模型稳定超过 120 秒，可在完成成本和容量评估后设置为 `180`；不建议继续增大，因为前端和平台需要有明确终态。
+180 秒也是闭合配置上限。用尽自动恢复机会后任务进入明确终态，并保留“重试分析”按钮；不建议继续增大，因为前端和平台需要有明确终态。
 
 ### AI 配置文件优先级
 
@@ -184,6 +192,16 @@ JUPYTERLAB_BEHAVIOR_AUDIT_LOG_DIR=/workspace/result/behavior-audit
 
 目录中可能包含学生代码、输出和错误文本，必须继承工作台访问控制、保留、下载和删除策略，不能作为公共静态目录暴露。
 
+题目方案也会持久化在该插件数据目录中。打开后已经出现方案，通常表示当前工作台复用了以前的数据卷，并不表示插件前端是旧版。若要做全新的空白演示，请创建新的空目录或空数据卷，并在启动 JupyterLab 前指向它，例如：
+
+```bash
+mkdir -p /tmp/behavior-audit-clean-demo
+export JUPYTERLAB_BEHAVIOR_AUDIT_LOG_DIR=/tmp/behavior-audit-clean-demo
+python -m jupyter lab
+```
+
+空白环境中“题目与分析方案”应只显示“还没有已发布方案”。不要为了清空演示直接删除正式数据卷；生产环境应新建工作台或更换明确的空卷。
+
 ## 10. 工作台验收步骤
 
 ### 不启用真实 AI 的功能验收
@@ -199,7 +217,7 @@ JUPYTERLAB_BEHAVIOR_AUDIT_LOG_DIR=/workspace/result/behavior-audit
 
 1. 只使用合成数据，并由 Secret Manager 注入 AI Key。
 2. 确认 Base URL、模型名、额度、网络和模型权限正确。
-3. 执行同一合成流程，分析应在默认 120 秒预算内进入 `ready`、`partial` 或明确错误终态。
+3. 执行同一合成流程，页面应提示响应较慢时会自动重试，分析在默认 180 秒预算内进入 `ready`、`partial` 或明确错误终态。
 4. 验证成功结果引用当前会话事件，且每个维度最多返回 3 条主要证据。
 5. 验证 `analysis_log.json` 只在终态开放，不出现 Key、Provider 响应正文或本机绝对路径。
 
@@ -209,7 +227,8 @@ JUPYTERLAB_BEHAVIOR_AUDIT_LOG_DIR=/workspace/result/behavior-audit
 
 | 错误码 | 含义与处理 |
 | --- | --- |
-| `ai_analysis_timeout` | 整体预算或 Provider 请求超时；先重试，再检查延迟并考虑将预算调到 180 秒。 |
+| `ai_analysis_timeout` | 180 秒自动恢复预算已用尽；可手动重试，并检查 Provider 延迟、额度和服务状态。 |
+| `ai_provider_timeout` | 作者辅助 Provider 请求超过 60 秒；当前草稿已保留，可重试或手工继续。 |
 | `ai_provider_network_error` | 检查网络、DNS、TLS、代理和出口策略。 |
 | `ai_provider_rate_limited` | 检查额度、QPS 和并发限制，稍后重试。 |
 | `ai_provider_auth_failed` | 检查 Secret 是否注入、API Key 是否有效、模型权限是否开放。 |

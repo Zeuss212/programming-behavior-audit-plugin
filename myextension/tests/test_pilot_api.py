@@ -366,6 +366,84 @@ async def finalize_empty_session(jp_fetch, jp_web_app, monkeypatch):
     return worker, started, response_json(response)
 
 
+async def test_classroom_brief_route_returns_finalized_local_brief(
+    jp_fetch,
+    jp_web_app,
+    monkeypatch,
+):
+    _worker, started, _finalized = await finalize_empty_session(
+        jp_fetch,
+        jp_web_app,
+        monkeypatch,
+    )
+
+    response = await jp_fetch(
+        "myextension",
+        "sessions",
+        started["session_id"],
+        "brief",
+        raise_error=False,
+    )
+
+    assert response.code == 200
+    payload = response_json(response)
+    validate_schema("classroom-brief-response-v1", payload)
+    openapi_validator("ClassroomBriefResponse").validate(payload)
+    assert payload["session_id"] == started["session_id"]
+    assert payload["status"] == "complete"
+    assert payload["data_completeness"] == "complete"
+    assert response.headers["Cache-Control"] == "no-store"
+
+
+async def test_classroom_brief_route_hides_collecting_session(
+    jp_fetch,
+):
+    profile = await create_published_profile(jp_fetch)
+    started = await start_pilot_session(jp_fetch, profile)
+
+    response = await jp_fetch(
+        "myextension",
+        "sessions",
+        started["session_id"],
+        "brief",
+        raise_error=False,
+    )
+
+    assert_error_response(response, 409, "classroom_brief_not_ready")
+
+
+async def test_classroom_brief_route_returns_partial_after_explicit_abandon(
+    jp_fetch,
+):
+    profile = await create_published_profile(jp_fetch)
+    started = await start_pilot_session(jp_fetch, profile)
+    abandoned = await jp_fetch(
+        "myextension",
+        "sessions",
+        started["session_id"],
+        "abandon",
+        method="POST",
+        body=json.dumps({"reason": "synthetic_explicit_abandon"}),
+        headers={"Content-Type": "application/json"},
+        raise_error=False,
+    )
+    assert abandoned.code == 200
+
+    response = await jp_fetch(
+        "myextension",
+        "sessions",
+        started["session_id"],
+        "brief",
+        raise_error=False,
+    )
+
+    assert response.code == 200
+    payload = response_json(response)
+    validate_schema("classroom-brief-response-v1", payload)
+    assert payload["status"] == "partial"
+    assert payload["data_completeness"] == "partial"
+
+
 async def test_session_logs_list_is_fixed_order_and_local_logs_are_immediate(
     jp_fetch,
     jp_web_app,
@@ -1539,6 +1617,14 @@ async def test_unexpected_error_is_generic_and_does_not_leak_private_data(
                 "123e4567-e89b-12d3-a456-426614174000/recover"
             ),
             "{}",
+        ),
+        (
+            "GET",
+            (
+                "myextension/sessions/"
+                "123e4567-e89b-12d3-a456-426614174000/brief"
+            ),
+            None,
         ),
         (
             "GET",

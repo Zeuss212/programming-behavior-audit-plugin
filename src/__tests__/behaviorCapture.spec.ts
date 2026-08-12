@@ -12,6 +12,7 @@ import {
   ACTIVE_SESSION_STORAGE_KEY,
   ISessionFinalizeResponse,
   ISessionStartResponse,
+  ISessionState,
   IUploadSnapshot
 } from '../models/session';
 import * as sessionApi from '../services/sessionApi';
@@ -53,6 +54,19 @@ const FINAL_RESPONSE: ISessionFinalizeResponse = {
   last_contiguous_sequence: 0,
   analysis_job_id: '323e4567-e89b-42d3-a456-426614174000'
 };
+const STORED_COLLECTING_SESSION: ISessionState = {
+  schema_version: 1,
+  request_id: 'request-stored',
+  session_id: SESSION_ID,
+  problem_id: PROFILE.problem_id,
+  profile_id: PROFILE.profile_id,
+  profile_version: PROFILE.profile_version,
+  profile_content_hash: PROFILE.profile_content_hash,
+  status: 'collecting',
+  last_contiguous_sequence: 0,
+  received_event_count: 0,
+  analysis_job_id: null
+};
 
 function deferred<T>(): {
   promise: Promise<T>;
@@ -91,6 +105,7 @@ function memoryStorage(initial?: string): Storage {
 
 class FakeUploader {
   readonly starts: ISessionStartResponse[] = [];
+  readonly resumes: ISessionState[] = [];
   readonly queued: IBehaviorSegment[] = [];
   finalizeResult: Promise<ISessionFinalizeResponse> =
     Promise.resolve(FINAL_RESPONSE);
@@ -106,12 +121,24 @@ class FakeUploader {
     observationAnchorAt: null
   };
 
-  start(response: ISessionStartResponse): void {
+  async start(response: ISessionStartResponse): Promise<void> {
     this.starts.push(response);
     this.current = {
       ...this.current,
       sessionId: response.session_id,
       uploadState: 'collecting'
+    };
+  }
+
+  async resume(response: ISessionState): Promise<void> {
+    this.resumes.push(response);
+    this.current = {
+      ...this.current,
+      sessionId: response.session_id,
+      uploadState: 'collecting',
+      eventCount: response.received_event_count,
+      lastSequence: response.last_contiguous_sequence,
+      lastServerSequence: response.last_contiguous_sequence
     };
   }
 
@@ -354,6 +381,28 @@ describe('behavior capture default-off and start transaction', () => {
 });
 
 describe('behavior capture stop and unfinished-session recovery', () => {
+  it('resumes a stored collecting session without starting a second server session', async () => {
+    const storage = memoryStorage(SESSION_ID);
+    const { controller, dependencies, uploader } = harness({ storage });
+
+    await controller.resume(STORED_COLLECTING_SESSION);
+
+    expect(dependencies.startSession).not.toHaveBeenCalled();
+    expect(uploader.resumes).toEqual([STORED_COLLECTING_SESSION]);
+    expect(uploader.starts).toEqual([]);
+    expect(controller.isEnabled()).toBe(true);
+  });
+
+  it('rejects resume when the server session is no longer collecting', async () => {
+    const { controller, uploader } = harness();
+
+    await expect(
+      controller.resume({ ...STORED_COLLECTING_SESSION, status: 'finalized' })
+    ).rejects.toThrow(/collecting/i);
+    expect(uploader.resumes).toEqual([]);
+    expect(controller.isEnabled()).toBe(false);
+  });
+
   it('enqueues the trailing foreground idle before finalizing', async () => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date('2026-07-30T08:00:00.000Z'));

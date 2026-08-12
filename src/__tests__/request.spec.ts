@@ -3,6 +3,7 @@ import { webcrypto } from 'node:crypto';
 
 import { BehaviorEventUploader } from '../behaviorEventUploader';
 import { IBehaviorSegment } from '../behaviorSegments';
+import { IDurableSegmentStore } from '../durableSegmentStore';
 import {
   ISessionFinalizeResponse,
   ISessionStartResponse
@@ -52,6 +53,12 @@ const SEGMENT: IBehaviorSegment = {
 };
 
 function composedUploader(sleeps: number[]): BehaviorEventUploader {
+  const durableStore: IDurableSegmentStore = {
+    load: async () => [],
+    append: async () => undefined,
+    removeThrough: async () => undefined,
+    clear: async () => undefined
+  };
   return new BehaviorEventUploader(SETTINGS, {
     finalizeSession: jest.fn(async () => FINALIZE_RESPONSE),
     uuid: () => BATCH_ID,
@@ -59,6 +66,7 @@ function composedUploader(sleeps: number[]): BehaviorEventUploader {
       sleeps.push(delayMs);
     },
     subtle: webcrypto.subtle as SubtleCrypto,
+    durableStore,
     flushIntervalMs: 60_000
   });
 }

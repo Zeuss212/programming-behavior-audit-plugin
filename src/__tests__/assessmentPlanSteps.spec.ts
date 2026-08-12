@@ -2,7 +2,8 @@ import { IKnowledgePointSuggestion } from '../models/assessmentPlan';
 import {
   addTeacherKnowledgePoint,
   createAssessmentPlanState,
-  replaceAssessmentTests
+  replaceAssessmentTests,
+  updateKnowledgePoint
 } from '../ui/assessmentPlanForm';
 import { renderKnowledgePointStep } from '../ui/knowledgePointStep';
 import { renderQuestionStep } from '../ui/questionStep';
@@ -158,6 +159,50 @@ describe('teacher-first assessment steps', () => {
         'details.jp-BehaviorAudit-advancedSettings'
       )?.open
     ).toBe(false);
+  });
+
+  it('opens advanced settings for missing observation fields', () => {
+    const content = document.createElement('div');
+    const state = updateKnowledgePoint(withPoint(), 'KP_A1B2C3D4', {
+      supportStatement: '',
+      exclusionStatement: '   '
+    });
+
+    renderKnowledgePointStep(
+      content,
+      'synthetic-invalid-knowledge',
+      state,
+      [],
+      { status: 'idle' },
+      {
+        onAdoptSuggestion: jest.fn(),
+        onIgnoreSuggestion: jest.fn(),
+        onAddPoint: jest.fn(),
+        onUpdatePoint: jest.fn(),
+        onRemovePoint: jest.fn(),
+        onMovePoint: jest.fn(),
+        onRequestSuggestions: jest.fn(),
+        onBack: jest.fn(),
+        onConfirm: jest.fn()
+      }
+    );
+
+    expect(
+      content.querySelector<HTMLDetailsElement>(
+        'details.jp-BehaviorAudit-advancedSettings'
+      )?.open
+    ).toBe(true);
+    expect(inputByLabel(content, '支持表现').getAttribute('aria-invalid')).toBe(
+      'true'
+    );
+    expect(inputByLabel(content, '排除情况').getAttribute('aria-invalid')).toBe(
+      'true'
+    );
+    expect(
+      inputByLabel(content, '过程观察问题').hasAttribute('aria-invalid')
+    ).toBe(false);
+    expect(content.textContent).toContain('请填写支持表现');
+    expect(content.textContent).toContain('请填写排除情况');
   });
 
   it('keeps tests editable and disables publish until the teacher confirms', () => {

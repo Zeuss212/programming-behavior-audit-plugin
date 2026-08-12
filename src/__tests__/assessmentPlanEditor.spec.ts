@@ -9,8 +9,13 @@ import {
   IAssessmentProfileVersion,
   IKnowledgePointSuggestion
 } from '../models/assessmentPlan';
+import { ApiError } from '../models/apiError';
 import { IDimensionProfileVersion } from '../models/dimensionProfile';
 import * as requestModule from '../request';
+import {
+  createAssessmentPlanState,
+  IAssessmentPlanState
+} from '../ui/assessmentPlanForm';
 import { GuidedProfileEditor } from '../ui/guidedProfileEditor';
 
 const settings = {} as ServerConnection.ISettings;
@@ -232,6 +237,48 @@ describe('teacher-first GuidedProfileEditor', () => {
     ).toBe('循环边界\n平均值计算');
   });
 
+  it('autofills legacy observation fields before rendering knowledge cards', () => {
+    const editor = createEditor();
+    const internal = editor as unknown as {
+      state: IAssessmentPlanState;
+      showKnowledgePoints: () => void;
+    };
+    internal.state = {
+      ...createAssessmentPlanState(),
+      title: '默认参数分析',
+      problemId: 'default-parameter',
+      problemStatement: '实现带默认参数的函数。',
+      submissionContract: {
+        kind: 'function',
+        entrypoint: 'calculate'
+      },
+      knowledgePoints: [
+        {
+          id: 'KP_A1B2C3D4',
+          name: '函数默认参数',
+          description: '为可选参数设置默认值。',
+          source: 'ai_suggestion',
+          order: 0,
+          evidenceQuestion: undefined,
+          supportStatement: null,
+          exclusionStatement: 7
+        }
+      ] as unknown as IAssessmentPlanState['knowledgePoints']
+    };
+
+    internal.showKnowledgePoints();
+
+    expect(fieldByLabel(editor.node, '过程观察问题').value).toBe(
+      '学生是否通过代码、运行和修改过程正确应用“函数默认参数”？'
+    );
+    expect(fieldByLabel(editor.node, '支持表现').value).toBe(
+      '代码与验证过程显示学生正确应用了“函数默认参数”。'
+    );
+    expect(fieldByLabel(editor.node, '排除情况').value).toBe(
+      '只出现一次偶然正确输出，或缺少与“函数默认参数”相关的验证，不计入。'
+    );
+  });
+
   it('shows a manual fallback when default AI recommendation is unavailable', async () => {
     request.mockRejectedValueOnce(new Error('offline'));
     const editor = createEditor();
@@ -245,6 +292,56 @@ describe('teacher-first GuidedProfileEditor', () => {
       'AI 暂时不可用，可继续手工添加知识点'
     );
     expect(editor.node.textContent).toContain('添加自定义知识点');
+  });
+
+  it.each([
+    ['ai_provider_timeout', '生成超时，当前草稿已保留'],
+    ['ai_provider_network_error', '检查网络、DNS、TLS 或代理'],
+    ['ai_provider_auth_failed', '检查 API Key 和模型权限'],
+    ['ai_provider_rate_limited', '稍后重试，并检查额度或并发限制'],
+    ['ai_provider_request_rejected', '检查 Base URL、模型和参数兼容性'],
+    ['ai_provider_unavailable', 'AI 服务暂时不可用，请稍后重试'],
+    ['ai_response_truncated', '减少知识点数量或描述长度后重试'],
+    ['ai_response_invalid', '检查模型是否支持结构化 JSON 输出']
+  ])(
+    'shows actionable knowledge guidance for %s',
+    async (code, expectedMessage) => {
+      request.mockRejectedValueOnce(new ApiError(502, code, 'safe', true));
+      const editor = createEditor();
+      completeQuestion(editor);
+
+      clickButton(editor, '下一步：确认知识点');
+      await flushPromises();
+
+      expect(editor.node.textContent).toContain(expectedMessage);
+      expect(editor.node.textContent).toContain('添加自定义知识点');
+      editor.dispose();
+    }
+  );
+
+  it('keeps manual tests when AI test regeneration times out', async () => {
+    request.mockRejectedValue(
+      new ApiError(502, 'ai_provider_timeout', 'safe', true)
+    );
+    const editor = createEditor();
+    completeQuestion(editor, { teacherFocus: '循环边界' });
+    clickButton(editor, '下一步：确认知识点');
+    clickButton(editor, '我已确认以上知识点');
+    await flushPromises();
+
+    clickButton(editor, '添加手工测试');
+    setField(fieldByLabel(editor.node, '测试 1 名称'), '教师保留的边界测试');
+    clickButton(editor, '重新生成测试建议');
+    await flushPromises();
+
+    expect(editor.node.textContent).toContain(
+      '测试建议生成超时，当前草稿已保留'
+    );
+    expect(fieldByLabel(editor.node, '测试 1 名称').value).toBe(
+      '教师保留的边界测试'
+    );
+    expect(editor.node.textContent).toContain('添加手工测试');
+    editor.dispose();
   });
 
   it('lets an ordinary teacher continue with only the question text', async () => {

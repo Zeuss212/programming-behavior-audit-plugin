@@ -1,6 +1,11 @@
 import { ServerConnection } from '@jupyterlab/services';
 
 import { IBehaviorSegment, IBehaviorSegmentSink } from './behaviorSegments';
+import {
+  DurableStorageError,
+  IDurableSegmentStore,
+  IndexedDbDurableSegmentStore
+} from './durableSegmentStore';
 import { ApiError } from './models/apiError';
 import {
   IQueuedBehaviorSegment,
@@ -8,6 +13,7 @@ import {
   ISegmentBatchRequest,
   ISessionFinalizeResponse,
   ISessionStartResponse,
+  ISessionState,
   IUploadSnapshot,
   UploadState
 } from './models/session';
@@ -43,6 +49,7 @@ export interface IBehaviorEventUploaderDependencies {
   queueLimit: number;
   automaticFlushThreshold: number;
   flushIntervalMs: number;
+  durableStore: IDurableSegmentStore;
 }
 
 export class BehaviorEventUploader implements IBehaviorSegmentSink {
@@ -52,11 +59,12 @@ export class BehaviorEventUploader implements IBehaviorSegmentSink {
   > = [];
   private readonly listeners = new Set<(snapshot: IUploadSnapshot) => void>();
   private readonly dependencies: IBehaviorEventUploaderDependencies;
-  private session: ISessionStartResponse | null = null;
+  private session: ISessionStartResponse | ISessionState | null = null;
   private pendingBatch: ISegmentBatchRequest | null = null;
   private uploadPromise: Promise<void> | null = null;
   private drainPromise: Promise<IUploadSnapshot> | null = null;
   private finalizePromise: Promise<ISessionFinalizeResponse> | null = null;
+  private durableWritePromise: Promise<void> = Promise.resolve();
   private flushTimer: number | undefined;
   private uploadState: UploadState = 'idle';
   private eventCount = 0;
@@ -85,11 +93,15 @@ export class BehaviorEventUploader implements IBehaviorSegmentSink {
       queueLimit: DEFAULT_QUEUE_LIMIT,
       automaticFlushThreshold: DEFAULT_AUTOMATIC_FLUSH_THRESHOLD,
       flushIntervalMs: DEFAULT_FLUSH_INTERVAL_MS,
+      durableStore: new IndexedDbDurableSegmentStore(),
       ...dependencies
     };
 
     if (typeof window !== 'undefined') {
       window.addEventListener('blur', () => {
+        void this.flush().catch(() => undefined);
+      });
+      window.addEventListener('pagehide', () => {
         void this.flush().catch(() => undefined);
       });
     }
@@ -102,15 +114,8 @@ export class BehaviorEventUploader implements IBehaviorSegmentSink {
     }
   }
 
-  start(session: ISessionStartResponse): void {
-    const canStart =
-      (this.uploadState === 'idle' || this.uploadState === 'finalized') &&
-      this.queue.length === 0 &&
-      this.pendingBatch === null &&
-      this.uploadPromise === null &&
-      this.drainPromise === null &&
-      this.finalizePromise === null;
-    if (!canStart) {
+  start(session: ISessionStartResponse): Promise<void> {
+    if (!this.canActivateSession()) {
       throw new Error('Cannot start while an active upload session exists.');
     }
 
@@ -125,8 +130,85 @@ export class BehaviorEventUploader implements IBehaviorSegmentSink {
     this.overflowStoppedCapture = false;
     this.automaticRetryBlocked = false;
     this.finalizing = false;
+    this.durableWritePromise = Promise.resolve();
     this.uploadState = 'collecting';
     this.publish();
+    return Promise.resolve();
+  }
+
+  async resume(session: ISessionState): Promise<void> {
+    if (session.status !== 'collecting') {
+      throw new Error('Only a collecting upload session can be resumed.');
+    }
+    if (!this.canActivateSession()) {
+      throw new Error('Cannot resume while an active upload session exists.');
+    }
+
+    this.clearFlushTimer();
+    this.session = session;
+    this.observationSegments.length = 0;
+    this.eventCount = session.received_event_count;
+    this.lastSequence = session.last_contiguous_sequence;
+    this.lastServerSequence = session.last_contiguous_sequence;
+    this.errorCode = undefined;
+    this.accepting = false;
+    this.overflowStoppedCapture = false;
+    this.automaticRetryBlocked = false;
+    this.finalizing = false;
+    this.durableWritePromise = Promise.resolve();
+    this.uploadState = 'starting';
+    this.publish();
+
+    try {
+      const stored = await this.dependencies.durableStore.load(
+        session.session_id
+      );
+      const remaining = stored.filter(
+        segment => segment.session_seq > session.last_contiguous_sequence
+      );
+      this.validateResumedSegments(session, remaining);
+
+      try {
+        await this.dependencies.durableStore.removeThrough(
+          session.session_id,
+          session.last_contiguous_sequence
+        );
+      } catch {
+        // Confirmed records are filtered by the server receipt on every resume.
+      }
+
+      this.queue.push(...remaining);
+      this.observationSegments.push(
+        ...remaining.map(segment => ({
+          segment_type: segment.segment_type,
+          started_at: segment.started_at,
+          ended_at: segment.ended_at
+        }))
+      );
+      const latest =
+        remaining.length === 0
+          ? undefined
+          : remaining[remaining.length - 1].session_seq;
+      this.lastSequence = latest ?? session.last_contiguous_sequence;
+      this.eventCount = Math.max(
+        session.received_event_count,
+        this.lastSequence
+      );
+      this.accepting = true;
+      this.uploadState = 'collecting';
+      this.publish();
+
+      if (this.queue.length > 0) {
+        this.scheduleFlush();
+      }
+    } catch (error) {
+      this.accepting = false;
+      this.automaticRetryBlocked = true;
+      this.uploadState = 'error';
+      this.errorCode = durableErrorCode(error);
+      this.publish();
+      throw error;
+    }
   }
 
   enqueue(segment: IBehaviorSegment): void {
@@ -156,6 +238,7 @@ export class BehaviorEventUploader implements IBehaviorSegmentSink {
     this.queue.push(queued);
     this.lastSequence = sessionSequence;
     this.eventCount += 1;
+    this.serializeDurableAppend(this.session.session_id, queued);
     this.publish();
 
     if (
@@ -295,6 +378,7 @@ export class BehaviorEventUploader implements IBehaviorSegmentSink {
     this.publish();
 
     try {
+      await this.durableWritePromise;
       if (!this.pendingBatch) {
         this.pendingBatch = await this.createPendingBatch();
       }
@@ -319,13 +403,23 @@ export class BehaviorEventUploader implements IBehaviorSegmentSink {
       }
       this.restoreActiveState();
       this.publish();
+      try {
+        await this.dependencies.durableStore.removeThrough(
+          session.session_id,
+          receipt.last_contiguous_sequence
+        );
+      } catch {
+        // The server receipt is authoritative; stale durable rows replay safely.
+      }
     } catch (error) {
       this.automaticRetryBlocked = true;
       this.uploadState = 'error';
       this.errorCode =
         error instanceof ReceiptMismatchError
           ? 'receipt_mismatch'
-          : safeUploadErrorCode(error);
+          : error instanceof DurableStorageError
+            ? error.code
+            : safeUploadErrorCode(error);
       this.publish();
       throw error;
     }
@@ -449,6 +543,11 @@ export class BehaviorEventUploader implements IBehaviorSegmentSink {
         throw new FinalizeMismatchError();
       }
       this.lastServerSequence = response.last_contiguous_sequence;
+      try {
+        await this.dependencies.durableStore.clear(session.session_id);
+      } catch {
+        // Finalized server state makes retained local rows safe to ignore.
+      }
       this.finalizing = false;
       this.accepting = false;
       this.uploadState = 'finalized';
@@ -457,7 +556,10 @@ export class BehaviorEventUploader implements IBehaviorSegmentSink {
       return response;
     } catch (error) {
       this.finalizing = false;
-      if (!this.overflowStoppedCapture) {
+      if (
+        !this.overflowStoppedCapture &&
+        !(error instanceof DurableStorageError)
+      ) {
         this.accepting = wasAccepting;
       }
       this.uploadState = 'error';
@@ -472,6 +574,55 @@ export class BehaviorEventUploader implements IBehaviorSegmentSink {
 
   private restoreActiveState(): void {
     this.uploadState = this.finalizing ? 'draining' : 'collecting';
+  }
+
+  private canActivateSession(): boolean {
+    return (
+      (this.uploadState === 'idle' || this.uploadState === 'finalized') &&
+      this.queue.length === 0 &&
+      this.pendingBatch === null &&
+      this.uploadPromise === null &&
+      this.drainPromise === null &&
+      this.finalizePromise === null
+    );
+  }
+
+  private serializeDurableAppend(
+    sessionId: string,
+    segment: IQueuedBehaviorSegment
+  ): void {
+    const write = this.durableWritePromise.then(() =>
+      this.dependencies.durableStore.append(sessionId, segment)
+    );
+    this.durableWritePromise = write.catch(error => {
+      const failure = normalizeDurableError(error);
+      this.accepting = false;
+      this.automaticRetryBlocked = true;
+      this.uploadState = 'error';
+      this.errorCode = failure.code;
+      this.publish();
+      throw failure;
+    });
+    void this.durableWritePromise.catch(() => undefined);
+  }
+
+  private validateResumedSegments(
+    session: ISessionState,
+    segments: IQueuedBehaviorSegment[]
+  ): void {
+    let expected = session.last_contiguous_sequence + 1;
+    for (const segment of segments) {
+      if (
+        segment.session_seq !== expected ||
+        segment.event_id !== `${session.session_id}:${expected}`
+      ) {
+        throw new DurableStorageError(
+          'durable_storage_invalid',
+          'Durable behavior segments are not a continuous session sequence.'
+        );
+      }
+      expected += 1;
+    }
   }
 
   private publish(): void {
@@ -553,6 +704,19 @@ function safeUploadErrorCode(error: unknown): string {
       }
       return 'upload_failed';
   }
+}
+
+function durableErrorCode(error: unknown): string {
+  return normalizeDurableError(error).code;
+}
+
+function normalizeDurableError(error: unknown): DurableStorageError {
+  return error instanceof DurableStorageError
+    ? error
+    : new DurableStorageError(
+        'durable_storage_unavailable',
+        'Durable behavior storage is unavailable.'
+      );
 }
 
 function isRetryableUploadError(error: unknown): boolean {

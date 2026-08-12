@@ -1553,3 +1553,127 @@ def test_detail_preserves_repeated_overlapping_protected_contexts(tmp_path):
     event_row = service_for(store).get_detail(session_id)["behavior_events"][0]
 
     assert event_row["error_message"] == diagnostic
+
+
+def test_finalized_session_exports_complete_classroom_brief(tmp_path: Path) -> None:
+    store, session = started_session(tmp_path)
+    session_id = str(session["session_id"])
+    append_synthetic_event(
+        store,
+        session_id,
+        sequence=1,
+        segment_id="20000000-0000-4000-8000-000000000061",
+        segment_type="code_writing",
+        duration_ms=3_000,
+        cell_source="private_student_source = 1",
+    )
+    append_synthetic_event(
+        store,
+        session_id,
+        sequence=2,
+        segment_id="20000000-0000-4000-8000-000000000062",
+        segment_type="code_execution",
+        execution_result="success",
+        duration_ms=100,
+    )
+    append_synthetic_event(
+        store,
+        session_id,
+        sequence=3,
+        segment_id="20000000-0000-4000-8000-000000000063",
+        segment_type="code_execution",
+        execution_result="failure",
+        error_type="ValueError",
+        error_message="private failure detail",
+        duration_ms=100,
+    )
+    finalized = store.finalize(session_id, last_sequence=3)
+
+    brief = service_for(store).export_classroom_brief(session_id)
+
+    validate_schema("classroom-brief-v1", brief)
+    assert brief["status"] == "complete"
+    assert brief["data_completeness"] == "complete"
+    assert brief["active_duration_ms"] == 3_000
+    assert brief["run_summary"] == "运行 2 次，其中 1 次成功、1 次失败"
+    assert brief["generated_at"] == finalized["ended_at"]
+    assert len(brief["process_highlights"]) <= 3
+    assert store.read_classroom_brief(session_id) == brief
+    serialized = json.dumps(brief, ensure_ascii=False)
+    assert "private_student_source" not in serialized
+    assert "private failure detail" not in serialized
+
+
+def test_abandoned_session_exports_partial_brief_without_ai(tmp_path: Path) -> None:
+    store, session = started_session(tmp_path)
+    session_id = str(session["session_id"])
+    append_synthetic_event(
+        store,
+        session_id,
+        sequence=1,
+        segment_id="20000000-0000-4000-8000-000000000064",
+        segment_type="page_away",
+        duration_ms=5_000,
+    )
+    append_synthetic_event(
+        store,
+        session_id,
+        sequence=2,
+        segment_id="20000000-0000-4000-8000-000000000065",
+        segment_type="code_paste",
+        paste_char_count=250,
+        duration_ms=200,
+        cell_source="private pasted source",
+    )
+    abandoned = store.abandon(session_id, reason="stale_session")
+
+    brief = service_for(store).export_classroom_brief(session_id)
+
+    validate_schema("classroom-brief-v1", brief)
+    assert brief["status"] == "partial"
+    assert brief["data_completeness"] == "partial"
+    assert brief["generated_at"] == abandoned["ended_at"]
+    assert brief["attention_message"] == (
+        "页面离开后出现较长粘贴，建议教师结合过程记录进行询问。"
+    )
+    assert "ai_analysis" not in brief
+    assert "private pasted source" not in json.dumps(brief, ensure_ascii=False)
+
+
+def test_classroom_brief_accepts_more_than_ten_thousand_events(
+    tmp_path: Path,
+) -> None:
+    store, session = started_session(tmp_path)
+    session_id = str(session["session_id"])
+    events = [
+        {
+            "event_id": f"{session_id}:{sequence}",
+            "session_seq": sequence,
+            "segment_type": "code_writing",
+            "started_at": "2026-08-10T09:00:00+08:00",
+            "ended_at": "2026-08-10T09:00:00.001000+08:00",
+            "duration_ms": 1,
+        }
+        for sequence in range(1, 10_002)
+    ]
+    store.append_batch(
+        session_id,
+        segment_id="20000000-0000-4000-8000-000000000066",
+        first_sequence=1,
+        last_sequence=10_001,
+        content_hash=sha256_json(
+            {
+                "first_sequence": 1,
+                "last_sequence": 10_001,
+                "segments": events,
+            }
+        ),
+        segments=events,
+    )
+    store.finalize(session_id, last_sequence=10_001)
+
+    brief = service_for(store).export_classroom_brief(session_id)
+
+    assert brief["status"] == "complete"
+    assert brief["active_duration_ms"] == 10_001
+    assert len(brief["process_highlights"]) <= 3

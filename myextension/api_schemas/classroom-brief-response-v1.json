@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "classroom-brief-response-v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "request_id",
+    "session_id",
+    "status",
+    "data_completeness",
+    "active_duration_ms",
+    "run_summary",
+    "process_highlights",
+    "attention_message",
+    "generated_at"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "request_id": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "session_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "status": {"enum": ["complete", "partial"]},
+    "data_completeness": {"enum": ["complete", "partial"]},
+    "active_duration_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "run_summary": {"type": "string", "minLength": 1, "maxLength": 200},
+    "process_highlights": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {"type": "string", "minLength": 1, "maxLength": 200}
+    },
+    "attention_message": {
+      "type": ["string", "null"],
+      "maxLength": 200
+    },
+    "generated_at": {"type": "string", "minLength": 1, "maxLength": 100}
+  }
+}

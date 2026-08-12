@@ -1,0 +1,182 @@
+{
+  "name": "behavior-audit-vscode",
+  "displayName": "编程行为分析",
+  "description": "面向课堂演示的本地编程行为采集与简报扩展。",
+  "publisher": "bluedot-ai",
+  "version": "0.1.1",
+  "license": "BSD-3-Clause",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Zeuss212/programming-behavior-audit-plugin.git"
+  },
+  "categories": [
+    "Education"
+  ],
+  "engines": {
+    "vscode": "^1.125.0"
+  },
+  "main": "./dist/extension.js",
+  "extensionKind": [
+    "workspace"
+  ],
+  "extensionPack": [
+    "ms-python.python"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited"
+    },
+    "virtualWorkspaces": {
+      "supported": false
+    }
+  },
+  "contributes": {
+    "configuration": {
+      "title": "编程行为分析",
+      "properties": {
+        "behaviorAudit.ai.baseUrl": {
+          "type": "string",
+          "default": "https://ark.cn-beijing.volces.com/api/coding/v3",
+          "description": "可选 AI 服务的 OpenAI 兼容基础 URL。除本机地址外必须使用 HTTPS。"
+        },
+        "behaviorAudit.ai.model": {
+          "type": "string",
+          "default": "glm-5-2-260617",
+          "description": "可选 AI 服务使用的模型名称。"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "behaviorAudit.openTeacher",
+        "title": "编程行为分析: 打开教师端"
+      },
+      {
+        "command": "behaviorAudit.openStudent",
+        "title": "编程行为分析: 打开学生端"
+      },
+      {
+        "command": "behaviorAudit.openPlanWizard",
+        "title": "编程行为分析: 创建考核方案"
+      },
+      {
+        "command": "behaviorAudit.publishPlan",
+        "title": "编程行为分析: 发布考核方案"
+      },
+      {
+        "command": "behaviorAudit.suggestPlan",
+        "title": "编程行为分析: 生成 AI 方案建议（可选）"
+      },
+      {
+        "command": "behaviorAudit.importPlan",
+        "title": "编程行为分析: 导入考核方案"
+      },
+      {
+        "command": "behaviorAudit.exportPlan",
+        "title": "编程行为分析: 导出考核方案"
+      },
+      {
+        "command": "behaviorAudit.startCapture",
+        "title": "编程行为分析: 开始监控"
+      },
+      {
+        "command": "behaviorAudit.resumeCapture",
+        "title": "编程行为分析: 继续中断会话"
+      },
+      {
+        "command": "behaviorAudit.finishCapture",
+        "title": "编程行为分析: 结束并生成简报"
+      },
+      {
+        "command": "behaviorAudit.abandonCapture",
+        "title": "编程行为分析: 放弃当前会话"
+      },
+      {
+        "command": "behaviorAudit.runPython",
+        "title": "编程行为分析: 运行当前 Python 文件并记录"
+      },
+      {
+        "command": "behaviorAudit.analyzeSession",
+        "title": "编程行为分析: 生成可选 AI 会话分析"
+      },
+      {
+        "command": "behaviorAudit.exportSession",
+        "title": "编程行为分析: 导出会话"
+      },
+      {
+        "command": "behaviorAudit.openDataLocation",
+        "title": "编程行为分析: 打开本地数据位置"
+      },
+      {
+        "command": "behaviorAudit.configureAiKey",
+        "title": "编程行为分析: 配置 AI Key"
+      },
+      {
+        "command": "behaviorAudit.clearAiKey",
+        "title": "编程行为分析: 清除 AI Key"
+      },
+      {
+        "command": "behaviorAudit.pasteAndRecord",
+        "title": "编程行为分析: 粘贴并记录摘要"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "behaviorAudit",
+          "title": "编程行为分析",
+          "icon": "media/activity.svg"
+        }
+      ]
+    },
+    "views": {
+      "behaviorAudit": [
+        {
+          "id": "behaviorAudit.sidebar",
+          "name": "教师与学生工作台",
+          "type": "webview"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "behaviorAudit.pasteAndRecord",
+        "key": "ctrl+v",
+        "mac": "cmd+v",
+        "when": "behaviorAudit.collecting && editorTextFocus"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node esbuild.mjs --production",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test:unit": "vitest run",
+    "compile:test": "tsc -p tsconfig.test.json",
+    "test:integration": "npm run build && npm run compile:test && node dist-test/test/integration/runTest.js",
+    "test:soak": "node scripts/accelerated-soak.mjs",
+    "test": "npm run test:unit",
+    "verify": "npm run lint && npm run typecheck && npm run test:unit && npm run build",
+    "verify:vsix": "node scripts/verify-vsix.mjs behavior-audit-vscode-0.1.1.vsix",
+    "package": "npm run verify && vsce package --out behavior-audit-vscode-0.1.1.vsix && npm run verify:vsix"
+  },
+  "dependencies": {
+    "@vscode/python-extension": "1.0.6",
+    "ajv": "^8.17.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/mocha": "10.0.10",
+    "@types/node": "^22.0.0",
+    "@types/vscode": "1.125.0",
+    "@vscode/test-electron": "3.1.0",
+    "@vscode/vsce": "3.9.2",
+    "esbuild": "0.28.2",
+    "eslint": "10.8.1",
+    "mocha": "11.8.0",
+    "prettier": "3.9.6",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.66.0",
+    "vitest": "4.1.10"
+  }
+}

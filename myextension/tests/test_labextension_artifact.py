@@ -34,6 +34,10 @@ REQUIRED_TASK_12_MARKERS = (
     "本次会话结果",
     "分析详情",
     "教师复核",
+    "jp-BehaviorAudit-sidebarTab",
+    "ai_provider_timeout",
+    "ai_response_invalid",
+    "最长约 180 秒",
 )
 
 FORBIDDEN_STALE_OR_PRIVATE_MARKERS = (
@@ -125,6 +129,7 @@ def _assert_wheel_delivery_contents() -> None:
     )
     with ZipFile(DELIVERY_WHEEL) as wheel:
         names = set(wheel.namelist())
+    assert not any(name.startswith("myextension/labextension/") for name in names)
     required_prefixes = (
         "myextension/resources/dimension_templates/",
         "myextension/resources/signal_dictionary/",

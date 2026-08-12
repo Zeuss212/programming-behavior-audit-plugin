@@ -760,6 +760,7 @@ def test_openapi_contract_has_authenticated_typed_operations_and_resolvable_refe
         ("/myextension/sessions/{session_id}/segments", "post"): "SegmentReceiptResponse",
         ("/myextension/sessions/{session_id}/finalize", "post"): "SessionFinalizeResponse",
         ("/myextension/sessions/{session_id}/logs", "get"): "SessionLogListResponse",
+        ("/myextension/sessions/{session_id}/brief", "get"): "ClassroomBriefResponse",
         ("/myextension/sessions/{session_id}/abandon", "post"): "SessionStateResponse",
         ("/myextension/sessions/{session_id}/recover", "post"): "SessionStateResponse",
         ("/myextension/sessions/{session_id}", "get"): "SessionStateResponse",
@@ -798,6 +799,7 @@ def test_openapi_contract_has_authenticated_typed_operations_and_resolvable_refe
         ("/myextension/sessions/{session_id}/segments", "post"): ["SessionId"],
         ("/myextension/sessions/{session_id}/finalize", "post"): ["SessionId"],
         ("/myextension/sessions/{session_id}/logs", "get"): ["SessionId"],
+        ("/myextension/sessions/{session_id}/brief", "get"): ["SessionId"],
         ("/myextension/sessions/{session_id}/abandon", "post"): ["SessionId"],
         ("/myextension/sessions/{session_id}/recover", "post"): ["SessionId"],
         ("/myextension/sessions/{session_id}", "get"): ["SessionId"],
@@ -844,6 +846,9 @@ def test_openapi_contract_has_authenticated_typed_operations_and_resolvable_refe
         },
         ("/myextension/sessions/{session_id}/logs", "get"): {
             "200", "400", "401", "403", "404", "500"
+        },
+        ("/myextension/sessions/{session_id}/brief", "get"): {
+            "200", "400", "401", "403", "404", "409", "500"
         },
     }
 

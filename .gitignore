@@ -1,6 +1,6 @@
 *.bundle.*
 lib/
-node_modules/
+node_modules
 *.log
 .eslintcache
 .stylelintcache
@@ -139,3 +139,10 @@ junit.xml
 !.env.example
 !*.env.example
 **/.ark_ai_config.json
+
+# VS Code extension build and test output
+/vscode-extension/dist/
+/vscode-extension/dist-test/
+/vscode-extension/.vscode-test/
+/vscode-extension/coverage/
+/vscode-extension/*.vsix

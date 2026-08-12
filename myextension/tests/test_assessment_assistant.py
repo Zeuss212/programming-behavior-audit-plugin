@@ -77,6 +77,9 @@ def test_recommendation_treats_prompt_injection_as_question_data():
         "submission_contract",
         "teacher_focus",
     }
+    assert seen["max_tokens"] == 2048
+    assert seen["thinking"] == {"type": "disabled"}
+    assert seen["response_format"] == {"type": "json_object"}
 
 
 def test_recommendation_rejects_english_only_natural_language():
@@ -180,6 +183,9 @@ def test_generated_tests_are_closed_and_reference_current_points_only():
     }
     assert result["assessment_tests"][0]["id"].startswith("TEST_")
     assert "简体中文" in seen["messages"][0]["content"]
+    assert seen["max_tokens"] == 2048
+    assert seen["thinking"] == {"type": "disabled"}
+    assert seen["response_format"] == {"type": "json_object"}
 
 
 def test_generated_tests_recovers_one_length_truncation_without_second_user_action():
@@ -226,9 +232,14 @@ def test_generated_tests_recovers_one_length_truncation_without_second_user_acti
 
     assert result["assessment_tests"][0]["name"] == "普通整数列表"
     assert [request["max_tokens"] for request in requests] == [
-        8192,
-        16384,
+        2048,
+        4096,
     ]
+    assert all(
+        request["thinking"] == {"type": "disabled"}
+        and request["response_format"] == {"type": "json_object"}
+        for request in requests
+    )
 
 
 def test_generated_tests_reject_english_only_names():

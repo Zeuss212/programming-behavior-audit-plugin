@@ -15,7 +15,7 @@ from classroom_sync.domain.schemas import ClassroomSchemaRegistry
 from classroom_sync.main import create_app
 from classroom_sync.models import Base
 from classroom_sync.services.assignments import AssignmentService
-from classroom_sync.services.plans import PlanService
+from classroom_sync.services.plans import PlanDraftInput, PlanService
 from classroom_sync.services.sessions import PluginSessionService
 from tests.integration.test_plan_assignment_flow import profile_draft
 
@@ -154,12 +154,14 @@ def test_student_launches_plugin_with_one_time_ticket_and_uploads_evidence():
     schema_registry = ClassroomSchemaRegistry(repository_root / "contracts" / "classroom" / "v1")
     now = datetime(2026, 8, 12, 8, 0, tzinfo=UTC)
     identity_gateway = FakeIdentityGateway()
+    plan_service = PlanService(session_factory, schema_registry, clock=lambda: now)
+    assignment_service = AssignmentService(session_factory, clock=lambda: now)
     application = create_app(
         Settings(database_url="sqlite://"),
         classroom_services=ClassroomServices(
             identity_gateway=identity_gateway,
-            plan_service=PlanService(session_factory, schema_registry, clock=lambda: now),
-            assignment_service=AssignmentService(session_factory, clock=lambda: now),
+            plan_service=plan_service,
+            assignment_service=assignment_service,
             plugin_session_service=PluginSessionService(
                 session_factory,
                 storage=RecordingStorage(),
@@ -169,45 +171,29 @@ def test_student_launches_plugin_with_one_time_ticket_and_uploads_evidence():
             ),
         ),
     )
-    with session_factory.begin() as session:
-        from classroom_sync.models import ExperimentPlanBinding, StudentAssignment
-
-        session.add(
-            ExperimentPlanBinding(
-                id="binding-1",
-                space_id="space-1",
-                parent_algorithm_id="parent-1",
-                plan_id="plan-1",
-                plan_version=1,
-                teacher_id="teacher-1",
-                created_at=now,
-                updated_at=None,
-            )
-        )
-        session.add(
-            StudentAssignment(
-                id="assignment-1",
-                binding_id="binding-1",
-                space_id="space-1",
-                parent_algorithm_id="parent-1",
-                child_algorithm_id="child-1",
-                workbench_id="workbench-1",
-                student_id="student-1",
-                plan_id="plan-1",
-                plan_version=1,
-                status="ready",
-                scheduled_start_at=now,
-                scheduled_end_at=now + timedelta(minutes=30),
-                accepted_at=now,
-                created_at=now,
-                updated_at=now,
-            )
-        )
+    draft = plan_service.create_draft(
+        PlanDraftInput(
+            space_id="space-1",
+            parent_algorithm_id="parent-1",
+            title="字典课堂练习",
+            profile=profile_draft("学生是否正确读取字典中的值？"),
+            scheduled_start_at=now,
+            scheduled_end_at=now + timedelta(minutes=30),
+            ai_policy="prohibited",
+        ),
+        teacher_id="teacher-1",
+    )
+    plan_version = plan_service.publish_draft(draft.id, teacher_id="teacher-1")
+    assignment = assignment_service.sync_assignments(
+        plan_version,
+        (StudentChildExperiment("student-1", "student-a", "child-1", "workbench-1"),),
+    )[0]
+    assignment = assignment_service.accept_assignment(assignment.id, student_id="student-1")
 
     launch_response = request(
         application,
         "POST",
-        "/v1/classroom/student/assignments/assignment-1/launch-ticket",
+        f"/v1/classroom/student/assignments/{assignment.id}/launch-ticket",
         headers={"Authorization": "Bearer student-token"},
     )
     assert launch_response.status_code == 201
@@ -221,11 +207,27 @@ def test_student_launches_plugin_with_one_time_ticket_and_uploads_evidence():
     )
     assert register_response.status_code == 201
     credentials = register_response.json()
-    assert credentials["assignment_id"] == "assignment-1"
-    assert credentials["plan_id"] == "plan-1"
+    assert credentials["assignment_id"] == assignment.id
+    assert credentials["plan_id"] == plan_version.plan_id
     assert credentials["plan_version"] == 1
+    assert credentials["profile"] == plan_version.profile
+    assert credentials["scheduled_end_at"] == (now + timedelta(minutes=30)).isoformat()
+    assert credentials["last_sync_at"] == now.isoformat()
     assert credentials["evidence_cutoff_at"] == (now + timedelta(minutes=45)).isoformat()
     plugin_headers = {"Authorization": f"Bearer {credentials['access_token']}"}
+
+    refresh_response = request(
+        application,
+        "POST",
+        f"/v1/classroom/plugin/sessions/{credentials['session_id']}/context/refresh",
+        headers=plugin_headers,
+    )
+    assert refresh_response.status_code == 200
+    refreshed = refresh_response.json()
+    assert refreshed["session_id"] == credentials["session_id"]
+    assert refreshed["profile"] == credentials["profile"]
+    assert refreshed["scheduled_end_at"] == credentials["scheduled_end_at"]
+    assert refreshed["last_sync_at"] == credentials["last_sync_at"]
 
     heartbeat_response = request(
         application,

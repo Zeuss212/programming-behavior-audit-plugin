@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict
 from classroom_sync.errors import AuthenticationError
 from classroom_sync.routers.plans import get_services
 from classroom_sync.services.briefs import BriefContent
+from classroom_sync.services.sessions import SessionCredentials
 
 router = APIRouter(prefix="/v1/classroom/plugin", tags=["classroom-plugin"])
 
@@ -38,6 +39,23 @@ def get_plugin_bearer(authorization: str | None) -> str:
     return authorization.removeprefix("Bearer ")
 
 
+def credentials_response(credentials: SessionCredentials) -> dict[str, object]:
+    """Expose the immutable classroom snapshot without leaking ticket material."""
+
+    return {
+        "session_id": credentials.session_id,
+        "access_token": credentials.access_token,
+        "expires_at": credentials.expires_at.isoformat(),
+        "assignment_id": credentials.assignment_id,
+        "plan_id": credentials.plan_id,
+        "plan_version": credentials.plan_version,
+        "profile": credentials.profile,
+        "scheduled_end_at": credentials.scheduled_end_at.isoformat(),
+        "evidence_cutoff_at": credentials.evidence_cutoff_at.isoformat(),
+        "last_sync_at": credentials.last_sync_at.isoformat(),
+    }
+
+
 @router.post("/sessions/register", status_code=status.HTTP_201_CREATED)
 def register_plugin_session(
     payload: RegisterPluginSessionRequest,
@@ -49,15 +67,22 @@ def register_plugin_session(
     credentials = services.plugin_session_service.register(
         payload.ticket, plugin_instance_id=payload.plugin_instance_id
     )
-    return {
-        "session_id": credentials.session_id,
-        "access_token": credentials.access_token,
-        "expires_at": credentials.expires_at.isoformat(),
-        "assignment_id": credentials.assignment_id,
-        "plan_id": credentials.plan_id,
-        "plan_version": credentials.plan_version,
-        "evidence_cutoff_at": credentials.evidence_cutoff_at.isoformat(),
-    }
+    return credentials_response(credentials)
+
+
+@router.post("/sessions/{session_id}/context/refresh")
+def refresh_plugin_context(
+    session_id: str,
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, object]:
+    services = get_services(request)
+    if services.plugin_session_service is None:
+        raise TypeError("Plugin session service is not configured.")
+    credentials = services.plugin_session_service.refresh_plugin_token(
+        get_plugin_bearer(authorization), session_id=session_id
+    )
+    return credentials_response(credentials)
 
 
 @router.post("/sessions/{session_id}/heartbeat")
@@ -121,7 +146,7 @@ def submit_brief(
     if services.plugin_session_service is None or services.brief_service is None:
         raise TypeError("Plugin brief dependencies are not configured.")
     access_token = get_plugin_bearer(authorization)
-    services.plugin_session_service.refresh_plugin_token(access_token, session_id=session_id)
+    services.plugin_session_service.authorize_plugin_session(access_token, session_id=session_id)
     brief = services.brief_service.submit(
         session_id,
         BriefContent(

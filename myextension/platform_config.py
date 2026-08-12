@@ -28,6 +28,27 @@ class PlatformConfig:
     def student_mode(self) -> bool:
         return self.mode == "student"
 
+    def capabilities(self) -> dict[str, bool]:
+        """Return server-authoritative capabilities for the configured runtime mode."""
+
+        if self.student_mode:
+            return {
+                "canAuthorPlan": False,
+                "canPublishPlan": False,
+                "canConfigureAi": False,
+                "canUseAssessmentAssist": False,
+                "canCapture": True,
+                "canSubmit": True,
+            }
+        return {
+            "canAuthorPlan": True,
+            "canPublishPlan": True,
+            "canConfigureAi": True,
+            "canUseAssessmentAssist": True,
+            "canCapture": True,
+            "canSubmit": True,
+        }
+
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> PlatformConfig:
         values = os.environ if env is None else env

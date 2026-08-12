@@ -112,6 +112,32 @@ _VALIDATION_REASONS = {
 }
 
 
+def _platform_config() -> PlatformConfig:
+    """Load platform settings at request time and fail closed on bad student config."""
+
+    try:
+        return PlatformConfig.from_env()
+    except RuntimeError as error:
+        raise ApiRequestError(
+            503,
+            "platform_configuration_invalid",
+            "课堂学生模式尚未正确配置。",
+        ) from error
+
+
+def _require_platform_capability(capability: str) -> PlatformConfig:
+    """Prevent a browser or direct request from enabling teacher-only actions."""
+
+    config = _platform_config()
+    if not config.capabilities().get(capability, False):
+        raise ApiRequestError(
+            403,
+            "student_capability_forbidden",
+            "课堂学生模式不允许此操作。",
+        )
+    return config
+
+
 class HelloRouteHandler(APIHandler):
     # The following decorator should be present on all verb methods (head, get, post,
     # patch, put, delete, options) to ensure only authorized user can request the
@@ -350,11 +376,21 @@ class AiConfigRouteHandler(JsonAPIHandler):
 
     @tornado.web.authenticated
     def get(self):
-        self.finish_json(ai_config_status())
+        try:
+            _require_platform_capability("canConfigureAi")
+            self.finish_json(ai_config_status())
+        except ApiRequestError as error:
+            self.finish_error(
+                error.status,
+                error.code,
+                error.message,
+                details=error.details,
+            )
 
     @tornado.web.authenticated
     def post(self):
         try:
+            _require_platform_capability("canConfigureAi")
             body = self.read_json_object()
         except ApiRequestError as error:
             self.finish_error(
@@ -502,9 +538,135 @@ class PlatformRegistrationRouteHandler(JsonAPIHandler):
             "plan_id": context.plan_id,
             "plan_version": context.plan_version,
             "session_id": context.session_id,
-            "access_token_expires_at": context.access_token_expires_at,
+            "profile": context.profile,
+            "scheduled_end_at": context.scheduled_end_at,
             "evidence_cutoff_at": context.evidence_cutoff_at,
+            "last_sync_at": context.last_sync_at,
         }
+
+
+class PlatformContextRouteHandler(JsonAPIHandler):
+    """Serve only server-authoritative local or classroom-student UI state."""
+
+    @tornado.web.authenticated
+    def get(self):
+        try:
+            config = _platform_config()
+            context = self._registered_context(config)
+            self._finish_context(config, context)
+        except ApiRequestError as error:
+            self.finish_error(
+                error.status,
+                error.code,
+                error.message,
+                details=error.details,
+            )
+        except OSError:
+            self.finish_error(
+                503,
+                "platform_context_unavailable",
+                "课堂会话暂时无法读取，请稍后重试。",
+                retryable=True,
+            )
+        except ValueError:
+            self.finish_error(
+                503,
+                "platform_context_invalid",
+                "课堂会话数据无效，请重新进入课堂。",
+            )
+        except Exception:
+            self._finish_internal_error()
+
+    @tornado.web.authenticated
+    def post(self):
+        try:
+            config = _platform_config()
+            if not config.student_mode or config.sync_base_url is None:
+                raise ApiRequestError(
+                    404,
+                    "platform_context_refresh_disabled",
+                    "当前运行环境未启用课堂学生模式。",
+                )
+            context = self._registered_context(config)
+            refreshed = PlatformSyncClient(config.sync_base_url).refresh(context)
+            PlatformContextStore(config.log_root).save_registered_context(refreshed)
+            self._finish_context(config, refreshed)
+        except ApiRequestError as error:
+            self.finish_error(
+                error.status,
+                error.code,
+                error.message,
+                details=error.details,
+            )
+        except PlatformClientError as error:
+            self._finish_platform_error(error)
+        except OSError:
+            self.finish_error(
+                503,
+                "platform_context_unavailable",
+                "课堂会话暂时无法保存，请稍后重试。",
+                retryable=True,
+            )
+        except ValueError:
+            self.finish_error(
+                502,
+                "platform_context_invalid_response",
+                "课堂服务返回的数据无法使用。",
+            )
+        except Exception:
+            self._finish_internal_error()
+
+    def _registered_context(self, config: PlatformConfig) -> RegisteredPlatformContext | None:
+        if not config.student_mode:
+            return None
+        context = PlatformContextStore(config.log_root).read_registered_context()
+        if context is None:
+            raise ApiRequestError(
+                409,
+                "platform_context_not_registered",
+                "尚未注册课堂会话，请从课堂平台重新进入。",
+            )
+        return context
+
+    def _finish_context(
+        self,
+        config: PlatformConfig,
+        context: RegisteredPlatformContext | None,
+    ) -> None:
+        payload = {
+            "mode": config.mode,
+            "capabilities": config.capabilities(),
+            "classroom_session": (
+                PlatformRegistrationRouteHandler._public_context(context)
+                if context is not None
+                else None
+            ),
+        }
+        validate_schema(
+            "platform-context-response-v1",
+            {**payload, "schema_version": 1, "request_id": self.request_id()},
+        )
+        self.finish_json(payload)
+
+    def _finish_platform_error(self, error: PlatformClientError) -> None:
+        mappings = {
+            "platform_context_refresh_unauthorized": (401, False),
+            "platform_context_refresh_conflict": (409, False),
+            "platform_context_refresh_unavailable": (503, True),
+            "platform_context_refresh_failed": (502, True),
+            "platform_context_refresh_invalid_response": (502, False),
+            "platform_context_refresh_invalid": (422, False),
+        }
+        status, retryable = mappings.get(error.args[0], (502, True))
+        self.finish_error(
+            status,
+            error.args[0],
+            "课堂会话刷新未能完成。",
+            retryable=retryable,
+        )
+
+    def _finish_internal_error(self) -> None:
+        self.finish_error(500, "internal_error", "服务器暂时无法处理请求。")
 
 
 def _profile_store_at(root: Path) -> DimensionProfileStore:
@@ -709,6 +871,7 @@ class DimensionProfilesRouteHandler(ProfileAPIHandler):
     @tornado.web.authenticated
     def post(self):
         try:
+            _require_platform_capability("canAuthorPlan")
             payload = self.read_json_object()
             created = _profile_store().create_draft(payload)
             self.finish_json(created, status=201)
@@ -724,6 +887,7 @@ class DimensionProfileDraftRouteHandler(ProfileAPIHandler):
     @tornado.web.authenticated
     def put(self, profile_id):
         try:
+            _require_platform_capability("canAuthorPlan")
             request_body = self.read_json_object()
             canonical_id = _canonical_profile_id(profile_id)
             revision, draft = _validate_draft_update(request_body)
@@ -763,6 +927,7 @@ class DimensionProfilePublishRouteHandler(ProfileAPIHandler):
     @tornado.web.authenticated
     def post(self, profile_id):
         try:
+            _require_platform_capability("canPublishPlan")
             if self.request.body:
                 publish_request = self.read_json_object()
                 if publish_request:
@@ -934,6 +1099,7 @@ class AssessmentKnowledgeAssistRouteHandler(AssessmentAssistRouteHandler):
     @tornado.web.authenticated
     async def post(self):
         try:
+            _require_platform_capability("canUseAssessmentAssist")
             body = self._request_body()
             context = body["problem_context"]
             result = await asyncio.to_thread(
@@ -955,6 +1121,7 @@ class AssessmentTestsAssistRouteHandler(AssessmentAssistRouteHandler):
     @tornado.web.authenticated
     async def post(self):
         try:
+            _require_platform_capability("canUseAssessmentAssist")
             body = self._request_body()
             context = body["problem_context"]
             result = await asyncio.to_thread(
@@ -2189,6 +2356,12 @@ def setup_route_handlers(web_app):
         "platform",
         "register",
     )
+    platform_context_route_pattern = url_path_join(
+        base_url,
+        "myextension",
+        "platform",
+        "context",
+    )
     dimension_templates_route_pattern = url_path_join(
         base_url,
         "myextension",
@@ -2343,6 +2516,7 @@ def setup_route_handlers(web_app):
         (latest_analysis_route_pattern, LatestAnalysisRouteHandler),
         (ai_config_route_pattern, AiConfigRouteHandler),
         (platform_registration_route_pattern, PlatformRegistrationRouteHandler),
+        (platform_context_route_pattern, PlatformContextRouteHandler),
         (dimension_templates_route_pattern, DimensionTemplatesRouteHandler),
         (dimension_profiles_route_pattern, DimensionProfilesRouteHandler),
         (

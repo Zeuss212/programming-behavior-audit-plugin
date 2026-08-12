@@ -5,6 +5,7 @@ from __future__ import annotations
 import gzip
 import secrets
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -33,6 +34,7 @@ from classroom_sync.models import (
     MonitorSession,
     StudentAssignment,
 )
+from classroom_sync.repositories import ClassroomRepository
 from classroom_sync.storage import PrivateObjectStorage, StorageUnavailable
 
 PLUGIN_TOKEN_AUDIENCE = "classroom-plugin-v1"
@@ -56,7 +58,10 @@ class SessionCredentials:
     assignment_id: str
     plan_id: str
     plan_version: int
+    profile: dict[str, object]
+    scheduled_end_at: datetime
     evidence_cutoff_at: datetime
+    last_sync_at: datetime
 
 
 @dataclass(frozen=True)
@@ -132,6 +137,11 @@ class PluginSessionService:
                 raise NotFoundError("student_assignment_not_found")
             if assignment.status not in {"ready", "active"}:
                 raise AuthorizationError("assignment_not_ready_for_monitoring")
+            plan_version = ClassroomRepository(session).get_plan_version(
+                assignment.plan_id, assignment.plan_version
+            )
+            if plan_version is None:
+                raise NotFoundError("plan_version_not_found")
 
             monitor_session = MonitorSession(
                 id=str(uuid4()),
@@ -173,7 +183,7 @@ class PluginSessionService:
             )
             self._audit(session, assignment.student_id, "plugin_session_registered", monitor_session.id, now)
 
-        return self._credentials_for(monitor_session, assignment, now)
+        return self._credentials_for(monitor_session, assignment, plan_version.profile, now)
 
     def refresh_plugin_token(self, access_token: str, *, session_id: str) -> SessionCredentials:
         """Refresh a plugin token only when it is still scoped to the requested session."""
@@ -188,7 +198,26 @@ class PluginSessionService:
             assignment = session.get(StudentAssignment, monitor_session.assignment_id)
             if assignment is None:
                 raise NotFoundError("student_assignment_not_found")
-        return self._credentials_for(monitor_session, assignment, self._utc_now())
+            plan_version = ClassroomRepository(session).get_plan_version(
+                monitor_session.plan_id, monitor_session.plan_version
+            )
+            if plan_version is None:
+                raise NotFoundError("plan_version_not_found")
+        return self._credentials_for(
+            monitor_session, assignment, plan_version.profile, self._utc_now()
+        )
+
+    def authorize_plugin_session(self, access_token: str, *, session_id: str) -> None:
+        """Authorize an existing session without requiring a UI-context snapshot refresh."""
+
+        if self._validate_plugin_token(access_token) != session_id:
+            raise AuthorizationError("plugin_session_mismatch")
+        with self._session_factory() as session:
+            monitor_session = session.get(MonitorSession, session_id)
+            if monitor_session is None:
+                raise NotFoundError("monitor_session_not_found")
+            if session.get(StudentAssignment, monitor_session.assignment_id) is None:
+                raise NotFoundError("student_assignment_not_found")
 
     def heartbeat(self, access_token: str, *, session_id: str) -> MonitorSession:
         """Record liveness and resume a recoverable temporarily-offline session."""
@@ -297,6 +326,7 @@ class PluginSessionService:
         self,
         monitor_session: MonitorSession,
         assignment: StudentAssignment,
+        profile: dict[str, object],
         now: datetime,
     ) -> SessionCredentials:
         expires_at = now + timedelta(seconds=PLUGIN_TOKEN_TTL_SECONDS)
@@ -317,7 +347,12 @@ class PluginSessionService:
             assignment_id=assignment.id,
             plan_id=monitor_session.plan_id,
             plan_version=monitor_session.plan_version,
+            profile=deepcopy(profile),
+            scheduled_end_at=self._as_utc(monitor_session.scheduled_end_at),
             evidence_cutoff_at=self._as_utc(monitor_session.evidence_cutoff_at),
+            last_sync_at=self._as_utc(
+                monitor_session.last_heartbeat_at or monitor_session.updated_at
+            ),
         )
 
     def _validate_plugin_token(self, access_token: str) -> str:

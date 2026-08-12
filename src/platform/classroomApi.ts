@@ -1,5 +1,6 @@
 import { ServerConnection } from '@jupyterlab/services';
 
+import { IDimensionProfileVersion } from '../models/dimensionProfile';
 import { requestAPI } from '../request';
 
 export interface IClassroomRegistration {
@@ -9,8 +10,10 @@ export interface IClassroomRegistration {
   plan_id: string;
   plan_version: number;
   session_id: string;
-  access_token_expires_at: string;
+  profile: IDimensionProfileVersion;
+  scheduled_end_at: string;
   evidence_cutoff_at: string;
+  last_sync_at: string;
 }
 
 export function registerClassroomTicket(

@@ -9,7 +9,13 @@ from sqlalchemy.orm import sessionmaker
 
 from classroom_sync.domain.schemas import ClassroomSchemaRegistry
 from classroom_sync.errors import ConflictError, UpstreamUnavailableError, ValidationError
-from classroom_sync.models import Base, EvidenceChunk, ExperimentPlanBinding, StudentAssignment
+from classroom_sync.models import (
+    Base,
+    EvidenceChunk,
+    ExperimentPlanBinding,
+    PlanVersion,
+    StudentAssignment,
+)
 from classroom_sync.services.sessions import PluginSessionService
 
 
@@ -41,6 +47,24 @@ def seeded_service(storage: RecordingStorage):
                 teacher_id="teacher-1",
                 created_at=now,
                 updated_at=None,
+            )
+        )
+        session.add(
+            PlanVersion(
+                id="plan-version-1",
+                plan_id="plan-1",
+                profile_id="profile-1",
+                version=1,
+                source_draft_revision=0,
+                space_id="space-1",
+                parent_algorithm_id="parent-1",
+                profile={"schema_version": 2, "title": "课堂测试方案"},
+                content_hash="a" * 64,
+                scheduled_start_at=now,
+                scheduled_end_at=now + timedelta(minutes=30),
+                ai_policy="prohibited",
+                published_at=now,
+                teacher_id="teacher-1",
             )
         )
         session.add(

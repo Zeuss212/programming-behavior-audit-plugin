@@ -33,6 +33,10 @@ import {
 import { openLogFolder } from '../services/logFolderApi';
 import { ISessionLogFile, listSessionLogs } from '../services/sessionLogApi';
 import { requestAPI } from '../request';
+import {
+  IPlatformContext,
+  LOCAL_PLATFORM_CONTEXT
+} from '../platform/contextApi';
 import { renderAnalysisResult } from './analysisResultView';
 
 interface IAIConfigResponse {
@@ -58,6 +62,7 @@ type TimerHandle = ReturnType<typeof setTimeout>;
 export interface IBehaviorAnalysisSidebarDependencies {
   settings: ServerConnection.ISettings;
   capture: IBehaviorCaptureController;
+  platformContext?: IPlatformContext;
   listProfiles: typeof listProfiles;
   getProfileVersion: typeof getProfileVersion;
   getAnalysisJob: typeof getAnalysisJob;
@@ -101,11 +106,13 @@ export function sidebarDependencies(
       sessionId: string,
       log: ISessionLogFile
     ) => Promise<void>;
-  }
+  },
+  platformContext: IPlatformContext = LOCAL_PLATFORM_CONTEXT
 ): IBehaviorAnalysisSidebarDependencies {
   return {
     settings,
     capture,
+    platformContext,
     listProfiles,
     getProfileVersion,
     getAnalysisJob,
@@ -347,6 +354,7 @@ const EMPTY_UPLOAD: IUploadSnapshot = {
 };
 
 export class BehaviorAnalysisSidebar extends Widget {
+  private readonly platformContext: IPlatformContext;
   private profiles: IDimensionProfileVersion[] = [];
   private selectedProfileId = '';
   private consent = false;
@@ -422,10 +430,15 @@ export class BehaviorAnalysisSidebar extends Widget {
     super({ node: root });
     this.id = 'myextension-behavior-analysis';
     this.title.icon = inspectorIcon;
-    this.title.label = '行为分析';
-    this.title.caption = '编程行为分析';
+    this.platformContext = deps.platformContext ?? LOCAL_PLATFORM_CONTEXT;
+    this.title.label = this.isStudentMode() ? '课堂监控' : '行为分析';
+    this.title.caption = this.isStudentMode() ? '课堂编程监控' : '编程行为分析';
     this.title.className = 'jp-BehaviorAudit-sidebarTab';
     this.upload = deps.capture.snapshot();
+    if (this.isStudentMode()) {
+      this.render();
+      return;
+    }
     this.currentSessionId = this.upload.sessionId;
     this.unsubscribe = deps.capture.subscribe(snapshot => {
       if (!this.isDisposed) {
@@ -468,6 +481,7 @@ export class BehaviorAnalysisSidebar extends Widget {
   }
 
   async refreshProfiles(): Promise<void> {
+    if (this.isStudentMode()) return;
     this.notice = '正在读取已发布方案…';
     this.noticeTone = 'info';
     this.render();
@@ -662,6 +676,10 @@ export class BehaviorAnalysisSidebar extends Widget {
 
   private isCurrentGeneration(generation: number): boolean {
     return !this.isDisposed && generation === this.generation;
+  }
+
+  private isStudentMode(): boolean {
+    return this.platformContext.mode === 'student';
   }
 
   private hasUnfinishedPendingSession(): boolean {
@@ -1069,12 +1087,18 @@ export class BehaviorAnalysisSidebar extends Widget {
     this.captureInteractiveState();
     this.node.textContent = '';
     const heading = node('h1');
-    heading.textContent = '编程行为分析';
+    heading.textContent = this.isStudentMode()
+      ? '课堂编程监控'
+      : '编程行为分析';
     const status = node('div', 'jp-BehaviorAudit-sidebarStatus');
     status.setAttribute('aria-live', 'polite');
     status.textContent = this.notice;
     if (this.noticeTone === 'error')
       status.classList.add('jp-BehaviorAudit-state-error');
+    if (this.isStudentMode()) {
+      this.node.append(heading, this.studentClassroomSection(), status);
+      return;
+    }
     this.node.append(
       heading,
       this.profileSection(),
@@ -1103,6 +1127,44 @@ export class BehaviorAnalysisSidebar extends Widget {
     );
     this.restoreInteractiveState();
     this.syncObservationTimer();
+  }
+
+  private studentClassroomSection(): HTMLElement {
+    const section = node('section', 'jp-BehaviorAudit-sidebarSection');
+    const session = this.platformContext.classroom_session;
+    if (!session) {
+      const message = node('p', 'jp-BehaviorAudit-notice');
+      message.textContent = '课堂会话未就绪，请返回课程页面重新打开。';
+      section.appendChild(message);
+      return section;
+    }
+    const title = node('h2');
+    title.textContent = session.profile.title;
+    const task = node('p', 'jp-BehaviorAudit-notice');
+    task.textContent = `课堂任务 · 方案 v${session.plan_version}`;
+    const monitoring = node('p', 'jp-BehaviorAudit-captureState');
+    monitoring.textContent = `监控状态：${
+      this.deps.capture.isEnabled() ? '进行中' : '等待开始'
+    }`;
+    const lastSync = node('p', 'jp-BehaviorAudit-notice');
+    lastSync.textContent = `最近同步：${session.last_sync_at}`;
+    const deadline = node('p', 'jp-BehaviorAudit-notice');
+    deadline.textContent = `课程结束：${session.scheduled_end_at}；最晚提交：${session.evidence_cutoff_at}`;
+    const recovery = node('p', 'jp-BehaviorAudit-notice');
+    recovery.textContent = '页面意外关闭后重新进入课堂，可继续恢复本节监控。';
+    const submit = button('提交本节简报', true);
+    submit.disabled = true;
+    submit.title = '课堂简报提交将在同步流程接入后开放。';
+    section.append(
+      title,
+      task,
+      monitoring,
+      lastSync,
+      deadline,
+      recovery,
+      submit
+    );
+    return section;
   }
 
   private classroomBriefSection(): HTMLElement | null {

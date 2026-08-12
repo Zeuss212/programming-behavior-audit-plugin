@@ -62,16 +62,55 @@ class PlatformSyncClient:
         if not isinstance(payload, dict):
             raise PlatformClientError("platform_registration_invalid_response")
         try:
-            return RegisteredPlatformContext.from_dict(
-                {
-                    "assignment_id": payload["assignment_id"],
-                    "plan_id": payload["plan_id"],
-                    "plan_version": payload["plan_version"],
-                    "session_id": payload["session_id"],
-                    "access_token": payload["access_token"],
-                    "access_token_expires_at": payload["expires_at"],
-                    "evidence_cutoff_at": payload["evidence_cutoff_at"],
-                }
-            )
+            return self._registered_context(payload)
         except (KeyError, ValueError) as error:
             raise PlatformClientError("platform_registration_invalid_response") from error
+
+    def refresh(self, context: RegisteredPlatformContext) -> RegisteredPlatformContext:
+        """Refresh a persisted session without returning its token to the browser."""
+
+        request = Request(
+            f"{self._base_url}/v1/classroom/plugin/sessions/{context.session_id}/context/refresh",
+            headers={"Authorization": f"Bearer {context.access_token}"},
+            method="POST",
+        )
+        try:
+            with self._transport(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+                raw = response.read()
+        except HTTPError as error:
+            if error.code in {401, 403}:
+                raise PlatformClientError("platform_context_refresh_unauthorized") from error
+            if error.code == 409:
+                raise PlatformClientError("platform_context_refresh_conflict") from error
+            if 400 <= error.code < 500:
+                raise PlatformClientError("platform_context_refresh_invalid") from error
+            raise PlatformClientError("platform_context_refresh_failed") from error
+        except (OSError, URLError) as error:
+            raise PlatformClientError("platform_context_refresh_unavailable") from error
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError) as error:
+            raise PlatformClientError("platform_context_refresh_invalid_response") from error
+        if not isinstance(payload, dict):
+            raise PlatformClientError("platform_context_refresh_invalid_response")
+        try:
+            return self._registered_context(payload)
+        except (KeyError, ValueError) as error:
+            raise PlatformClientError("platform_context_refresh_invalid_response") from error
+
+    @staticmethod
+    def _registered_context(payload: dict[str, object]) -> RegisteredPlatformContext:
+        return RegisteredPlatformContext.from_dict(
+            {
+                "assignment_id": payload["assignment_id"],
+                "plan_id": payload["plan_id"],
+                "plan_version": payload["plan_version"],
+                "session_id": payload["session_id"],
+                "access_token": payload["access_token"],
+                "access_token_expires_at": payload["expires_at"],
+                "profile": payload["profile"],
+                "scheduled_end_at": payload["scheduled_end_at"],
+                "evidence_cutoff_at": payload["evidence_cutoff_at"],
+                "last_sync_at": payload["last_sync_at"],
+            }
+        )

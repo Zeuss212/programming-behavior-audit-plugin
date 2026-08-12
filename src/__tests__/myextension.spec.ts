@@ -207,6 +207,20 @@ describe('插件激活的本次日志接线', () => {
       platform: 'macos' as const
     }));
     const requestAPI = jest.fn(async () => ({}));
+    const getPlatformContext = jest.fn(async () => ({
+      schema_version: 1 as const,
+      request_id: '10000000-0000-4000-8000-000000000099',
+      mode: 'local' as const,
+      capabilities: {
+        canAuthorPlan: true,
+        canPublishPlan: true,
+        canConfigureAi: true,
+        canUseAssessmentAssist: true,
+        canCapture: true,
+        canSubmit: true
+      },
+      classroom_session: null
+    }));
     const fetchSessionLogContent = jest.fn(async () => '{"events":[]}');
     const downloadSessionLog = jest.fn(async () => undefined);
     const openSessionLogViewer = jest.fn(async () => undefined);
@@ -227,6 +241,7 @@ describe('插件激活的本次日志接线', () => {
       }
     }));
     jest.doMock('../request', () => ({ requestAPI }));
+    jest.doMock('../platform/contextApi', () => ({ getPlatformContext }));
     jest.doMock('../services/logFolderApi', () => ({ openLogFolder }));
     jest.doMock('../services/sessionLogApi', () => ({
       fetchSessionLogContent,
@@ -292,6 +307,9 @@ describe('插件激活的本次日志接线', () => {
       null,
       null
     );
+    for (let index = 0; index < 5; index += 1) {
+      await Promise.resolve();
+    }
     const actions = sidebarDependencies.mock.calls[0][2] as {
       openLogFolder: (settings: object) => Promise<unknown>;
       openDataFile: (path: string) => Promise<void>;

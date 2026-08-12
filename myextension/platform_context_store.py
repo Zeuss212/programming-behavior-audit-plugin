@@ -9,6 +9,7 @@ from typing import Any
 from uuid import UUID
 
 from .canonical_json import atomic_write_json
+from .schema_registry import validate_schema
 
 CONTEXT_FILENAME = "platform-context.json"
 CONTEXT_KEYS = {
@@ -18,7 +19,10 @@ CONTEXT_KEYS = {
     "session_id",
     "access_token",
     "access_token_expires_at",
+    "profile",
+    "scheduled_end_at",
     "evidence_cutoff_at",
+    "last_sync_at",
 }
 
 
@@ -30,7 +34,10 @@ class RegisteredPlatformContext:
     session_id: str
     access_token: str
     access_token_expires_at: str
+    profile: dict[str, object]
+    scheduled_end_at: str
     evidence_cutoff_at: str
+    last_sync_at: str
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -40,7 +47,10 @@ class RegisteredPlatformContext:
             "session_id": self.session_id,
             "access_token": self.access_token,
             "access_token_expires_at": self.access_token_expires_at,
+            "profile": self.profile,
+            "scheduled_end_at": self.scheduled_end_at,
             "evidence_cutoff_at": self.evidence_cutoff_at,
+            "last_sync_at": self.last_sync_at,
         }
 
     @classmethod
@@ -69,7 +79,19 @@ class RegisteredPlatformContext:
             or fields["plan_version"] < 1
         ):
             raise ValueError("Platform context plan_version must be positive.")
-        for key in ("access_token_expires_at", "evidence_cutoff_at"):
+        profile = fields["profile"]
+        if not isinstance(profile, dict):
+            raise ValueError("Platform context profile must be an object.")
+        try:
+            validate_schema("profile-version-v2", profile)
+        except Exception as error:
+            raise ValueError("Platform context profile is invalid.") from error
+        for key in (
+            "access_token_expires_at",
+            "scheduled_end_at",
+            "evidence_cutoff_at",
+            "last_sync_at",
+        ):
             cls._require_timezone_aware_timestamp(str(fields[key]), key)
         return cls(
             assignment_id=str(fields["assignment_id"]),
@@ -78,7 +100,10 @@ class RegisteredPlatformContext:
             session_id=str(fields["session_id"]),
             access_token=str(fields["access_token"]),
             access_token_expires_at=str(fields["access_token_expires_at"]),
+            profile=dict(profile),
+            scheduled_end_at=str(fields["scheduled_end_at"]),
             evidence_cutoff_at=str(fields["evidence_cutoff_at"]),
+            last_sync_at=str(fields["last_sync_at"]),
         )
 
     @staticmethod

@@ -221,6 +221,10 @@ def test_student_launches_plugin_with_one_time_ticket_and_uploads_evidence():
     )
     assert register_response.status_code == 201
     credentials = register_response.json()
+    assert credentials["assignment_id"] == "assignment-1"
+    assert credentials["plan_id"] == "plan-1"
+    assert credentials["plan_version"] == 1
+    assert credentials["evidence_cutoff_at"] == (now + timedelta(minutes=45)).isoformat()
     plugin_headers = {"Authorization": f"Bearer {credentials['access_token']}"}
 
     heartbeat_response = request(

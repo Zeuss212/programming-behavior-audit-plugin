@@ -18,6 +18,8 @@ import {
   registerPythonFileRunner
 } from './pythonFileRunner';
 import { requestAPI } from './request';
+import { registerClassroomTicket } from './platform/classroomApi';
+import { bootstrapClassroomTicket } from './platform/ticketBootstrap';
 import { openLogFolder } from './services/logFolderApi';
 import {
   downloadSessionLog,
@@ -164,8 +166,33 @@ const plugin: JupyterFrontEndPlugin<void> = {
       () => console.info('myextension_server_available'),
       () => console.error('myextension_server_unavailable')
     );
+    void bootstrapClassroomTicket(
+      window.location,
+      window.history,
+      (ticket, pluginInstanceId) =>
+        registerClassroomTicket(
+          app.serviceManager.serverSettings,
+          ticket,
+          pluginInstanceId
+        ),
+      classroomPluginInstanceId()
+    ).then(
+      registered => {
+        if (registered) {
+          console.info('myextension_classroom_registration_succeeded');
+        }
+      },
+      () => console.error('myextension_classroom_registration_failed')
+    );
   }
 };
+
+function classroomPluginInstanceId(): string {
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID();
+  }
+  return `jupyter-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 
 function registerBehaviorAnalysisCommand(
   app: JupyterFrontEnd,

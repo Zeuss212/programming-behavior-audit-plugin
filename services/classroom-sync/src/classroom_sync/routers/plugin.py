@@ -53,6 +53,10 @@ def register_plugin_session(
         "session_id": credentials.session_id,
         "access_token": credentials.access_token,
         "expires_at": credentials.expires_at.isoformat(),
+        "assignment_id": credentials.assignment_id,
+        "plan_id": credentials.plan_id,
+        "plan_version": credentials.plan_version,
+        "evidence_cutoff_at": credentials.evidence_cutoff_at.isoformat(),
     }
 
 

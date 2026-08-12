@@ -45,6 +45,9 @@ from .llm_transport import (
     AiNotConfiguredError,
     LlmTransportError,
 )
+from .platform_client import PlatformClientError, PlatformSyncClient
+from .platform_config import PlatformConfig
+from .platform_context_store import PlatformContextStore, RegisteredPlatformContext
 from .profile_validator import ProfileValidationError
 from .review_store import (
     ReviewConflictError,
@@ -394,6 +397,114 @@ class AiConfigRouteHandler(JsonAPIHandler):
             )
             return
         self.finish_json(ai_config_status())
+
+
+class PlatformRegistrationRouteHandler(JsonAPIHandler):
+    """Exchange a one-time browser ticket without exposing plugin credentials."""
+
+    @tornado.web.authenticated
+    def post(self):
+        try:
+            config = PlatformConfig.from_env()
+            if not config.student_mode or config.sync_base_url is None:
+                self.finish_error(
+                    404,
+                    "platform_registration_disabled",
+                    "当前运行环境未启用课堂学生模式。",
+                )
+                return
+            ticket, plugin_instance_id = self._registration_input()
+            context = PlatformSyncClient(config.sync_base_url).register(
+                ticket,
+                plugin_instance_id=plugin_instance_id,
+            )
+            PlatformContextStore(config.log_root).save_registered_context(context)
+            self.finish_json(self._public_context(context), status=201)
+        except ApiRequestError as error:
+            self.finish_error(
+                error.status,
+                error.code,
+                error.message,
+                details=error.details,
+            )
+        except PlatformClientError as error:
+            self._finish_platform_error(error)
+        except RuntimeError:
+            self.finish_error(
+                503,
+                "platform_configuration_invalid",
+                "课堂学生模式尚未正确配置。",
+            )
+        except OSError:
+            self.finish_error(
+                503,
+                "platform_context_unavailable",
+                "课堂会话暂时无法保存，请稍后重试。",
+                retryable=True,
+            )
+        except ValueError:
+            self.finish_error(
+                502,
+                "platform_registration_invalid_response",
+                "课堂服务返回的数据无法使用。",
+            )
+        except Exception:
+            self._finish_internal_error()
+
+    def _registration_input(self) -> tuple[str, str]:
+        body = self.read_json_object(max_bytes=8_192)
+        if set(body) != {"schema_version", "ticket", "plugin_instance_id"}:
+            raise ApiRequestError(
+                422,
+                "platform_registration_validation_failed",
+                "课堂启动信息未通过校验。",
+            )
+        schema_version = body["schema_version"]
+        ticket = body["ticket"]
+        plugin_instance_id = body["plugin_instance_id"]
+        if (
+            not isinstance(schema_version, int)
+            or isinstance(schema_version, bool)
+            or schema_version != 1
+            or not isinstance(ticket, str)
+            or not 1 <= len(ticket.strip()) <= 1_024
+            or not isinstance(plugin_instance_id, str)
+            or not 1 <= len(plugin_instance_id.strip()) <= 200
+        ):
+            raise ApiRequestError(
+                422,
+                "platform_registration_validation_failed",
+                "课堂启动信息未通过校验。",
+            )
+        return ticket.strip(), plugin_instance_id.strip()
+
+    def _finish_platform_error(self, error: PlatformClientError) -> None:
+        mappings = {
+            "platform_registration_unauthorized": (401, False),
+            "platform_registration_conflict": (409, False),
+            "platform_registration_unavailable": (503, True),
+            "platform_registration_failed": (502, True),
+            "platform_registration_invalid_response": (502, False),
+            "platform_registration_invalid": (422, False),
+        }
+        status, retryable = mappings.get(error.args[0], (502, True))
+        self.finish_error(
+            status,
+            error.args[0],
+            "课堂会话注册未能完成。",
+            retryable=retryable,
+        )
+
+    @staticmethod
+    def _public_context(context: RegisteredPlatformContext) -> dict[str, object]:
+        return {
+            "assignment_id": context.assignment_id,
+            "plan_id": context.plan_id,
+            "plan_version": context.plan_version,
+            "session_id": context.session_id,
+            "access_token_expires_at": context.access_token_expires_at,
+            "evidence_cutoff_at": context.evidence_cutoff_at,
+        }
 
 
 def _profile_store_at(root: Path) -> DimensionProfileStore:
@@ -2072,6 +2183,12 @@ def setup_route_handlers(web_app):
         base_url, "myextension", "latest-analysis"
     )
     ai_config_route_pattern = url_path_join(base_url, "myextension", "ai-config")
+    platform_registration_route_pattern = url_path_join(
+        base_url,
+        "myextension",
+        "platform",
+        "register",
+    )
     dimension_templates_route_pattern = url_path_join(
         base_url,
         "myextension",
@@ -2225,6 +2342,7 @@ def setup_route_handlers(web_app):
         (run_python_file_route_pattern, RunPythonFileRouteHandler),
         (latest_analysis_route_pattern, LatestAnalysisRouteHandler),
         (ai_config_route_pattern, AiConfigRouteHandler),
+        (platform_registration_route_pattern, PlatformRegistrationRouteHandler),
         (dimension_templates_route_pattern, DimensionTemplatesRouteHandler),
         (dimension_profiles_route_pattern, DimensionProfilesRouteHandler),
         (

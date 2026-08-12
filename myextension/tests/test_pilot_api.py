@@ -1670,6 +1670,7 @@ async def test_unexpected_error_is_generic_and_does_not_leak_private_data(
             "{}",
         ),
         ("POST", "myextension/log-folder/open", "{}"),
+        ("POST", "myextension/platform/register", "{}"),
     ],
 )
 async def test_every_new_api_verb_rejects_unauthenticated_requests(

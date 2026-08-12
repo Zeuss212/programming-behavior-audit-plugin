@@ -53,6 +53,10 @@ class SessionCredentials:
     session_id: str
     access_token: str
     expires_at: datetime
+    assignment_id: str
+    plan_id: str
+    plan_version: int
+    evidence_cutoff_at: datetime
 
 
 @dataclass(frozen=True)
@@ -169,7 +173,7 @@ class PluginSessionService:
             )
             self._audit(session, assignment.student_id, "plugin_session_registered", monitor_session.id, now)
 
-        return self._credentials_for(monitor_session.id, now)
+        return self._credentials_for(monitor_session, assignment, now)
 
     def refresh_plugin_token(self, access_token: str, *, session_id: str) -> SessionCredentials:
         """Refresh a plugin token only when it is still scoped to the requested session."""
@@ -181,7 +185,10 @@ class PluginSessionService:
             monitor_session = session.get(MonitorSession, session_id)
             if monitor_session is None:
                 raise NotFoundError("monitor_session_not_found")
-        return self._credentials_for(session_id, self._utc_now())
+            assignment = session.get(StudentAssignment, monitor_session.assignment_id)
+            if assignment is None:
+                raise NotFoundError("student_assignment_not_found")
+        return self._credentials_for(monitor_session, assignment, self._utc_now())
 
     def heartbeat(self, access_token: str, *, session_id: str) -> MonitorSession:
         """Record liveness and resume a recoverable temporarily-offline session."""
@@ -286,11 +293,16 @@ class PluginSessionService:
             self._audit(session, None, "evidence_chunk_stored", evidence_chunk.id, now)
         return self._receipt(evidence_chunk)
 
-    def _credentials_for(self, session_id: str, now: datetime) -> SessionCredentials:
+    def _credentials_for(
+        self,
+        monitor_session: MonitorSession,
+        assignment: StudentAssignment,
+        now: datetime,
+    ) -> SessionCredentials:
         expires_at = now + timedelta(seconds=PLUGIN_TOKEN_TTL_SECONDS)
         access_token = jwt.encode(
             {
-                "sub": session_id,
+                "sub": monitor_session.id,
                 "aud": PLUGIN_TOKEN_AUDIENCE,
                 "iat": int(now.timestamp()),
                 "exp": int(expires_at.timestamp()),
@@ -298,7 +310,15 @@ class PluginSessionService:
             self._plugin_jwt_secret,
             algorithm="HS256",
         )
-        return SessionCredentials(session_id=session_id, access_token=access_token, expires_at=expires_at)
+        return SessionCredentials(
+            session_id=monitor_session.id,
+            access_token=access_token,
+            expires_at=expires_at,
+            assignment_id=assignment.id,
+            plan_id=monitor_session.plan_id,
+            plan_version=monitor_session.plan_version,
+            evidence_cutoff_at=self._as_utc(monitor_session.evidence_cutoff_at),
+        )
 
     def _validate_plugin_token(self, access_token: str) -> str:
         try:

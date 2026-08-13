@@ -1,6 +1,9 @@
 import { ServerConnection } from '@jupyterlab/services';
 
-import { registerClassroomTicket } from '../platform/classroomApi';
+import {
+  registerClassroomTicket,
+  submitClassroomBrief
+} from '../platform/classroomApi';
 import { requestAPI } from '../request';
 
 jest.mock('../request', () => ({
@@ -31,4 +34,21 @@ it('sends the one-time ticket only to the authenticated local Jupyter route', as
     }),
     headers: { 'Content-Type': 'application/json' }
   });
+});
+
+it('submits a classroom brief through the authenticated local Jupyter route', async () => {
+  await submitClassroomBrief(settings, '23d7d803-524a-4d9f-b8bd-152a540dba12');
+
+  expect(mockedRequest).toHaveBeenCalledWith(
+    'platform/sessions/23d7d803-524a-4d9f-b8bd-152a540dba12/submit',
+    settings,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        schema_version: 1,
+        reason: 'student_manual'
+      }),
+      headers: { 'Content-Type': 'application/json' }
+    }
+  );
 });

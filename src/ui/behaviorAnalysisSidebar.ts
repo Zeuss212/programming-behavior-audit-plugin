@@ -37,6 +37,10 @@ import {
   IPlatformContext,
   LOCAL_PLATFORM_CONTEXT
 } from '../platform/contextApi';
+import {
+  IClassroomSubmission,
+  submitClassroomBrief
+} from '../platform/classroomApi';
 import { renderAnalysisResult } from './analysisResultView';
 
 interface IAIConfigResponse {
@@ -71,6 +75,7 @@ export interface IBehaviorAnalysisSidebarDependencies {
   retryAnalysisJob: typeof retryAnalysisJob;
   getStoredActiveSession: typeof getStoredActiveSession;
   getClassroomBrief: typeof getClassroomBrief;
+  submitClassroomBrief: typeof submitClassroomBrief;
   abandonSession: typeof abandonSession;
   deleteSession: typeof deleteSession;
   openLogFolder: typeof openLogFolder;
@@ -121,6 +126,7 @@ export function sidebarDependencies(
     retryAnalysisJob,
     getStoredActiveSession: actions.getStoredActiveSession,
     getClassroomBrief,
+    submitClassroomBrief,
     abandonSession,
     deleteSession,
     openLogFolder: actions.openLogFolder,
@@ -364,6 +370,12 @@ export class BehaviorAnalysisSidebar extends Widget {
   private analysisProfile: IDimensionProfileVersion | null = null;
   private classroomBrief: IClassroomBrief | null = null;
   private classroomBriefFeedback = '';
+  private studentSubmissionInFlight: {
+    promise: Promise<IClassroomSubmission>;
+    sessionId: string;
+  } | null = null;
+  private studentCaptureFinalizedSessionId: string | null = null;
+  private studentSubmissionCompletedSessionId: string | null = null;
   private currentSessionId: string | null = null;
   private pollTimer: TimerHandle | null = null;
   private observationTimer: TimerHandle | null = null;
@@ -693,6 +705,77 @@ export class BehaviorAnalysisSidebar extends Widget {
       this.pendingSession?.status === 'collecting' ||
       this.pendingSession?.status === 'finalizing'
     );
+  }
+
+  private canSubmitStudentClassroom(sessionId: string): boolean {
+    if (
+      !this.platformContext.capabilities.canSubmit ||
+      this.studentSubmissionInFlight !== null ||
+      this.studentSubmissionCompletedSessionId === sessionId
+    ) {
+      return false;
+    }
+    if (this.deps.capture.isEnabled()) return true;
+    return (
+      this.studentCaptureFinalizedSessionId === sessionId ||
+      (this.upload.sessionId === sessionId &&
+        this.upload.uploadState === 'finalized')
+    );
+  }
+
+  private async submitStudentClassroomBrief(): Promise<void> {
+    const session = this.platformContext.classroom_session;
+    if (!session || !this.canSubmitStudentClassroom(session.session_id)) return;
+
+    const sessionId = session.session_id;
+    const captureIsFinalized =
+      this.studentCaptureFinalizedSessionId === sessionId ||
+      (this.upload.sessionId === sessionId &&
+        this.upload.uploadState === 'finalized');
+    const promise = (async (): Promise<IClassroomSubmission> => {
+      if (!captureIsFinalized) {
+        const finalized = await this.deps.capture.stop();
+        if (
+          finalized.session_id !== sessionId ||
+          finalized.status !== 'finalized'
+        ) {
+          throw new Error('Local capture finalization does not match session.');
+        }
+        this.studentCaptureFinalizedSessionId = sessionId;
+      }
+      return this.deps.submitClassroomBrief(this.deps.settings, sessionId);
+    })();
+    const operation = { promise, sessionId };
+    this.studentSubmissionInFlight = operation;
+    this.notice = '正在结束监控并提交本节简报…';
+    this.noticeTone = 'info';
+    this.render();
+
+    try {
+      const result = await promise;
+      if (result.session_id !== sessionId) {
+        throw new Error('Classroom submission receipt does not match session.');
+      }
+      if (this.isDisposed || this.studentSubmissionInFlight !== operation)
+        return;
+      if (result.status === 'submitted') {
+        this.studentSubmissionCompletedSessionId = sessionId;
+        this.notice = '本节简报已提交，老师可查看课堂结果。';
+      } else {
+        this.notice = '简报已保存，证据正在后台补传；无需保持本页开启。';
+      }
+      this.noticeTone = 'info';
+    } catch {
+      if (this.isDisposed || this.studentSubmissionInFlight !== operation)
+        return;
+      this.notice = '提交未完成，本地行为记录仍会保留。请稍后重试。';
+      this.noticeTone = 'error';
+    } finally {
+      if (this.studentSubmissionInFlight === operation) {
+        this.studentSubmissionInFlight = null;
+        if (!this.isDisposed) this.render();
+      }
+    }
   }
 
   private profileKey(profile: IDimensionProfileVersion): string {
@@ -1158,9 +1241,31 @@ export class BehaviorAnalysisSidebar extends Widget {
     deadline.textContent = `课程结束：${session.scheduled_end_at}；最晚提交：${session.evidence_cutoff_at}`;
     const recovery = node('p', 'jp-BehaviorAudit-notice');
     recovery.textContent = '页面意外关闭后重新进入课堂，可继续恢复本节监控。';
-    const submit = button('提交本节简报', true);
-    submit.disabled = true;
-    submit.title = '课堂简报提交将在同步流程接入后开放。';
+    const submitting = this.studentSubmissionInFlight !== null;
+    const submitted =
+      this.studentSubmissionCompletedSessionId === session.session_id;
+    const canSubmit = this.canSubmitStudentClassroom(session.session_id);
+    const submit = button(
+      submitting
+        ? '正在提交本节简报…'
+        : submitted
+          ? '本节简报已提交'
+          : '提交本节简报',
+      true
+    );
+    submit.disabled = !canSubmit;
+    if (submitting) {
+      submit.setAttribute('aria-busy', 'true');
+    } else if (submitted) {
+      submit.title = '本节课已提交；老师可在课堂结果中查看简报。';
+    } else if (!this.platformContext.capabilities.canSubmit) {
+      submit.title = '当前课堂未开放简报提交。';
+    } else if (!this.deps.capture.isEnabled()) {
+      submit.title = '正在准备课堂监控，准备完成后可以提交。';
+    }
+    submit.addEventListener('click', () => {
+      void this.submitStudentClassroomBrief();
+    });
     section.append(
       title,
       task,

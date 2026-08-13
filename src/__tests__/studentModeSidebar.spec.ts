@@ -105,3 +105,111 @@ it('renders only the classroom task card in student mode and never loads teacher
   expect(capture.subscribe).toHaveBeenCalledTimes(1);
   sidebar.dispose();
 });
+
+it('ends active monitoring and shows the submitted brief result after a student submits', async () => {
+  const stop = jest.fn(async () => ({
+    schema_version: 1 as const,
+    request_id: 'finalize-request',
+    session_id: studentContext.classroom_session!.session_id,
+    status: 'finalized' as const,
+    last_contiguous_sequence: 12,
+    analysis_job_id: 'e046c012-bff4-4e3e-9764-f7cdf7782dd1'
+  }));
+  const activeCapture = {
+    ...capture,
+    isEnabled: jest.fn(() => true),
+    stop
+  } as unknown as IBehaviorCaptureController;
+  const submitClassroomBrief = jest.fn(async () => ({
+    session_id: studentContext.classroom_session!.session_id,
+    status: 'submitted' as const,
+    reason: 'student_manual' as const,
+    brief_id: '84521d4e-b27d-42b7-a8dd-4beabc0ab3f5',
+    revision: 1,
+    remote_status: 'completed'
+  }));
+  const dependencies = Object.assign(
+    sidebarDependencies(
+      settings,
+      activeCapture,
+      {
+        openProfileEditor: jest.fn(),
+        openDataFile: jest.fn(),
+        confirmClearAIKey: jest.fn(),
+        getStoredActiveSession: jest.fn(),
+        openLogFolder: jest.fn(),
+        openSessionLog: jest.fn(),
+        downloadSessionLog: jest.fn()
+      },
+      studentContext
+    ),
+    { submitClassroomBrief }
+  );
+  const sidebar = new BehaviorAnalysisSidebar(dependencies);
+  const submit = Array.from(
+    sidebar.node.querySelectorAll<HTMLButtonElement>('button')
+  ).find(value => value.textContent === '提交本节简报');
+
+  expect(submit).toBeDefined();
+  expect(submit?.disabled).toBe(false);
+  submit!.click();
+  for (let index = 0; index < 10; index += 1) await Promise.resolve();
+
+  expect(stop).toHaveBeenCalledTimes(1);
+  expect(submitClassroomBrief).toHaveBeenCalledWith(
+    settings,
+    studentContext.classroom_session!.session_id
+  );
+  expect(sidebar.node.textContent).toContain(
+    '本节简报已提交，老师可查看课堂结果。'
+  );
+  sidebar.dispose();
+});
+
+it('does not submit when local capture finalizes a different classroom session', async () => {
+  const stop = jest.fn(async () => ({
+    schema_version: 1 as const,
+    request_id: 'wrong-finalize-request',
+    session_id: '8c385f81-cb48-4c36-b0e4-c8633f70ca58',
+    status: 'finalized' as const,
+    last_contiguous_sequence: 12,
+    analysis_job_id: 'e046c012-bff4-4e3e-9764-f7cdf7782dd1'
+  }));
+  const activeCapture = {
+    ...capture,
+    isEnabled: jest.fn(() => true),
+    stop
+  } as unknown as IBehaviorCaptureController;
+  const submitClassroomBrief = jest.fn();
+  const dependencies = Object.assign(
+    sidebarDependencies(
+      settings,
+      activeCapture,
+      {
+        openProfileEditor: jest.fn(),
+        openDataFile: jest.fn(),
+        confirmClearAIKey: jest.fn(),
+        getStoredActiveSession: jest.fn(),
+        openLogFolder: jest.fn(),
+        openSessionLog: jest.fn(),
+        downloadSessionLog: jest.fn()
+      },
+      studentContext
+    ),
+    { submitClassroomBrief }
+  );
+  const sidebar = new BehaviorAnalysisSidebar(dependencies);
+  const submit = Array.from(
+    sidebar.node.querySelectorAll<HTMLButtonElement>('button')
+  ).find(value => value.textContent === '提交本节简报');
+
+  submit!.click();
+  for (let index = 0; index < 10; index += 1) await Promise.resolve();
+
+  expect(stop).toHaveBeenCalledTimes(1);
+  expect(submitClassroomBrief).not.toHaveBeenCalled();
+  expect(sidebar.node.textContent).toContain(
+    '提交未完成，本地行为记录仍会保留。请稍后重试。'
+  );
+  sidebar.dispose();
+});

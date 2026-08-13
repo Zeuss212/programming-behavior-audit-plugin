@@ -16,6 +16,15 @@ export interface IClassroomRegistration {
   last_sync_at: string;
 }
 
+export interface IClassroomSubmission {
+  session_id: string;
+  status: 'submitted' | 'pending_upload';
+  reason: 'student_manual' | 'system_deadline';
+  brief_id: string | null;
+  revision: number | null;
+  remote_status: string | null;
+}
+
 export function registerClassroomTicket(
   settings: ServerConnection.ISettings,
   ticket: string,
@@ -30,4 +39,23 @@ export function registerClassroomTicket(
     }),
     headers: { 'Content-Type': 'application/json' }
   });
+}
+
+/** Submit through the authenticated local Jupyter server; no platform token enters the browser. */
+export function submitClassroomBrief(
+  settings: ServerConnection.ISettings,
+  sessionId: string
+): Promise<IClassroomSubmission> {
+  return requestAPI<IClassroomSubmission>(
+    `platform/sessions/${encodeURIComponent(sessionId)}/submit`,
+    settings,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        schema_version: 1,
+        reason: 'student_manual'
+      }),
+      headers: { 'Content-Type': 'application/json' }
+    }
+  );
 }

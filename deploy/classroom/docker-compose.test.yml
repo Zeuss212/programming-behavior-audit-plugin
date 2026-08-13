@@ -84,6 +84,17 @@ services:
       retries: 20
     networks: [classroom-test]
 
+  classroom-nginx:
+    image: nginx:1.27-alpine
+    depends_on:
+      sync-api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:18081:8080"
+    volumes:
+      - ./nginx/classroom.conf:/etc/nginx/nginx.conf:ro
+    networks: [classroom-test]
+
   deadline-worker:
     image: classroom-contract-test-deadline-worker:latest
     build:

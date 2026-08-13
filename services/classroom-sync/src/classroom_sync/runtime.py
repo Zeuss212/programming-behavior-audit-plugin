@@ -62,7 +62,7 @@ def s3_client_config() -> Config:
     return Config(
         connect_timeout=2,
         read_timeout=5,
-        retries={"mode": "standard", "total_max_attempts": 2},
+        retries={"mode": "standard", "total_max_attempts": 1},
     )
 
 

@@ -45,7 +45,7 @@ def test_runtime_uses_bounded_s3_timeouts_for_retryable_storage_outages():
 
     assert config.connect_timeout == 2
     assert config.read_timeout == 5
-    assert config.retries == {"mode": "standard", "total_max_attempts": 2}
+    assert config.retries == {"mode": "standard", "total_max_attempts": 1}
 
 
 def test_schema_registry_can_use_an_explicit_plugin_schema_directory(tmp_path):

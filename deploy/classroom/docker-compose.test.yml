@@ -41,6 +41,7 @@ services:
     networks: [classroom-test]
 
   mock-fincolab:
+    image: classroom-contract-test-mock-fincolab:latest
     build:
       context: ../..
       dockerfile: deploy/classroom/mock-fincolab/Dockerfile
@@ -52,6 +53,7 @@ services:
     networks: [classroom-test]
 
   sync-api:
+    image: classroom-contract-test-sync-api:latest
     build:
       context: ../..
       dockerfile: services/classroom-sync/Dockerfile
@@ -83,6 +85,7 @@ services:
     networks: [classroom-test]
 
   deadline-worker:
+    image: classroom-contract-test-deadline-worker:latest
     build:
       context: ../..
       dockerfile: services/classroom-sync/Dockerfile

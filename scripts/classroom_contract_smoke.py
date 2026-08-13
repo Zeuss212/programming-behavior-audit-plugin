@@ -377,11 +377,14 @@ def _submit_and_read(
         raise SmokeFailure("Teacher brief is bound to a different plan")
     if _require_positive_int(teacher_brief, "revision") != revision:
         raise SmokeFailure("Teacher brief revision differs from the plugin receipt")
+    if teacher_brief.get("submission_reason") != "student_manual":
+        raise SmokeFailure("Teacher brief did not preserve the manual student submission reason")
     return {
         **state,
         "brief_id": brief_id,
         "brief_revision": revision,
         "phase": "submitted",
+        "submission_reason": "student_manual",
         "session_id": session_id,
     }
 

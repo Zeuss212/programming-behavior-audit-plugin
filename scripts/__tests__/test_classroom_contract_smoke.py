@@ -105,6 +105,7 @@ class RecordingClient:
                 "plan_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
                 "revision": 1,
                 "status": "completed",
+                "submission_reason": "student_manual",
             }
         raise AssertionError(f"Unexpected request: {method} {path}")
 
@@ -143,6 +144,7 @@ def test_contract_smoke_creates_then_replays_one_logical_classroom_flow(tmp_path
     assert first["assignment_id"] == repeated["assignment_id"]
     assert first["phase"] == "collecting"
     assert repeated["phase"] == "submitted"
+    assert repeated["submission_reason"] == "student_manual"
     assert "brief_id" not in first
     assert repeated["brief_id"] == "55555555-5555-4555-8555-555555555555"
     assert state_file.is_file()

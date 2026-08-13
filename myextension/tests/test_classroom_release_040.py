@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
+import tarfile
 import tomllib
 
 
@@ -231,3 +233,90 @@ def test_release_bundle_checksum_is_for_the_exact_candidate_wheel() -> None:
     checksum = (RELEASE_ROOT / "SHA256SUMS").read_text(encoding="utf-8")
 
     assert checksum == f"{hashlib.sha256(wheel.read_bytes()).hexdigest()}  artifacts/{WHEEL_NAME}\n"
+
+
+def test_handoff_archive_contains_only_manifested_payloads_and_checksums(
+    tmp_path: Path,
+) -> None:
+    archive = tmp_path / "behavior-audit-classroom-0.4.0-linux-amd64-buildkit.tar.gz"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "package_classroom_image_handoff.py"),
+            "--source",
+            str(RELEASE_ROOT),
+            "--output",
+            str(archive),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert archive.is_file()
+    checksum_file = archive.with_name(f"{archive.name}.sha256")
+    expected_archive_checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
+    assert checksum_file.read_text(encoding="utf-8") == (
+        f"{expected_archive_checksum}  {archive.name}\n"
+    )
+
+    archive_root = "behavior-audit-classroom-0.4.0"
+    expected_payloads = {
+        ".dockerignore",
+        "Dockerfile",
+        "README.md",
+        "INSTALL.md",
+        "runtime.env.example",
+        "build_image.sh",
+        "verify_image.sh",
+        "export_image.sh",
+        f"artifacts/{WHEEL_NAME}",
+    }
+    with tarfile.open(archive, "r:gz") as bundle:
+        members = {
+            member.name: member
+            for member in bundle.getmembers()
+            if member.isfile()
+        }
+        assert set(members) == {
+            *(f"{archive_root}/{path}" for path in expected_payloads),
+            f"{archive_root}/SHA256SUMS",
+        }
+        manifest = bundle.extractfile(members[f"{archive_root}/SHA256SUMS"])
+        assert manifest is not None
+        entries = {
+            line.split("  ", 1)[1]: line.split("  ", 1)[0]
+            for line in manifest.read().decode("utf-8").splitlines()
+        }
+        assert set(entries) == expected_payloads
+        for payload in expected_payloads:
+            payload_file = bundle.extractfile(members[f"{archive_root}/{payload}"])
+            assert payload_file is not None
+            assert entries[payload] == hashlib.sha256(payload_file.read()).hexdigest()
+
+
+def test_handoff_archive_is_byte_reproducible_for_the_same_source(
+    tmp_path: Path,
+) -> None:
+    first_archive = tmp_path / "first.tar.gz"
+    second_archive = tmp_path / "second.tar.gz"
+    package_script = ROOT / "scripts" / "package_classroom_image_handoff.py"
+
+    for archive in (first_archive, second_archive):
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(package_script),
+                "--source",
+                str(RELEASE_ROOT),
+                "--output",
+                str(archive),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert completed.returncode == 0, completed.stderr
+
+    assert first_archive.read_bytes() == second_archive.read_bytes()

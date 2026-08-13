@@ -86,6 +86,92 @@ def test_build_script_checks_the_040_wheel_before_invoking_docker(tmp_path: Path
     assert not docker_marker.exists()
 
 
+def test_build_script_constructs_a_linux_amd64_image_after_checksum(
+    tmp_path: Path,
+) -> None:
+    bundle = tmp_path / "bundle"
+    artifacts = bundle / "artifacts"
+    fake_bin = tmp_path / "bin"
+    artifacts.mkdir(parents=True)
+    fake_bin.mkdir()
+    shutil.copy2(_script("build_image.sh"), bundle / "build_image.sh")
+    wheel = artifacts / WHEEL_NAME
+    wheel.write_bytes(b"synthetic-wheel")
+    (bundle / "SHA256SUMS").write_text(
+        f"{hashlib.sha256(wheel.read_bytes()).hexdigest()}  artifacts/{WHEEL_NAME}\n",
+        encoding="utf-8",
+    )
+    docker_args = tmp_path / "docker-args"
+    _write_executable(
+        fake_bin / "docker",
+        '#!/bin/sh\nprintf "%s\\n" "$@" > "$DOCKER_ARGS_FILE"\n',
+    )
+
+    completed = subprocess.run(
+        [
+            "sh",
+            str(bundle / "build_image.sh"),
+            "registry.invalid/base@sha256:abc",
+            "behavior-audit:0.4.0-classroom",
+        ],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+            "DOCKER_ARGS_FILE": str(docker_args),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert docker_args.read_text(encoding="utf-8").splitlines()[:4] == [
+        "build",
+        "--platform",
+        "linux/amd64",
+        "--build-arg",
+    ]
+
+
+def test_export_script_refuses_non_amd64_image_before_docker_save(
+    tmp_path: Path,
+) -> None:
+    bundle = tmp_path / "bundle"
+    fake_bin = tmp_path / "bin"
+    bundle.mkdir()
+    fake_bin.mkdir()
+    shutil.copy2(_script("export_image.sh"), bundle / "export_image.sh")
+    _write_executable(bundle / "verify_image.sh", "#!/bin/sh\nexit 0\n")
+    docker_args = tmp_path / "docker-args"
+    _write_executable(
+        fake_bin / "docker",
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$DOCKER_ARGS_FILE\"\n"
+        "if [ \"$1\" = image ]; then\n  printf 'linux/arm64\\n'\nfi\n",
+    )
+
+    completed = subprocess.run(
+        [
+            "sh",
+            str(bundle / "export_image.sh"),
+            "behavior-audit:0.4.0-classroom",
+            str(tmp_path / "behavior-audit-0.4.0-linux-amd64.tar"),
+        ],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+            "DOCKER_ARGS_FILE": str(docker_args),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode != 0
+    assert "save" not in docker_args.read_text(encoding="utf-8")
+
+
 def test_verify_script_checks_classroom_capabilities_and_has_no_runtime_secret(
     tmp_path: Path,
 ) -> None:

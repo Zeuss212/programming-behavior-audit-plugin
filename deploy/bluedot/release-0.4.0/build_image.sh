@@ -6,6 +6,14 @@ if [ "$#" -ne 2 ]; then
   exit 64
 fi
 
+case "$1" in
+  *@sha256:*) ;;
+  *)
+    echo "Base image must use an immutable repository@sha256:digest reference." >&2
+    exit 64
+    ;;
+esac
+
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 
 if command -v sha256sum >/dev/null 2>&1; then
@@ -18,6 +26,7 @@ else
 fi
 
 docker build \
+  --platform linux/amd64 \
   --build-arg "BLUEDOT_BASE_IMAGE=$1" \
   --tag "$2" \
   "$script_dir"

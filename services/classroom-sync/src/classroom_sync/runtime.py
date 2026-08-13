@@ -8,6 +8,7 @@ from pathlib import Path
 
 import boto3  # type: ignore[import-untyped]
 import httpx
+from botocore.config import Config
 from fastapi import FastAPI
 
 from classroom_sync.application import ClassroomServices
@@ -55,6 +56,16 @@ def contract_directory() -> Path:
     return repository_root() / "contracts" / "classroom" / "v1"
 
 
+def s3_client_config() -> Config:
+    """Bound S3 outages so evidence upload requests can return a retryable 503 promptly."""
+
+    return Config(
+        connect_timeout=2,
+        read_timeout=5,
+        retries={"mode": "standard", "total_max_attempts": 2},
+    )
+
+
 def create_runtime_services(settings: Settings) -> ClassroomServices:
     """Wire only trusted, environment-derived dependencies into route services."""
 
@@ -82,6 +93,7 @@ def create_runtime_services(settings: Settings) -> ClassroomServices:
         aws_access_key_id=settings.s3_access_key,
         aws_secret_access_key=settings.s3_secret_key,
         region_name="us-east-1",
+        config=s3_client_config(),
     )
     storage = Boto3PrivateObjectStorage(storage_client, settings.s3_bucket)
     identity_gateway = FincolabIdentityGateway(

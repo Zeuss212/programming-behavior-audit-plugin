@@ -8,7 +8,7 @@ import pytest
 
 from classroom_sync.config import Settings
 from classroom_sync.domain.schemas import ClassroomSchemaRegistry
-from classroom_sync.runtime import contract_directory
+from classroom_sync.runtime import contract_directory, s3_client_config
 
 
 def test_runtime_configuration_requires_all_trusted_dependencies():
@@ -37,6 +37,15 @@ def test_runtime_configuration_reads_explicit_test_dependencies_from_environment
 
     assert settings.s3_bucket == "classroom-evidence"
     assert settings.fincolab_organization_id == "local-org"
+
+
+def test_runtime_uses_bounded_s3_timeouts_for_retryable_storage_outages():
+    """A stopped object store must become a prompt retryable API failure, not a hung request."""
+    config = s3_client_config()
+
+    assert config.connect_timeout == 2
+    assert config.read_timeout == 5
+    assert config.retries == {"mode": "standard", "total_max_attempts": 2}
 
 
 def test_schema_registry_can_use_an_explicit_plugin_schema_directory(tmp_path):

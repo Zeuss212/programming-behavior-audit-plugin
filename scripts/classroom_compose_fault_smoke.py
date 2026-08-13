@@ -102,6 +102,14 @@ def _run_compose(*arguments: str, project_name: str) -> None:
         raise ComposeFaultFailure(f"Local Compose command {' '.join(arguments)} failed: {detail}")
 
 
+def start_stack(project_name: str) -> None:
+    """Build then start the isolated stack without relying on pre-existing images."""
+
+    isolated_project = require_fault_project_name(project_name)
+    _run_compose("build", project_name=isolated_project)
+    _run_compose("up", "-d", "--no-build", "--wait", project_name=isolated_project)
+
+
 def expect_http_status(action: Callable[[], object], expected_status: int) -> bool:
     """Confirm a contract client observed the specific retryable HTTP status."""
 
@@ -278,8 +286,7 @@ def main() -> int:
     stack_touched = False
     try:
         stack_touched = True
-        _run_compose("build", project_name=project_name)
-        _run_compose("up", "-d", "--no-build", "--wait", project_name=project_name)
+        start_stack(project_name)
         with TemporaryDirectory(prefix="classroom-compose-fault-") as temporary:
             result = run_all(
                 safe_base_url,

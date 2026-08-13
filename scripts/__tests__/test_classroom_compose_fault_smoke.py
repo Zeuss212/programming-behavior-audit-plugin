@@ -70,6 +70,25 @@ def test_real_compose_fault_runner_requires_the_expected_http_failure():
         smoke.expect_http_status(lambda: None, 503)
 
 
+def test_real_compose_fault_runner_builds_before_starting_an_isolated_stack(monkeypatch):
+    smoke = _load_compose_fault_module()
+    project_name = "classroom-fault-012345abcdef"
+    compose_calls: list[tuple[tuple[str, ...], str]] = []
+
+    monkeypatch.setattr(
+        smoke,
+        "_run_compose",
+        lambda *arguments, project_name: compose_calls.append((arguments, project_name)),
+    )
+
+    smoke.start_stack(project_name)
+
+    assert compose_calls == [
+        (("build",), project_name),
+        (("up", "-d", "--no-build", "--wait"), project_name),
+    ]
+
+
 def test_real_compose_fault_runner_enforces_every_recovery_step(monkeypatch, tmp_path: Path):
     smoke = _load_compose_fault_module()
     project_name = "classroom-fault-012345abcdef"

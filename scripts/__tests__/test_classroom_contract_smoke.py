@@ -57,7 +57,13 @@ class RecordingClient:
                         "student_id": "student001",
                         "plan_version": 1,
                         "status": "pending_acceptance",
-                    }
+                    },
+                    {
+                        "assignment_id": "77777777-7777-4777-8777-777777777777",
+                        "student_id": "student002",
+                        "plan_version": 1,
+                        "status": "pending_acceptance",
+                    },
                 ]
             }
         if path.endswith("/accept"):

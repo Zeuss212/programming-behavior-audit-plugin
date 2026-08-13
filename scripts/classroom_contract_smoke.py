@@ -452,11 +452,16 @@ def run_smoke(
         token=TEACHER_TOKEN,
     )
     assignments = synchronized.get("assignments")
-    if not isinstance(assignments, list) or len(assignments) != 1 or not isinstance(assignments[0], dict):
-        raise SmokeFailure("Expected exactly one seeded student assignment")
-    assignment = assignments[0]
-    if assignment.get("student_id") != "student001":
-        raise SmokeFailure("Synchronized assignment belongs to the wrong student")
+    if not isinstance(assignments, list):
+        raise SmokeFailure("Synchronized assignments are missing or invalid")
+    target_assignments = [
+        assignment
+        for assignment in assignments
+        if isinstance(assignment, dict) and assignment.get("student_id") == "student001"
+    ]
+    if len(target_assignments) != 1:
+        raise SmokeFailure("Expected exactly one seeded student001 assignment")
+    assignment = target_assignments[0]
     assignment_id = _require_string(assignment, "assignment_id")
     accepted = client.request_json(
         "POST",

@@ -8,20 +8,57 @@ outside the private Compose network.
 from __future__ import annotations
 
 import json
+import os
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 
-USERS = {
-    "teacher-token": {"id": "teacher001", "username": "teacher001"},
-    "student-token": {"id": "student001", "username": "student001"},
-    "student002-token": {"id": "student002", "username": "student002"},
-}
-SPACE_MEMBERS = [
-    {"id": "teacher001", "username": "teacher001", "role_name": "teacher"},
-    {"id": "student001", "username": "student001", "role_name": "student"},
-]
+def student_count() -> int:
+    """Return a bounded local-only roster size for the Compose test double."""
+
+    raw_value = os.environ.get("CLASSROOM_MOCK_STUDENT_COUNT", "1")
+    try:
+        count = int(raw_value)
+    except ValueError:
+        return 1
+    return count if 1 <= count <= 100 else 1
+
+
+def student_id(index: int) -> str:
+    return f"student{index:03d}"
+
+
+def users() -> dict[str, dict[str, str]]:
+    roster = {"teacher-token": {"id": "teacher001", "username": "teacher001"}}
+    for index in range(1, student_count() + 1):
+        identifier = student_id(index)
+        roster[f"{identifier}-token"] = {"id": identifier, "username": identifier}
+    # Keep the original single-student fixture valid for the contract smoke.
+    roster["student-token"] = roster["student001-token"]
+    return roster
+
+
+def space_members() -> list[dict[str, str]]:
+    return [
+        {"id": "teacher001", "username": "teacher001", "role_name": "teacher"},
+        *[
+            {"id": student_id(index), "username": student_id(index), "role_name": "student"}
+            for index in range(1, student_count() + 1)
+        ],
+    ]
+
+
+def student_children() -> list[dict[str, str]]:
+    return [
+        {
+            "id": f"child-experiment-{index:03d}",
+            "username": student_id(index),
+            "description": "[FINCOLAB_PARENT_PROJECT_ID:parent-experiment-001]",
+            "workbench_id": f"workbench-{student_id(index)}",
+        }
+        for index in range(1, student_count() + 1)
+    ]
 
 
 class MockFincolabHandler(BaseHTTPRequestHandler):
@@ -30,7 +67,7 @@ class MockFincolabHandler(BaseHTTPRequestHandler):
     server_version = "classroom-mock-fincolab"
     sys_version = ""
 
-    def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API.
+    def do_GET(self) -> None:
         parsed = urlparse(self.path)
         if parsed.path == "/health/live":
             self._reply(HTTPStatus.OK, {"status": "live"})
@@ -44,7 +81,7 @@ class MockFincolabHandler(BaseHTTPRequestHandler):
         if parsed.path == "/v1/organizations/local-org/spaces/course-001/users":
             self._reply(
                 HTTPStatus.OK,
-                {"data": SPACE_MEMBERS, "current_page": 1, "total_page": 1},
+                {"data": space_members(), "current_page": 1, "total_page": 1},
             )
             return
         if parsed.path == "/v1/spaces/course-001/algorithm_development/parent-experiment-001":
@@ -57,14 +94,7 @@ class MockFincolabHandler(BaseHTTPRequestHandler):
             self._reply(
                 HTTPStatus.OK,
                 {
-                    "data": [
-                        {
-                            "id": "child-experiment-001",
-                            "username": "student001",
-                            "description": "[FINCOLAB_PARENT_PROJECT_ID:parent-experiment-001]",
-                            "workbench_id": "workbench-student-001",
-                        }
-                    ],
+                    "data": student_children(),
                     "current_page": 1,
                     "total_page": 1,
                 },
@@ -72,17 +102,17 @@ class MockFincolabHandler(BaseHTTPRequestHandler):
             return
         self._reply(HTTPStatus.NOT_FOUND, {"detail": "test endpoint not found"})
 
-    def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API.
+    def do_POST(self) -> None:
         self._reply(HTTPStatus.METHOD_NOT_ALLOWED, {"detail": "read-only test service"})
 
-    def do_PUT(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API.
+    def do_PUT(self) -> None:
         self._reply(HTTPStatus.METHOD_NOT_ALLOWED, {"detail": "read-only test service"})
 
     def _authenticated_user(self) -> dict[str, str] | None:
         prefix = "Bearer "
         authorization = self.headers.get("Authorization", "")
         token = authorization.removeprefix(prefix) if authorization.startswith(prefix) else ""
-        user = USERS.get(token)
+        user = users().get(token)
         if user is None:
             self._reply(HTTPStatus.UNAUTHORIZED, {"detail": "test token rejected"})
             return None

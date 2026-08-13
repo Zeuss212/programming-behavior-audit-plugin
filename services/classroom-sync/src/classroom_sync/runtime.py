@@ -20,6 +20,7 @@ from classroom_sync.services.assignments import AssignmentService
 from classroom_sync.services.briefs import BriefService
 from classroom_sync.services.deadlines import DeadlineService
 from classroom_sync.services.plans import PlanService
+from classroom_sync.services.read_models import ClassroomReadService
 from classroom_sync.services.sessions import PluginSessionService
 from classroom_sync.storage import Boto3PrivateObjectStorage
 
@@ -106,6 +107,7 @@ def create_runtime_services(settings: Settings) -> ClassroomServices:
         plugin_session_service=plugin_session_service,
         brief_service=brief_service,
         deadline_service=deadline_service,
+        read_service=ClassroomReadService(session_factory),
     )
 
 

@@ -10,6 +10,7 @@ from classroom_sync.services.assignments import AssignmentService
 from classroom_sync.services.briefs import BriefService
 from classroom_sync.services.deadlines import DeadlineService
 from classroom_sync.services.plans import PlanService
+from classroom_sync.services.read_models import ClassroomReadService
 from classroom_sync.services.sessions import PluginSessionService
 
 
@@ -37,3 +38,4 @@ class ClassroomServices:
     plugin_session_service: PluginSessionService | None = None
     brief_service: BriefService | None = None
     deadline_service: DeadlineService | None = None
+    read_service: ClassroomReadService | None = None

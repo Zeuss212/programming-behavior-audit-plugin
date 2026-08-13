@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import select, tuple_
 from sqlalchemy.orm import Session
 
 from classroom_sync.models import (
     AuditEvent,
     ExperimentPlanBinding,
+    MonitorSession,
     PlanDraft,
     PlanVersion,
     StudentAssignment,
+    StudentBrief,
 )
 
 
@@ -40,6 +42,20 @@ class ClassroomRepository:
             select(PlanVersion).where(
                 PlanVersion.plan_id == plan_id,
                 PlanVersion.version == version,
+            )
+        )
+
+    def get_plan_version_by_id(self, plan_version_id: str) -> PlanVersion | None:
+        return self.session.get(PlanVersion, plan_version_id)
+
+    def list_plan_versions(self, plan_keys: list[tuple[str, int]]) -> list[PlanVersion]:
+        if not plan_keys:
+            return []
+        return list(
+            self.session.scalars(
+                select(PlanVersion).where(
+                    tuple_(PlanVersion.plan_id, PlanVersion.version).in_(plan_keys)
+                )
             )
         )
 
@@ -73,6 +89,53 @@ class ClassroomRepository:
         if for_update:
             statement = statement.with_for_update()
         return self.session.scalar(statement)
+
+    def list_assignments_for_student(self, student_id: str) -> list[StudentAssignment]:
+        return list(
+            self.session.scalars(
+                select(StudentAssignment)
+                .where(StudentAssignment.student_id == student_id)
+                .order_by(StudentAssignment.scheduled_start_at.desc(), StudentAssignment.id)
+            )
+        )
+
+    def list_assignments_for_plan_version(
+        self, plan_id: str, plan_version: int
+    ) -> list[StudentAssignment]:
+        return list(
+            self.session.scalars(
+                select(StudentAssignment)
+                .where(
+                    StudentAssignment.plan_id == plan_id,
+                    StudentAssignment.plan_version == plan_version,
+                )
+                .order_by(StudentAssignment.student_id, StudentAssignment.id)
+            )
+        )
+
+    def list_monitor_sessions_for_assignments(
+        self, assignment_ids: list[str]
+    ) -> list[MonitorSession]:
+        if not assignment_ids:
+            return []
+        return list(
+            self.session.scalars(
+                select(MonitorSession)
+                .where(MonitorSession.assignment_id.in_(assignment_ids))
+                .order_by(MonitorSession.assignment_id, MonitorSession.created_at.desc())
+            )
+        )
+
+    def list_student_briefs_for_sessions(self, session_ids: list[str]) -> list[StudentBrief]:
+        if not session_ids:
+            return []
+        return list(
+            self.session.scalars(
+                select(StudentBrief)
+                .where(StudentBrief.session_id.in_(session_ids))
+                .order_by(StudentBrief.session_id, StudentBrief.revision.desc())
+            )
+        )
 
     def add_audit_event(self, event: AuditEvent) -> None:
         self.session.add(event)

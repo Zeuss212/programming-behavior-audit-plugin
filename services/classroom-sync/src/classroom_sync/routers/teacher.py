@@ -6,11 +6,15 @@ from datetime import datetime
 from typing import Annotated, cast
 
 from fastapi import APIRouter, Header, Request, status
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from classroom_sync.application import ClassroomServices
 from classroom_sync.auth.fincolab import Principal
-from classroom_sync.routers.plans import get_services, resolve_bearer_principal
+from classroom_sync.routers.plans import (
+    get_read_service,
+    get_services,
+    resolve_bearer_principal,
+)
 from classroom_sync.services.briefs import TeacherReviewInput
 
 router = APIRouter(prefix="/v1/classroom/teacher", tags=["classroom-teacher"])
@@ -20,7 +24,7 @@ class TeacherReviewRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     knowledge_point_reviews: list[dict[str, object]]
-    comment: str
+    comment: Annotated[str, Field(min_length=1, max_length=1000)]
 
 
 class TeacherEndSessionRequest(BaseModel):
@@ -43,6 +47,23 @@ def require_teacher_for_session(
         principal, assignment.space_id, assignment.parent_algorithm_id
     )
     return services, principal
+
+
+@router.get("/plans/{plan_version_id}/monitoring")
+def get_plan_monitoring(
+    plan_version_id: str,
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, object]:
+    """Return an allowlisted classroom roster snapshot for the owning teacher."""
+
+    services = get_services(request)
+    principal = resolve_bearer_principal(services, authorization)
+    plan_version = services.plan_service.get_plan_version(plan_version_id)
+    services.identity_gateway.require_teacher_owner(
+        principal, plan_version.space_id, plan_version.parent_algorithm_id
+    )
+    return get_read_service(request).get_teacher_monitoring(plan_version_id)
 
 
 @router.get("/sessions/{session_id}/brief")

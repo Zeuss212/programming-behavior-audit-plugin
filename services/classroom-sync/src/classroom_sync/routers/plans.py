@@ -12,6 +12,7 @@ from classroom_sync.application import ClassroomServices
 from classroom_sync.auth.fincolab import Principal
 from classroom_sync.errors import AuthenticationError
 from classroom_sync.services.plans import PlanDraftInput
+from classroom_sync.services.read_models import ClassroomReadService
 
 router = APIRouter(prefix="/v1/classroom/plans", tags=["classroom-teacher"])
 
@@ -35,6 +36,15 @@ def get_services(request: Request) -> ClassroomServices:
     return services
 
 
+def get_read_service(request: Request) -> ClassroomReadService:
+    """Resolve the read-model dependency only for page-facing endpoints."""
+
+    read_service = get_services(request).read_service
+    if read_service is None:
+        raise TypeError("Classroom read service is not configured.")
+    return read_service
+
+
 def resolve_bearer_principal(
     services: ClassroomServices,
     authorization: str | None,
@@ -42,6 +52,21 @@ def resolve_bearer_principal(
     if authorization is None or not authorization.startswith("Bearer "):
         raise AuthenticationError("missing_bearer_token")
     return services.identity_gateway.resolve_principal(authorization.removeprefix("Bearer "))
+
+
+@router.get("/experiments/{space_id}/{parent_algorithm_id}")
+def get_experiment_plan(
+    space_id: str,
+    parent_algorithm_id: str,
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, object]:
+    """Read a teacher-owned experiment's active classroom plan."""
+
+    services = get_services(request)
+    principal = resolve_bearer_principal(services, authorization)
+    services.identity_gateway.require_teacher_owner(principal, space_id, parent_algorithm_id)
+    return get_read_service(request).get_experiment_plan(space_id, parent_algorithm_id)
 
 
 @router.post("/drafts", status_code=status.HTTP_201_CREATED)

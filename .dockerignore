@@ -1,0 +1,14 @@
+*
+!contracts/
+!contracts/classroom/
+!contracts/classroom/**
+!deploy/
+!deploy/classroom/
+!deploy/classroom/mock-fincolab/
+!deploy/classroom/mock-fincolab/**
+!myextension/
+!myextension/api_schemas/
+!myextension/api_schemas/**
+!services/
+!services/classroom-sync/
+!services/classroom-sync/**

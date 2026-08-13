@@ -16,7 +16,12 @@ PROFILE_SCHEMA_FILENAMES = ("profile-draft-v2.json", "profile-version-v2.json")
 class ClassroomSchemaRegistry:
     """Load all v1 contracts once so their references resolve deterministically."""
 
-    def __init__(self, contract_directory: Path) -> None:
+    def __init__(
+        self,
+        contract_directory: Path,
+        *,
+        plugin_schema_directory: Path | None = None,
+    ) -> None:
         documents: dict[str, dict[str, Any]] = {}
         resources: list[tuple[str, Resource[dict[str, Any]]]] = []
 
@@ -28,7 +33,9 @@ class ClassroomSchemaRegistry:
             documents[path.stem.removesuffix(".schema")] = document
             resources.append((schema_id, Resource.from_contents(document)))
 
-        plugin_schema_directory = contract_directory.parents[2] / "myextension" / "api_schemas"
+        plugin_schema_directory = plugin_schema_directory or (
+            contract_directory.parents[2] / "myextension" / "api_schemas"
+        )
         for filename in PROFILE_SCHEMA_FILENAMES:
             path = plugin_schema_directory / filename
             if not path.is_file():

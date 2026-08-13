@@ -1,0 +1,134 @@
+name: classroom-contract-test
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: classroom
+      POSTGRES_USER: classroom
+      POSTGRES_PASSWORD: local-test-password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U classroom -d classroom"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - classroom-postgres-test:/var/lib/postgresql/data
+    networks: [classroom-test]
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: local-minio-access
+      MINIO_ROOT_PASSWORD: local-minio-secret
+    volumes:
+      - classroom-minio-test:/data
+    networks: [classroom-test]
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    depends_on:
+      minio:
+        condition: service_started
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        until mc alias set local http://minio:9000 local-minio-access local-minio-secret; do sleep 1; done
+        mc mb --ignore-existing local/classroom-evidence
+        mc anonymous set none local/classroom-evidence
+    networks: [classroom-test]
+
+  mock-fincolab:
+    build:
+      context: ../..
+      dockerfile: deploy/classroom/mock-fincolab/Dockerfile
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/health/live')"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    networks: [classroom-test]
+
+  sync-api:
+    build:
+      context: ../..
+      dockerfile: services/classroom-sync/Dockerfile
+    command: ["/bin/sh", "-ec", "alembic upgrade head && python -m classroom_sync.serve"]
+    environment: &classroom-runtime
+      CLASSROOM_DATABASE_URL: postgresql+psycopg://classroom:local-test-password@postgres:5432/classroom
+      CLASSROOM_S3_ENDPOINT_URL: http://minio:9000
+      CLASSROOM_S3_BUCKET: classroom-evidence
+      CLASSROOM_S3_ACCESS_KEY: local-minio-access
+      CLASSROOM_S3_SECRET_KEY: local-minio-secret
+      CLASSROOM_FINCOLAB_BASE_URL: http://mock-fincolab:8080
+      CLASSROOM_FINCOLAB_ORGANIZATION_ID: local-org
+      CLASSROOM_PLUGIN_JWT_SECRET: local-test-plugin-jwt-secret-at-least-32-characters
+      CLASSROOM_API_PORT: "8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      mock-fincolab:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:18080:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/health/ready')"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    networks: [classroom-test]
+
+  deadline-worker:
+    build:
+      context: ../..
+      dockerfile: services/classroom-sync/Dockerfile
+    command: ["python", "-m", "classroom_sync.worker_main"]
+    environment:
+      <<: *classroom-runtime
+      CLASSROOM_DEADLINE_POLL_SECONDS: "5"
+      CLASSROOM_WORKER_ID: classroom-contract-test-worker
+    depends_on:
+      sync-api:
+        condition: service_healthy
+    networks: [classroom-test]
+
+  # These placeholders prove isolated service DNS while the real Jupyter and
+  # FinColab repositories are attached in their own approved integration worktree.
+  jupyter-student:
+    image: python:3.12-slim
+    command: ["python", "-m", "http.server", "8888"]
+    depends_on:
+      sync-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8888')"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    networks: [classroom-test]
+
+  frontend:
+    image: python:3.12-slim
+    command: ["python", "-m", "http.server", "8080"]
+    environment:
+      VITE_CLASSROOM_SYNC_PREFIX: /classroom-api
+    depends_on:
+      sync-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8080')"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    networks: [classroom-test]
+
+networks:
+  classroom-test: {}
+
+volumes:
+  classroom-postgres-test:
+  classroom-minio-test:

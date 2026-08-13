@@ -172,6 +172,9 @@ class PluginSessionService:
                     updated_at=now,
                 )
                 session.add(monitor_session)
+                # No ORM relationship connects these two models, so flush the
+                # parent explicitly before adding the FK-constrained job.
+                session.flush()
                 session.add(
                     ClassroomDeadlineJob(
                         id=str(uuid4()),

@@ -235,6 +235,14 @@ def test_release_bundle_checksum_is_for_the_exact_candidate_wheel() -> None:
     assert checksum == f"{hashlib.sha256(wheel.read_bytes()).hexdigest()}  artifacts/{WHEEL_NAME}\n"
 
 
+def test_release_bundle_uses_the_current_built_wheel() -> None:
+    built_wheel = ROOT / "dist" / WHEEL_NAME
+    release_wheel = RELEASE_ROOT / "artifacts" / WHEEL_NAME
+
+    assert built_wheel.is_file(), "Build the wheel before preparing the release bundle."
+    assert release_wheel.read_bytes() == built_wheel.read_bytes()
+
+
 def test_handoff_archive_contains_only_manifested_payloads_and_checksums(
     tmp_path: Path,
 ) -> None:

@@ -10,19 +10,22 @@
 | `runtime.env.example` | 学生课堂运行参数示例，不含任何密钥 |
 | `build_image.sh` | 校验 wheel 后构建本地镜像 |
 | `verify_image.sh` | 离线检查版本、学生权限、扩展、持久目录和内置密钥 |
+| `export_image.sh` | 仅在离线验收通过后导出 Linux AMD64 镜像 tar |
+| `INSTALL.md` | 运维校验、构建、导出、测试模板配置与回滚步骤 |
 
 ## 本地构建
 
-基础镜像必须由 BAMS 提供，并已包含 Python 3.10+、JupyterLab 4、Jupyter Server 2 和 `jsonschema`。构建脚本使用 `--no-deps`，不会在构建时下载 Python 依赖。
+基础镜像必须由 BAMS 提供，并已包含 Python 3.10+、JupyterLab 4、Jupyter Server 2 和 `jsonschema`。构建输入必须是 `repository@sha256:实际摘要值` 形式的不可变引用；构建脚本强制生成 Linux AMD64 镜像，且使用 `--no-deps`，不会在构建时下载 Python 依赖。
 
 ```bash
-BASE_IMAGE='<BAMS 提供的 JupyterLab 4 基础镜像>'
+BASE_IMAGE='repository@sha256:实际摘要值'
 TARGET_IMAGE='behavior-audit:0.4.0-classroom'
 ./build_image.sh "$BASE_IMAGE" "$TARGET_IMAGE"
 ./verify_image.sh "$TARGET_IMAGE"
+./export_image.sh "$TARGET_IMAGE" behavior-audit-0.4.0-linux-amd64.tar
 ```
 
-`verify_image.sh` 使用临时目录运行容器，并明确要求镜像内没有 AI、平台或对象存储密钥。它验证 JupyterLab 4、Jupyter Server 2、插件版本、学生能力、扩展启用状态和 `/workspace/result/behavior-audit` 可写。
+`verify_image.sh` 使用临时目录运行容器，并明确要求镜像内没有 AI、平台或对象存储密钥。它验证 JupyterLab 4、Jupyter Server 2、插件版本、学生能力、扩展启用状态和 `/workspace/result/behavior-audit` 可写。`export_image.sh` 会再次运行该验收，并拒绝导出非 Linux AMD64 镜像；完整运维交接见 [INSTALL.md](./INSTALL.md)。
 
 ## BAMS 运行参数
 

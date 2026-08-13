@@ -19,6 +19,10 @@ wheel。源码和开发说明见 [`vscode-extension/README.md`](./vscode-extensi
 
 0.4.0 候选版增加课堂学生模式：教师方案经课堂平台下发后，学生工作台只能采集、恢复和提交本节简报；手动提交会先收口本地事件，再由 Jupyter 服务端安全提交。页面关闭不等于提交，证据截止前重新进入会恢复同一会话；未手动提交时由服务端在下课后 15 分钟自动收口。浏览器不保存课堂平台令牌或教师 AI 密钥。
 
+可交给 BAMS 运维的构建安装包是
+[`behavior-audit-classroom-0.4.0-linux-amd64-buildkit.tar.gz`](./releases/behavior-audit-classroom-0.4.0-linux-amd64-buildkit.tar.gz)。它不是最终镜像；必须由包含 JupyterLab 4 / Jupyter Server 2 的 Linux AMD64 基础镜像构建。已核实的 JupyterLab 3 / Jupyter Server 1 基础镜像不兼容，不能替换工作台。具体步骤见
+[`INSTALL.md`](./deploy/bluedot/release-0.4.0/INSTALL.md)。
+
 安装与启动命令见 [启动说明.md](./启动说明.md)，数据边界与功能说明见
 [项目说明.md](./项目说明.md)；BLUEDOT 工作台的基础镜像安装见
 [平台接入说明](./docs/2026-08-04-bluedot-platform-integration.md)。

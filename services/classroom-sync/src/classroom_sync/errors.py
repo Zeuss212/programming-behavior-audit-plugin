@@ -46,3 +46,9 @@ class ValidationError(ClassroomServiceError):
 class UpstreamUnavailableError(ClassroomServiceError):
     status_code = 503
     retryable = True
+
+
+class AiSuggestionUnavailableError(ClassroomServiceError):
+    """The optional AI drafting facility is not configured for this classroom."""
+
+    status_code = 503

@@ -8,7 +8,9 @@ import pytest
 
 from classroom_sync.config import Settings
 from classroom_sync.domain.schemas import ClassroomSchemaRegistry
+from classroom_sync.errors import AiSuggestionUnavailableError
 from classroom_sync.runtime import contract_directory, s3_client_config
+from classroom_sync.services.plan_suggestions import AiSuggestionSettings
 
 
 def test_runtime_configuration_requires_all_trusted_dependencies():
@@ -30,6 +32,10 @@ def test_runtime_configuration_reads_explicit_test_dependencies_from_environment
             "CLASSROOM_FINCOLAB_BASE_URL": "http://mock-fincolab:8080",
             "CLASSROOM_FINCOLAB_ORGANIZATION_ID": "local-org",
             "CLASSROOM_PLUGIN_JWT_SECRET": "local-plugin-secret-at-least-32-chars",
+            "CLASSROOM_AI_BASE_URL": "https://ai.example/v1",
+            "CLASSROOM_AI_MODEL": "classroom-model",
+            "CLASSROOM_AI_API_KEY": "server-only-secret",
+            "CLASSROOM_AI_TIMEOUT_SECONDS": "20",
         }
     )
 
@@ -37,6 +43,21 @@ def test_runtime_configuration_reads_explicit_test_dependencies_from_environment
 
     assert settings.s3_bucket == "classroom-evidence"
     assert settings.fincolab_organization_id == "local-org"
+    assert settings.ai_base_url == "https://ai.example/v1"
+    assert settings.ai_timeout_seconds == 20
+
+
+def test_ai_settings_require_all_three_server_values() -> None:
+    """AI suggestions are optional, but partial provider credentials are never usable."""
+    settings = Settings(
+        database_url="sqlite://",
+        ai_base_url="https://ai.example/v1",
+        ai_model=None,
+        ai_api_key="secret",
+    )
+
+    with pytest.raises(AiSuggestionUnavailableError, match="ai_suggestion_not_configured"):
+        AiSuggestionSettings.from_settings(settings)
 
 
 def test_runtime_uses_bounded_s3_timeouts_for_retryable_storage_outages():

@@ -429,7 +429,7 @@ Expected: FAIL because the checked-in archive still contains the previous runtim
 
 - [ ] **Step 3: Regenerate the deterministic archive and checksum**
 
-Run `python scripts/package_classroom_image_handoff.py --source deploy/bluedot/release-0.4.0 --output releases/behavior-audit-classroom-0.4.0-linux-amd64-buildkit.tar.gz`, then run `shasum -a 256 -c releases/behavior-audit-classroom-0.4.0-linux-amd64-buildkit.tar.gz.sha256`.
+Run `python3 scripts/package_classroom_image_handoff.py --source deploy/bluedot/release-0.4.0 --output releases/behavior-audit-classroom-0.4.0-linux-amd64-buildkit.tar.gz`, then run `shasum -a 256 -c behavior-audit-classroom-0.4.0-linux-amd64-buildkit.tar.gz.sha256` with `releases/` as the working directory. The checksum records only the archive basename, so validating it from the repository root is intentionally invalid.
 
 The package script writes the matching checksum; do not rename the archive, add a registry credential, or create an image from it.
 

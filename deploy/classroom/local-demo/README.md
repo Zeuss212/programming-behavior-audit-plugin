@@ -1,0 +1,94 @@
+# 本地课堂互动演示
+
+这套演示只使用本机回环地址上的数据和服务：
+
+| 服务 | 地址 |
+| --- | --- |
+| Vue 教师/学生端 | http://127.0.0.1:5175 |
+| 演示 FinColab façade | http://127.0.0.1:18082 |
+| 课堂同步调试 API | http://127.0.0.1:18080 |
+| Vue/Jupyter 课堂代理 | http://127.0.0.1:18081/classroom-api |
+| 学生 JupyterLab | http://127.0.0.1:8888/lab |
+
+它不会连接 FinColab、BAMS、5179、5180、真实 AI 或生产数据。首次 Docker 构建若本机没有缓存，Docker 仍会拉取公开基础镜像及 Python 依赖；这不包含课堂账户、BAMS 或生产服务的数据连接。
+
+## 本地演示账号
+
+| 角色 | 用户名 | 密码 | 可见课程 |
+| --- | --- | --- | --- |
+| 教师 | teacher001 | local-demo-teacher | course-001 |
+| 学生 | student001 | local-demo-student | course-001 |
+| 隔离负例 | student002 | local-demo-student2 | course-002 |
+
+这些密码和令牌均为本地固定测试数据，不能用于任何其他环境。
+
+## 启动
+
+在课堂服务 worktree 执行：
+
+~~~sh
+scripts/start_local_classroom_demo.sh
+uv build --wheel
+scripts/start_local_classroom_jupyter.sh
+~~~
+
+Jupyter 启动器保持前台运行。它只监听 127.0.0.1:8888，并且只在该脚本中设置课堂学生模式、回环同步地址和明文回环例外。
+
+在独立的 Vue frontend worktree 执行：
+
+~~~sh
+npm ci
+scripts/start-local-classroom-frontend.sh
+~~~
+
+Vue 启动器同样保持前台运行，只监听 127.0.0.1:5175。它的 local-demo 模式把 /api 转发给本地 façade，并把 /classroom-api 原样转发给本地 Nginx。
+
+## 教师—学生演示顺序
+
+1. 在独立浏览器 profile A 打开 http://127.0.0.1:5175，登录 teacher001。
+2. 打开 admin/projects，找到 parent-experiment-001 的“课堂方案”，填写计划并发布，然后同步学生任务。
+3. 在独立浏览器 profile B 打开相同地址，登录 student001，进入课堂任务。
+4. 学生接受任务，点击进入工作台；页面会打开本地 JupyterLab 并把一次性课堂票据放在 URL fragment 中。
+5. 在 JupyterLab 运行任意 notebook 单元，确认插件显示课堂学生模式，然后手动提交。
+6. 回到教师 profile，刷新课堂监控页并打开 student001 的课堂简报。
+7. 可在 profile C 登录 student002：该账号只能看 course-002，读取 course-001 资源或学生任务会被拒绝。
+
+教师、学生和负例必须使用不同 browser profile，因为 Vue 把登录态保存在 profile 的 localStorage 中。
+
+## 自动验证
+
+在课堂服务 worktree 执行：
+
+~~~sh
+PYTHONPATH=scripts uv run --no-project python scripts/local_classroom_demo_smoke.py
+~~~
+
+该命令验证 façade 登录、student002 跨课程拒绝、同步服务就绪，并复用既有课堂契约状态机完成发布、接受、插件会话、证据提交和简报生成。输出不包含 bearer、课堂票据、插件令牌或原始证据。
+
+## 停止与重置
+
+~~~sh
+scripts/stop_local_classroom_demo.sh
+~~~
+
+停止只关闭 classroom-local-demo 容器，保留本地 PostgreSQL 和 MinIO 数据。
+
+开始一场全新的演示前，显式运行：
+
+~~~sh
+scripts/reset_local_classroom_demo.sh --yes-reset-local-demo
+scripts/start_local_classroom_demo.sh
+~~~
+
+reset 只删除 classroom-local-demo-postgres 和 classroom-local-demo-minio 两个命名卷；它不会触碰其他 Docker 卷、BAMS 或生产数据。
+
+## 排障
+
+| 现象 | 处理方式 |
+| --- | --- |
+| 18080、18081、18082 或 5175 被占用 | 先确认占用者；启动脚本不会结束未知进程。关闭已知演示进程后重试。 |
+| Compose 就绪失败 | 运行 docker compose -p classroom-local-demo -f deploy/classroom/local-demo/docker-compose.yml ps，检查 postgres、demo-fincolab 和 sync-api 的健康状态。 |
+| Jupyter 启动器提示 wheel 缺失 | 在课堂服务 worktree 重新运行 uv build --wheel。 |
+| Vue 页面没有课堂入口 | 确认用 scripts/start-local-classroom-frontend.sh 启动；该命令使用 .env.local-demo。 |
+| Jupyter 显示未注册课堂会话 | 必须先从 student001 的课堂任务页点击进入工作台，不能直接打开 Jupyter URL。 |
+

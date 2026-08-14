@@ -29,7 +29,7 @@
 - Consumes: current `package.json`, `demo/macos_real_ai/deploy_demo.sh`, and the published `0.4.0` checksum.
 - Produces: a behavioral regression test that fails if the demo defaults back to an ignored local wheel, a stale hash, or a non-reproducible release coordinate.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 def test_preflight_uses_checked_in_classroom_release_by_default(self) -> None:
@@ -55,13 +55,15 @@ def test_preflight_uses_checked_in_classroom_release_by_default(self) -> None:
     )
 ```
 
-- [ ] **Step 2: Run the focused test to verify it fails**
+- [x] **Step 2: Run the focused test to verify it fails**
 
 Run:
 
 ```bash
 UV_CACHE_DIR=/private/tmp/classroom-platform-uv-cache \
 uv run --no-project --with 'pytest>=8,<9' \
+  --with 'pytest-jupyter[server]>=0.6.0' \
+  --with 'jupyter_server>=2.4.0,<3' \
 python -m pytest -q \
 demo/macos_real_ai/tests/test_shell_safety.py::ShellSafetyTests::test_preflight_uses_checked_in_classroom_release_by_default
 ```
@@ -81,7 +83,7 @@ Expected: FAIL with `wheel SHA-256 mismatch`, because the default still selects 
 - Consumes: the checked-in 0.4.0 wheel path and its fixed SHA-256 from Task 1.
 - Produces: a reproducible default preflight with existing optional local-wheel overrides unchanged.
 
-- [ ] **Step 1: Implement the minimal release-coordinate update**
+- [x] **Step 1: Implement the minimal release-coordinate update**
 
 ```bash
 DEMO_WHEEL="$PROJECT_ROOT/deploy/bluedot/release-0.4.0/artifacts/myextension-0.4.0-py3-none-any.whl"
@@ -90,19 +92,21 @@ EXPECTED_WHEEL_SHA256=${DEMO_EXPECTED_WHEEL_SHA256:-"bc9cb1cdd3e95056f5ed9eed1af
 
 Keep the existing override parser and hash comparison untouched. Update only the comments and troubleshooting text that name the old local 0.3.0 wheel. Remove the stale release-coordinate assertions from `test_demo_assets.py`; the shell-safety test above is the behavioral contract for the default artifact.
 
-- [ ] **Step 2: Run focused regression tests**
+- [x] **Step 2: Run focused regression tests**
 
 Run:
 
 ```bash
 UV_CACHE_DIR=/private/tmp/classroom-platform-uv-cache \
 uv run --no-project --with 'pytest>=8,<9' \
+  --with 'pytest-jupyter[server]>=0.6.0' \
+  --with 'jupyter_server>=2.4.0,<3' \
 python -m pytest -q demo/macos_real_ai/tests
 ```
 
 Expected: all demo asset, shell-safety, and demo verification tests pass.
 
-- [ ] **Step 3: Verify the checked-in delivery artifact**
+- [x] **Step 3: Verify the checked-in delivery artifact**
 
 Run:
 

@@ -35,7 +35,7 @@ class ShellSafetyTests(unittest.TestCase):
             check=False,
         )
 
-    def test_preflight_accepts_only_non_secret_allowlisted_env(self) -> None:
+    def test_preflight_uses_checked_in_classroom_release_by_default(self) -> None:
         allowed = self.temp / "allowed.env"
         allowed.write_text(
             "DEMO_PORT=18995\n"
@@ -49,6 +49,15 @@ class ShellSafetyTests(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(
+            "Delivery wheel: "
+            + str(
+                ROOT
+                / "deploy/bluedot/release-0.4.0/artifacts"
+                / "myextension-0.4.0-py3-none-any.whl"
+            ),
+            result.stdout,
+        )
         self.assertIn("Preflight passed", result.stdout)
 
     def test_preflight_rejects_secret_or_shell_code_without_executing_it(self) -> None:

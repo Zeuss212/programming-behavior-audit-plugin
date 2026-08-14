@@ -12,6 +12,7 @@ export { AUDIT_COMMAND_IDS } from '../ui/protocol';
 export const CONFIRMATION_COMMAND_IDS = [
   'behaviorAudit.importPlan',
   'behaviorAudit.finishCapture',
+  'behaviorAudit.finishAnalyzeExport',
   'behaviorAudit.abandonCapture',
   'behaviorAudit.analyzeSession',
   'behaviorAudit.clearAiKey',
@@ -36,6 +37,7 @@ export interface AuditCommandServices {
   readonly selectedPlan: () => PublishedPlan | undefined;
   readonly hasConsent: () => boolean;
   readonly interruptedSessionId: () => string | undefined;
+  readonly finishAnalyzeExport: (sessionId: string) => Promise<void>;
   readonly actions: CommandActions;
 }
 
@@ -48,9 +50,10 @@ async function materializeWithRetry(
   host: AuditCommandHost,
   services: AuditCommandServices,
   sessionId: string,
-): Promise<void> {
+): Promise<boolean> {
   try {
     await services.reportService.materialize(sessionId);
+    return true;
   } catch (error) {
     const choice = await host.showError(
       error instanceof Error ? error.message : '课堂简报生成失败。',
@@ -58,7 +61,9 @@ async function materializeWithRetry(
     );
     if (choice === '重试生成简报') {
       await services.reportService.materialize(sessionId);
+      return true;
     }
+    return false;
   }
 }
 
@@ -114,6 +119,13 @@ async function execute(
     case 'behaviorAudit.finishCapture': {
       const terminal = await services.capture.finish('completed');
       await materializeWithRetry(host, services, terminal.session_id);
+      return;
+    }
+    case 'behaviorAudit.finishAnalyzeExport': {
+      const terminal = await services.capture.finish('completed');
+      if (await materializeWithRetry(host, services, terminal.session_id)) {
+        await services.finishAnalyzeExport(terminal.session_id);
+      }
       return;
     }
     case 'behaviorAudit.abandonCapture': {

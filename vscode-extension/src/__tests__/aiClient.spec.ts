@@ -91,6 +91,10 @@ describe('CompatibleAiClient', () => {
     expect(body).not.toContain('must-not-ship-secret');
     expect(body).not.toContain('/private/tmp/student-workspace');
     expect(body).not.toContain('ARK_API_KEY');
+    expect(body).toContain('schema_version');
+    expect(body).toContain('knowledge_points');
+    expect(body).toContain('observation_basis');
+    expect(body).toContain('expected_behavior');
     expect(requestUrl(fetcher, 0)).toBe(
       'https://provider.example/v1/chat/completions',
     );
@@ -225,6 +229,23 @@ describe('CompatibleAiClient', () => {
     await expect(networkClient.suggestPlan(planInput())).rejects.toMatchObject({
       code: 'ai_provider_network_error',
     });
+  });
+
+  it('shows a redacted network cause so connection failures can be diagnosed', async () => {
+    const cause = Object.assign(new Error('getaddrinfo ENOTFOUND ark.cn-beijing.volces.com'), {
+      code: 'ENOTFOUND',
+      token: 'ark-should-never-be-shown',
+    });
+    const failure = Object.assign(new TypeError('fetch failed'), { cause });
+    const client = new CompatibleAiClient({
+      runtime,
+      fetch: () => Promise.reject(failure),
+    });
+
+    const error = await client.suggestPlan(planInput()).catch((reason: unknown) => reason);
+    expect(error).toMatchObject({ code: 'ai_provider_network_error' });
+    expect((error as Error).message).toContain('ENOTFOUND');
+    expect((error as Error).message).not.toContain('ark-should-never-be-shown');
   });
 
   it('rejects invalid JSON and performs one length-truncation recovery', async () => {

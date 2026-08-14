@@ -11,6 +11,7 @@ export const AUDIT_COMMAND_IDS = [
   'behaviorAudit.startCapture',
   'behaviorAudit.resumeCapture',
   'behaviorAudit.finishCapture',
+  'behaviorAudit.finishAnalyzeExport',
   'behaviorAudit.abandonCapture',
   'behaviorAudit.runPython',
   'behaviorAudit.analyzeSession',
@@ -27,6 +28,7 @@ export type SidebarRoute = 'teacher' | 'student';
 export type WebviewMessage =
   | { readonly type: 'navigate'; readonly route: SidebarRoute }
   | { readonly type: 'setConsent'; readonly value: boolean }
+  | { readonly type: 'setAutoAnalyze'; readonly value: boolean }
   | { readonly type: 'command'; readonly command: AuditCommandId }
   | { readonly type: 'refresh' };
 
@@ -42,6 +44,7 @@ export interface SidebarViewModel {
   readonly plans: readonly SidebarPlanSummary[];
   readonly selectedPlan?: Readonly<{ planId: string; version: number }>;
   readonly consent: boolean;
+  readonly autoAnalyze: boolean;
   readonly session?: Readonly<{
     sessionId: string;
     status: 'collecting' | 'interrupted' | 'finalizing' | 'completed' | 'partial' | 'abandoned';
@@ -85,6 +88,13 @@ export function parseWebviewMessage(value: unknown): WebviewMessage {
     typeof value.value === 'boolean'
   ) {
     return { type: 'setConsent', value: value.value };
+  }
+  if (
+    value.type === 'setAutoAnalyze' &&
+    hasExactKeys(value, ['type', 'value']) &&
+    typeof value.value === 'boolean'
+  ) {
+    return { type: 'setAutoAnalyze', value: value.value };
   }
   if (
     value.type === 'command' &&

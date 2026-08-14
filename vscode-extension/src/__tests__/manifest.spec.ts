@@ -22,7 +22,7 @@ describe('VS Code extension manifest', () => {
     expect(manifest.name).toBe('behavior-audit-vscode');
     expect(manifest.displayName).toBe('编程行为分析');
     expect(manifest.publisher).toBe('bluedot-ai');
-    expect(manifest.version).toBe('0.1.1');
+    expect(manifest.version).toBe('0.1.2');
     expect(manifest.engines).toEqual({ vscode: '^1.125.0' });
     expect(manifest.main).toBe('./dist/extension.js');
     expect(manifest.extensionKind).toEqual(['workspace']);

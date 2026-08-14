@@ -2,9 +2,9 @@
 
 ## 独立 VS Code 版本
 
-仓库同时包含独立的 VS Code Desktop 扩展 0.1.0，它不依赖本页所述 JupyterLab
+仓库同时包含独立的 VS Code Desktop 扩展 0.1.2，它不依赖本页所述 JupyterLab
 wheel。源码和开发说明见 [`vscode-extension/README.md`](./vscode-extension/README.md)，
-安装交付目录见 [`deploy/vscode/release-0.1.0/`](./deploy/vscode/release-0.1.0/)。
+安装交付目录见 [`deploy/vscode/release-0.1.2/`](./deploy/vscode/release-0.1.2/)。
 当前 VS Code 版本已通过自动化与 40 分钟加速模拟；真实桌面 5 分钟/40 分钟验收状态
 以交付目录中的验证记录为准。
 

@@ -9,13 +9,14 @@ import { FileAiSettingsService } from './ai/aiSettings';
 import { DurableCaptureController } from './capture/captureController';
 import { TextCollector, type TextCollectorHost } from './capture/textCollector';
 import { workspaceIdentity } from './capture/workspaceIdentity';
-import { canonicalJson } from './domain/canonicalJson';
-import type { JsonObject, JsonValue, PublishedPlan, SessionState } from './domain/types';
+import type { AnalysisLog, PublishedPlan, SessionState } from './domain/types';
 import { StableNotebookCollector, type NotebookCollectorHost } from './notebooks/notebookCollector';
 import { FilePlanRepository } from './plans/planRepository';
 import { applySuggestion, toPublishPlanInput } from './plans/planDraft';
 import { PlanDraftStore } from './plans/planDraftStore';
 import { FileReportService, FileSessionExporter } from './reports/exporter';
+import { FileSessionAnalysisService } from './reports/analysisService';
+import { analyzeAndExport } from './workflows/finishAnalyzeExport';
 import { VsCodePythonRunner, type PythonTextDocument } from './runners/pythonRunner';
 import { FileSessionRepository } from './storage/sessionRepository';
 import {
@@ -45,15 +46,27 @@ export interface TestAuditApi {
   readonly storageRoot: string;
   startSession(): Promise<string>;
   finishSession(): Promise<string>;
+  finishSessionWithAnalysis(): Promise<string>;
   flush(): Promise<void>;
   readBrief(sessionId: string): Promise<unknown>;
+  readAnalysisLog(sessionId: string): Promise<unknown>;
   recoverPersistedSession(): Promise<SessionState | undefined>;
 }
 
 let activeRuntime: ActiveRuntime | undefined;
 
-function isJsonObject(value: unknown): value is JsonObject {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
+function analysisNotice(analysis: AnalysisLog, exported: boolean): string {
+  if (analysis.status === 'completed') {
+    return exported ? '课堂简报与 AI 建议已导出。' : 'AI 建议已生成，可选择“仅导出上次会话”。';
+  }
+  if (analysis.status === 'skipped') {
+    return exported
+      ? '课堂简报已导出，未生成 AI 建议。'
+      : '未生成 AI 建议，本地课堂简报已保留。';
+  }
+  return exported
+    ? '课堂简报已导出，AI 建议失败但本地资料已保留。'
+    : 'AI 建议失败，但本地课堂简报已保留。';
 }
 
 function nonce(): string {
@@ -210,7 +223,7 @@ export async function activate(
   const reportService = new FileReportService(sessionRepository, () => new Date());
   const sessionExporter = new FileSessionExporter(
     sessionRepository,
-    '0.1.1',
+    '0.1.2',
     () => new Date(),
   );
   const aiSettings = new FileAiSettingsService(
@@ -225,6 +238,11 @@ export async function activate(
   );
   await aiSettings.initialize();
   const aiClient = new CompatibleAiClient({ runtime: aiSettings, fetch: globalThis.fetch });
+  const sessionAnalysisService = new FileSessionAnalysisService(
+    sessionRepository,
+    aiClient,
+    () => new Date(),
+  );
   const planDraftStore = new PlanDraftStore(context.workspaceState, () => new Date());
   const pythonRunner = new VsCodePythonRunner({
     pythonExtensionAvailable: () => vscode.extensions.getExtension('ms-python.python') !== undefined,
@@ -240,6 +258,8 @@ export async function activate(
 
   let route: SidebarRoute = 'teacher';
   let consent = false;
+  let autoAnalyze = true;
+  let sidebarNotice: string | undefined;
   let selectedPlan: PublishedPlan | undefined;
   let interruptedState = await sessionRepository.findActive(workspaceId);
   let lastSessionId: string | undefined;
@@ -278,6 +298,7 @@ export async function activate(
         ? {}
         : { selectedPlan: { planId: selectedPlan.plan_id, version: selectedPlan.version } }),
       consent,
+      autoAnalyze,
       ...(session === undefined
         ? {}
         : {
@@ -288,7 +309,11 @@ export async function activate(
             },
           }),
       ai: { configured: aiSettings.getPublic().hasApiKey },
-      ...(workspaceRoot === undefined ? { notice: '请先打开一个本地文件夹工作区。' } : {}),
+      ...(workspaceRoot === undefined
+        ? { notice: '请先打开一个本地文件夹工作区。' }
+        : sidebarNotice === undefined
+          ? {}
+          : { notice: sidebarNotice }),
     });
   };
 
@@ -300,6 +325,11 @@ export async function activate(
     }
     if (message.type === 'setConsent') {
       consent = message.value;
+      await refreshPresentation();
+      return;
+    }
+    if (message.type === 'setAutoAnalyze') {
+      autoAnalyze = message.value;
       await refreshPresentation();
       return;
     }
@@ -449,33 +479,14 @@ export async function activate(
     if (lastSessionId === undefined) {
       throw new Error('尚没有可分析的已结束会话。');
     }
-    const bytes = await sessionRepository.readArtifact(lastSessionId, 'classroom_brief');
-    if (bytes === undefined) {
-      throw new Error('请先生成本地课堂简报。');
-    }
-    const value = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
-    if (!isJsonObject(value)) {
-      throw new Error('本地课堂简报格式无效。');
-    }
-    const analysis = await aiClient.analyzeSession({
-      sessionId: lastSessionId,
+    const analysis = await sessionAnalysisService.materialize(lastSessionId, {
+      enabled: true,
       workspaceRoot: workspaceRoot ?? '',
-      brief: value,
-      evidence: [],
-      codeFragments: [],
     });
-    await sessionRepository.writeArtifact(
-      lastSessionId,
-      'ai_analysis',
-      new TextEncoder().encode(`${canonicalJson(analysis as unknown as JsonValue)}\n`),
-    );
+    sidebarNotice = analysisNotice(analysis, false);
   };
 
-  const exportSession = async (): Promise<void> => {
-    const sessionId = lastSessionId ?? capture.current()?.session_id;
-    if (sessionId === undefined) {
-      throw new Error('尚没有可导出的会话。');
-    }
+  const chooseExportDestination = async () => {
     const selected = await vscode.window.showOpenDialog({
       canSelectFiles: false,
       canSelectFolders: true,
@@ -483,9 +494,37 @@ export async function activate(
       openLabel: '选择导出位置',
     });
     const uri = selected?.[0];
-    if (uri !== undefined) {
-      await sessionExporter.exportSession(sessionId, { fsPath: uri.fsPath });
+    return uri === undefined ? undefined : { fsPath: uri.fsPath };
+  };
+
+  const exportSession = async (): Promise<void> => {
+    const sessionId = lastSessionId ?? capture.current()?.session_id;
+    if (sessionId === undefined) {
+      throw new Error('尚没有可导出的会话。');
     }
+    const destination = await chooseExportDestination();
+    if (destination !== undefined) {
+      await sessionExporter.exportSession(sessionId, destination);
+      sidebarNotice = '已导出上次会话。';
+    }
+  };
+
+  const finishAnalyzeExport = async (sessionId: string): Promise<void> => {
+    const result = await analyzeAndExport({
+      sessionId,
+      workspaceRoot: workspaceRoot ?? '',
+      autoAnalyze,
+      analysisService: sessionAnalysisService,
+      exporter: sessionExporter,
+      chooseDestination: chooseExportDestination,
+    });
+    if (result.kind === 'export_cancelled') {
+      sidebarNotice = '课堂简报和 AI 分析已保存在本地；可稍后选择“仅导出上次会话”。';
+      await vscode.window.showInformationMessage(sidebarNotice);
+      return;
+    }
+    sidebarNotice = analysisNotice(result.analysis, true);
+    await vscode.window.showInformationMessage(sidebarNotice);
   };
 
   const actions: CommandActions = {
@@ -499,6 +538,7 @@ export async function activate(
     'behaviorAudit.startCapture': async () => Promise.resolve(),
     'behaviorAudit.resumeCapture': async () => Promise.resolve(),
     'behaviorAudit.finishCapture': async () => Promise.resolve(),
+    'behaviorAudit.finishAnalyzeExport': async () => Promise.resolve(),
     'behaviorAudit.abandonCapture': async () => Promise.resolve(),
     'behaviorAudit.runPython': async () => {
       const document = vscode.window.activeTextEditor?.document;
@@ -540,7 +580,9 @@ export async function activate(
         await handler();
         if (
           activeBefore !== undefined &&
-          (id === 'behaviorAudit.finishCapture' || id === 'behaviorAudit.abandonCapture')
+          (id === 'behaviorAudit.finishCapture' ||
+            id === 'behaviorAudit.finishAnalyzeExport' ||
+            id === 'behaviorAudit.abandonCapture')
         ) {
           lastSessionId = activeBefore;
         }
@@ -569,6 +611,7 @@ export async function activate(
       selectedPlan: () => selectedPlan,
       hasConsent: () => consent,
       interruptedSessionId: () => interruptedState?.session_id,
+      finishAnalyzeExport,
       actions,
     }),
   );
@@ -633,9 +676,25 @@ export async function activate(
         await reportService.materialize(terminal.session_id);
         return terminal.session_id;
       },
+      finishSessionWithAnalysis: async () => {
+        const terminal = await capture.finish('completed');
+        lastSessionId = terminal.session_id;
+        await reportService.materialize(terminal.session_id);
+        await sessionAnalysisService.materialize(terminal.session_id, {
+          enabled: false,
+          workspaceRoot: workspaceRoot ?? '',
+        });
+        return terminal.session_id;
+      },
       flush: async () => capture.flush(),
       readBrief: async (sessionId) => {
         const bytes = await sessionRepository.readArtifact(sessionId, 'classroom_brief');
+        return bytes === undefined
+          ? undefined
+          : JSON.parse(new TextDecoder().decode(bytes)) as unknown;
+      },
+      readAnalysisLog: async (sessionId) => {
+        const bytes = await sessionRepository.readArtifact(sessionId, 'ai_analysis');
         return bytes === undefined
           ? undefined
           : JSON.parse(new TextDecoder().decode(bytes)) as unknown;

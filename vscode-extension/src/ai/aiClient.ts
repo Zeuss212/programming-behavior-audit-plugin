@@ -156,6 +156,24 @@ function providerFailureDetail(body: string): ProviderFailureDetail {
   };
 }
 
+function networkFailureReason(error: unknown): string | undefined {
+  const candidates = isRecord(error) ? [error, error.cause] : [error];
+  for (const candidate of candidates.slice().reverse()) {
+    if (!isRecord(candidate)) {
+      continue;
+    }
+    const code = optionalText(candidate.code);
+    const message = optionalText(candidate.message);
+    const reason = [code, message]
+      .filter((value, index, values): value is string => value !== undefined && values.indexOf(value) === index)
+      .join('：');
+    if (reason.length > 0) {
+      return reason;
+    }
+  }
+  return undefined;
+}
+
 function providerError(status: number, detail: ProviderFailureDetail): AuditError {
   if (status === 401 || status === 403) {
     return new AuditError(
@@ -243,6 +261,21 @@ function invalidResponse(message: string, cause?: unknown): AuditError {
     '请重试；若持续失败，请检查服务是否返回兼容的 JSON。',
     cause,
   );
+}
+
+function outputShapeInstruction(purpose: string): string {
+  if (purpose === '方案建议') {
+    return [
+      '输出必须严格匹配此对象结构：',
+      '{"schema_version":1,"knowledge_points":[{"name":"知识点名称","description":"知识点说明","observation_basis":"可观察的代码编辑、运行结果或错误修正依据"}],"tests":[{"title":"测试标题","description":"测试说明","expected_behavior":"预期行为"}]}。',
+      'knowledge_points 至少提供 1 项；tests 可以是空数组。字段名不得改名、不得省略、不得嵌套在 data 或 result 中。',
+    ].join('');
+  }
+  return [
+    '输出必须严格匹配此对象结构：',
+    '{"schema_version":1,"summary":"摘要","observations":[{"title":"观察标题","description":"观察说明","evidence_event_ids":["事件ID"]}],"attention_points":["需关注事项"]}。',
+    '字段名不得改名、不得省略、不得嵌套在 data 或 result 中。',
+  ].join('');
 }
 
 export class CompatibleAiClient implements AiClient {
@@ -363,7 +396,7 @@ export class CompatibleAiClient implements AiClient {
             messages: [
               {
                 role: 'system',
-                content: `你是课堂编程行为审计助手。生成${purpose}时只能依据引用数据，不评分、不排名、不判断能力或掌握程度。只返回一个有效 JSON 对象，不得包含 Markdown 或额外解释。`,
+                content: `你是课堂编程行为审计助手。生成${purpose}时只能依据引用数据，不评分、不排名、不判断能力或掌握程度。只返回一个有效 JSON 对象，不得包含 Markdown 或额外解释。${outputShapeInstruction(purpose)}`,
               },
               { role: 'user', content: JSON.stringify(data) },
             ],
@@ -379,9 +412,10 @@ export class CompatibleAiClient implements AiClient {
             error,
           );
         }
+        const reason = networkFailureReason(error);
         throw new AuditError(
           'ai_provider_network_error',
-          '无法连接 AI 服务。',
+          `无法连接 AI 服务${reason === undefined ? '。' : `：${reason}`}`,
           '请检查网络和基础 URL，或继续使用本地功能。',
           error,
         );

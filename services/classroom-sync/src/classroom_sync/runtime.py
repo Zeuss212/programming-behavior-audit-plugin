@@ -8,7 +8,7 @@ from pathlib import Path
 
 import boto3  # type: ignore[import-untyped]
 import httpx
-from botocore.config import Config
+from botocore.config import Config  # type: ignore[import-untyped]
 from fastapi import FastAPI
 
 from classroom_sync.application import ClassroomServices

@@ -8,7 +8,8 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, ValidationError as PydanticValidationError
+from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ValidationError as PydanticValidationError
 
 from classroom_sync.config import Settings
 from classroom_sync.errors import AiSuggestionUnavailableError, UpstreamUnavailableError
@@ -173,19 +174,19 @@ class OpenAiPlanSuggestionService:
     @staticmethod
     def _response_content(payload: object) -> str:
         if not isinstance(payload, dict):
-            raise ValueError("provider response is not an object")
+            raise TypeError("provider response is not an object")
         choices = payload.get("choices")
         if not isinstance(choices, list) or not choices:
             raise ValueError("provider response has no choices")
         choice = choices[0]
         if not isinstance(choice, dict):
-            raise ValueError("provider choice is invalid")
+            raise TypeError("provider choice is invalid")
         message = choice.get("message")
         if not isinstance(message, dict):
-            raise ValueError("provider message is invalid")
+            raise TypeError("provider message is invalid")
         content = message.get("content")
         if not isinstance(content, str):
-            raise ValueError("provider content is invalid")
+            raise TypeError("provider content is invalid")
         return content
 
     @staticmethod

@@ -1,0 +1,123 @@
+name: classroom-local-demo
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: classroom_demo
+      POSTGRES_USER: classroom_demo
+      POSTGRES_PASSWORD: local-demo-postgres-password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U classroom_demo -d classroom_demo"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - classroom-local-demo-postgres:/var/lib/postgresql/data
+    networks: [classroom-local-demo]
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: local-demo-minio-access
+      MINIO_ROOT_PASSWORD: local-demo-minio-secret
+    volumes:
+      - classroom-local-demo-minio:/data
+    networks: [classroom-local-demo]
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    depends_on:
+      minio:
+        condition: service_started
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        until mc alias set local http://minio:9000 local-demo-minio-access local-demo-minio-secret; do sleep 1; done
+        mc mb --ignore-existing local/classroom-evidence
+        mc anonymous set none local/classroom-evidence
+    networks: [classroom-local-demo]
+
+  demo-fincolab:
+    image: classroom-local-demo-fincolab:latest
+    build:
+      context: ../../..
+      dockerfile: deploy/classroom/local-demo/Dockerfile
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/health/live')"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "127.0.0.1:18082:8080"
+    networks: [classroom-local-demo]
+
+  sync-api:
+    image: classroom-local-demo-sync-api:latest
+    build:
+      context: ../../..
+      dockerfile: services/classroom-sync/Dockerfile
+    command: ["/bin/sh", "-ec", "alembic upgrade head && python -m classroom_sync.serve"]
+    environment: &classroom_runtime
+      CLASSROOM_DATABASE_URL: postgresql+psycopg://classroom_demo:local-demo-postgres-password@postgres:5432/classroom_demo
+      CLASSROOM_S3_ENDPOINT_URL: http://minio:9000
+      CLASSROOM_S3_BUCKET: classroom-evidence
+      CLASSROOM_S3_ACCESS_KEY: local-demo-minio-access
+      CLASSROOM_S3_SECRET_KEY: local-demo-minio-secret
+      CLASSROOM_FINCOLAB_BASE_URL: http://demo-fincolab:8080
+      CLASSROOM_FINCOLAB_ORGANIZATION_ID: local-org
+      CLASSROOM_PLUGIN_JWT_SECRET: local-demo-plugin-jwt-secret-at-least-32-characters
+      CLASSROOM_API_PORT: "8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      demo-fincolab:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:18080:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8080/health/ready')"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    networks: [classroom-local-demo]
+
+  classroom-nginx:
+    image: nginx:1.27-alpine
+    depends_on:
+      sync-api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:18081:8080"
+    volumes:
+      - ../nginx/classroom.conf:/etc/nginx/nginx.conf:ro
+    networks: [classroom-local-demo]
+
+  deadline-worker:
+    image: classroom-local-demo-deadline-worker:latest
+    build:
+      context: ../../..
+      dockerfile: services/classroom-sync/Dockerfile
+    command: ["python", "-m", "classroom_sync.worker_main"]
+    environment:
+      <<: *classroom_runtime
+      CLASSROOM_DEADLINE_POLL_SECONDS: "5"
+      CLASSROOM_WORKER_ID: classroom-local-demo-worker
+    depends_on:
+      sync-api:
+        condition: service_healthy
+    networks: [classroom-local-demo]
+
+networks:
+  classroom-local-demo:
+    name: classroom-local-demo-network
+
+volumes:
+  classroom-local-demo-postgres:
+    name: classroom-local-demo-postgres
+  classroom-local-demo-minio:
+    name: classroom-local-demo-minio

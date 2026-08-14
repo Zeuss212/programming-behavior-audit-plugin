@@ -14,6 +14,7 @@ from .routers.events import router as events_router
 from .routers.plans import router as plans_router
 from .routers.plugin import router as plugin_router
 from .routers.student import router as student_router
+from .routers.suggestions import router as suggestions_router
 from .routers.teacher import router as teacher_router
 
 
@@ -67,6 +68,7 @@ def create_app(
         app.include_router(plugin_router)
         app.include_router(student_router)
         app.include_router(teacher_router)
+        app.include_router(suggestions_router)
         app.include_router(events_router)
 
     return app

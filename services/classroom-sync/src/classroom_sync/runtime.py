@@ -16,10 +16,15 @@ from classroom_sync.auth.fincolab import FincolabIdentityGateway
 from classroom_sync.config import Settings
 from classroom_sync.db import create_database_engine, create_session_factory
 from classroom_sync.domain.schemas import ClassroomSchemaRegistry
+from classroom_sync.errors import AiSuggestionUnavailableError
 from classroom_sync.main import create_app
 from classroom_sync.services.assignments import AssignmentService
 from classroom_sync.services.briefs import BriefService
 from classroom_sync.services.deadlines import DeadlineService
+from classroom_sync.services.plan_suggestions import (
+    AiSuggestionSettings,
+    OpenAiPlanSuggestionService,
+)
 from classroom_sync.services.plans import PlanService
 from classroom_sync.services.read_models import ClassroomReadService
 from classroom_sync.services.sessions import PluginSessionService
@@ -112,6 +117,18 @@ def create_runtime_services(settings: Settings) -> ClassroomServices:
         schema_registry=schema_registry,
     )
     deadline_service = DeadlineService(session_factory, brief_service, clock=utc_now)
+    try:
+        ai_settings = AiSuggestionSettings.from_settings(settings)
+    except AiSuggestionUnavailableError:
+        ai_settings = None
+    plan_suggestion_service = (
+        OpenAiPlanSuggestionService(
+            ai_settings,
+            httpx.Client(timeout=ai_settings.timeout_seconds),
+        )
+        if ai_settings is not None
+        else None
+    )
     return ClassroomServices(
         identity_gateway=identity_gateway,
         plan_service=plan_service,
@@ -120,6 +137,7 @@ def create_runtime_services(settings: Settings) -> ClassroomServices:
         brief_service=brief_service,
         deadline_service=deadline_service,
         read_service=ClassroomReadService(session_factory),
+        plan_suggestion_service=plan_suggestion_service,
     )
 
 

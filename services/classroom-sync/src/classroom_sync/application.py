@@ -9,6 +9,7 @@ from classroom_sync.auth.fincolab import Principal, StudentChildExperiment
 from classroom_sync.services.assignments import AssignmentService
 from classroom_sync.services.briefs import BriefService
 from classroom_sync.services.deadlines import DeadlineService
+from classroom_sync.services.plan_suggestions import PlanSuggestion, PlanSuggestionInput
 from classroom_sync.services.plans import PlanService
 from classroom_sync.services.read_models import ClassroomReadService
 from classroom_sync.services.sessions import PluginSessionService
@@ -28,6 +29,12 @@ class ClassroomIdentityGateway(Protocol):
     ) -> tuple[StudentChildExperiment, ...]: ...
 
 
+class ClassroomPlanSuggestionService(Protocol):
+    """A transient, teacher-authorized plan drafting capability."""
+
+    def generate(self, suggestion_input: PlanSuggestionInput) -> PlanSuggestion: ...
+
+
 @dataclass(frozen=True)
 class ClassroomServices:
     """Dependencies injected by composition root, never derived from client input."""
@@ -39,3 +46,4 @@ class ClassroomServices:
     brief_service: BriefService | None = None
     deadline_service: DeadlineService | None = None
     read_service: ClassroomReadService | None = None
+    plan_suggestion_service: ClassroomPlanSuggestionService | None = None

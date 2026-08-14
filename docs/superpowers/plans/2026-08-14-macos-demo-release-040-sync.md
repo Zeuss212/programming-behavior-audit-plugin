@@ -116,7 +116,7 @@ Run:
 
 Expected: `artifacts/myextension-0.4.0-py3-none-any.whl: OK`.
 
-- [ ] **Step 4: Commit the release synchronization**
+- [x] **Step 4: Commit the release synchronization**
 
 ```bash
 git add demo/macos_real_ai/deploy_demo.sh demo/macos_real_ai/.env.example \
@@ -134,7 +134,7 @@ git commit -m "fix: sync macOS demo to classroom release"
 - Consumes: the synchronized demo contract and existing classroom service tests.
 - Produces: fresh whole-branch evidence before integration.
 
-- [ ] **Step 1: Run the complete suite in the controlled local test environment**
+- [x] **Step 1: Run the complete suite in the controlled local test environment**
 
 Run:
 
@@ -155,7 +155,7 @@ uv run --no-project \
 
 Expected: exit 0 with no failures. The command needs the controlled local environment because tests bind temporary loopback ports and validate an ephemeral Nginx container.
 
-- [ ] **Step 2: Check repository hygiene**
+- [x] **Step 2: Check repository hygiene**
 
 Run:
 

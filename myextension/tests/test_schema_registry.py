@@ -747,6 +747,9 @@ def test_openapi_session_analysis_rejects_duplicate_top_level_evidence_claims():
 def test_openapi_contract_has_authenticated_typed_operations_and_resolvable_references():
     document = yaml.safe_load(OPENAPI_PATH.read_text(encoding="utf-8"))
     expected_success_responses = {
+        ("/myextension/platform/context", "get"): "PlatformContextResponse",
+        ("/myextension/platform/context", "post"): "PlatformContextResponse",
+        ("/myextension/platform/capture/bootstrap", "post"): "PlatformCaptureBootstrapResponse",
         ("/myextension/dimension-templates", "get"): "TemplateListResponse",
         ("/myextension/dimension-profiles", "get"): "ProfileListResponse",
         ("/myextension/dimension-profiles", "post"): "ProfileDraftResponse",
@@ -786,6 +789,9 @@ def test_openapi_contract_has_authenticated_typed_operations_and_resolvable_refe
         ("/myextension/sessions/{session_id}/analysis/{dimension_code}/review", "patch"): "DimensionReview",
     }
     expected_parameters = {
+        ("/myextension/platform/context", "get"): [],
+        ("/myextension/platform/context", "post"): [],
+        ("/myextension/platform/capture/bootstrap", "post"): [],
         ("/myextension/dimension-templates", "get"): [],
         ("/myextension/dimension-profiles", "get"): ["ProblemId"],
         ("/myextension/dimension-profiles", "post"): [],
@@ -841,6 +847,15 @@ def test_openapi_contract_has_authenticated_typed_operations_and_resolvable_refe
     }
 
     custom_statuses = {
+        ("/myextension/platform/context", "get"): {
+            "200", "401", "403", "409", "500", "503"
+        },
+        ("/myextension/platform/context", "post"): {
+            "200", "401", "403", "404", "409", "422", "500", "502", "503"
+        },
+        ("/myextension/platform/capture/bootstrap", "post"): {
+            "200", "401", "403", "404", "409", "500", "503"
+        },
         ("/myextension/log-folder/open", "post"): {
             "200", "401", "403", "409", "413", "422", "500"
         },

@@ -327,7 +327,13 @@ describe('teacher-first GuidedProfileEditor', () => {
     completeQuestion(editor, { teacherFocus: '循环边界' });
     clickButton(editor, '下一步：确认知识点');
     clickButton(editor, '我已确认以上知识点');
-    await flushPromises();
+    await waitFor(
+      () =>
+        Array.from(editor.node.querySelectorAll('button')).some(
+          button => button.textContent === '添加手工测试'
+        ),
+      'Test confirmation step did not render'
+    );
 
     clickButton(editor, '添加手工测试');
     setField(fieldByLabel(editor.node, '测试 1 名称'), '教师保留的边界测试');

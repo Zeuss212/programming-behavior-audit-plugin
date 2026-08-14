@@ -115,7 +115,7 @@ Demo 仅使用合成数据。**禁止将真实学生日志直接对外分享**�
 
 ## 故障排查
 
-- `wheel SHA-256 mismatch`：不要继续；恢复已核对的 `dist/myextension-0.3.0-py3-none-any.whl`。
+- `wheel SHA-256 mismatch`：不要继续；恢复已核对的 `deploy/bluedot/release-0.4.0/artifacts/myextension-0.4.0-py3-none-any.whl`，不要改用未跟踪的 `dist/` 制品。
 - 端口 18994 被占用：在 `.env` 中改用未占用的 1024–65535 端口，重新运行预检；不要结束未知进程。
 - `uv`/依赖安装失败：检查网络和磁盘后重试；失败的临时目录会保留供诊断。
 - 页面仍是旧 UI：确认地址是 18994，再做浏览器强制刷新；不要在 8899 上验收本 Demo。

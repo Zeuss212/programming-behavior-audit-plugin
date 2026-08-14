@@ -1670,6 +1670,10 @@ async def test_unexpected_error_is_generic_and_does_not_leak_private_data(
             "{}",
         ),
         ("POST", "myextension/log-folder/open", "{}"),
+        ("POST", "myextension/platform/register", "{}"),
+        ("GET", "myextension/platform/context", None),
+        ("POST", "myextension/platform/context", ""),
+        ("POST", "myextension/platform/capture/bootstrap", ""),
     ],
 )
 async def test_every_new_api_verb_rejects_unauthenticated_requests(
@@ -1844,6 +1848,61 @@ async def test_segment_api_success_and_exact_replay(
     assert store.calls[0][1] == {
         key: value for key, value in body.items() if key != "schema_version"
     }
+
+
+async def test_student_segment_api_queues_evidence_after_local_receipt(
+    jp_fetch,
+    jp_web_app,
+    monkeypatch,
+    tmp_path,
+):
+    class Outbox:
+        def __init__(self):
+            self.entries = []
+
+        def enqueue(self, session_id, chunk):
+            self.entries.append((session_id, chunk))
+
+    class EvidenceWorker:
+        def __init__(self):
+            self.notifications = 0
+
+        def notify(self):
+            self.notifications += 1
+
+    store = install_segment_boundary(jp_web_app, monkeypatch)
+    outbox = Outbox()
+    evidence_worker = EvidenceWorker()
+    monkeypatch.setenv("JUPYTERLAB_BEHAVIOR_AUDIT_PLATFORM_MODE", "student")
+    monkeypatch.setenv("JUPYTERLAB_BEHAVIOR_AUDIT_SYNC_BASE_URL", "https://sync.example")
+    monkeypatch.setenv("JUPYTERLAB_BEHAVIOR_AUDIT_LOG_DIR", str(tmp_path))
+    monkeypatch.setitem(jp_web_app.settings, "myextension_evidence_outbox", outbox)
+    monkeypatch.setitem(
+        jp_web_app.settings,
+        "myextension_evidence_worker",
+        evidence_worker,
+    )
+    session_id = "10000000-0000-4000-8000-000000000020"
+    body = frozen_segment_batch()
+    body["segments"][0]["event_id"] = f"{session_id}:1"
+
+    response = await jp_fetch(
+        "myextension",
+        "sessions",
+        session_id,
+        "segments",
+        method="POST",
+        body=json.dumps(body),
+        headers={"Content-Type": "application/json"},
+        raise_error=False,
+    )
+
+    assert response.code == 202
+    assert len(store.calls) == 1
+    assert len(outbox.entries) == 1
+    assert outbox.entries[0][0] == session_id
+    assert outbox.entries[0][1].first_event_sequence == 1
+    assert evidence_worker.notifications == 1
 
 
 async def test_segment_api_maps_content_conflict(

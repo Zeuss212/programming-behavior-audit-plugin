@@ -1,0 +1,1 @@
+log_format classroom_safe '$remote_addr [$time_local] "$request_method $uri $server_protocol" $status $body_bytes_sent';

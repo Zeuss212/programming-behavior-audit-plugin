@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Server-authoritative local platform context response v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "request_id",
+    "mode",
+    "capabilities",
+    "classroom_session"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "request_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "mode": { "enum": ["local", "student"] },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "canAuthorPlan",
+        "canPublishPlan",
+        "canConfigureAi",
+        "canUseAssessmentAssist",
+        "canCapture",
+        "canSubmit"
+      ],
+      "properties": {
+        "canAuthorPlan": { "type": "boolean" },
+        "canPublishPlan": { "type": "boolean" },
+        "canConfigureAi": { "type": "boolean" },
+        "canUseAssessmentAssist": { "type": "boolean" },
+        "canCapture": { "type": "boolean" },
+        "canSubmit": { "type": "boolean" }
+      }
+    },
+    "classroom_session": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "assignment_id",
+            "plan_id",
+            "plan_version",
+            "session_id",
+            "profile",
+            "scheduled_end_at",
+            "evidence_cutoff_at",
+            "last_sync_at"
+          ],
+          "properties": {
+            "assignment_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "plan_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "plan_version": { "type": "integer", "minimum": 1 },
+            "session_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "profile": { "$ref": "profile-version-v2.json" },
+            "scheduled_end_at": { "type": "string", "format": "date-time" },
+            "evidence_cutoff_at": { "type": "string", "format": "date-time" },
+            "last_sync_at": { "type": "string", "format": "date-time" }
+          }
+        }
+      ]
+    }
+  }
+}

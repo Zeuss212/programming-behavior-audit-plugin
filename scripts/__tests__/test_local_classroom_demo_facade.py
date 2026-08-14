@@ -97,7 +97,7 @@ def test_teacher_login_returns_usable_roster_and_parent_project():
         assert parent["username"] == "teacher001"
 
 
-def test_student_receives_only_own_child_and_loopback_workbench():
+def test_student_receives_parent_metadata_and_own_child_for_compatibility_matching():
     with demo_client() as client:
         status, projects = client.request(
             "GET",
@@ -105,7 +105,19 @@ def test_student_receives_only_own_child_and_loopback_workbench():
             token="student001-token",
         )
         assert status == HTTPStatus.OK
-        assert [project["id"] for project in projects["data"]] == ["child-experiment-001"]
+        assert [project["id"] for project in projects["data"]] == [
+            "parent-experiment-001",
+            "child-experiment-001",
+        ]
+        assert projects["data"][1]["name"] == "exp-student001-a1b2"
+
+        status, parent = client.request(
+            "GET",
+            "/v1/spaces/course-001/algorithm_development/parent-experiment-001",
+            token="student001-token",
+        )
+        assert status == HTTPStatus.FORBIDDEN
+        assert parent == {"detail": "demo_resource_access_denied"}
 
         status, workbench = client.request(
             "GET",

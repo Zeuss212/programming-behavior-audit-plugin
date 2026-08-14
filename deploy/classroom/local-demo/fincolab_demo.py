@@ -138,7 +138,7 @@ def _parent_project() -> dict[str, object]:
 def _student_project() -> dict[str, object]:
     return {
         "id": CHILD_ALGORITHM_ID,
-        "name": "student001-字典读取课堂练习",
+        "name": "exp-student001-a1b2",
         "username": "student001",
         "description": f"[FINCOLAB_PARENT_PROJECT_ID:{PARENT_ALGORITHM_ID}] 本地课堂学生任务",
         "project_type": "notebook",
@@ -256,7 +256,10 @@ class DemoFincolabHandler(BaseHTTPRequestHandler):
 
     def _handle_course_algorithm_get(self, user: DemoUser, tail: list[str]) -> None:
         if not tail:
-            rows = [_parent_project(), _student_project()] if user.role_name == "teacher" else [_student_project()]
+            # The student UI matches its private child against the teacher's
+            # parent metadata.  Listing the parent permits that local
+            # association; its detail endpoint remains teacher-only below.
+            rows = [_parent_project(), _student_project()]
             self._reply(HTTPStatus.OK, _pagination(rows))
             return
         algorithm_id = tail[0]

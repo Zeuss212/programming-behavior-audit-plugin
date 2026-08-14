@@ -50,13 +50,15 @@ Server 2、`jsonschema` 与插件版本。`verify_image.sh` 检查学生权限�
 
 ```text
 JUPYTERLAB_BEHAVIOR_AUDIT_PLATFORM_MODE=student
-JUPYTERLAB_BEHAVIOR_AUDIT_SYNC_BASE_URL=https://真实课堂同步服务
+JUPYTERLAB_BEHAVIOR_AUDIT_SYNC_BASE_URL=https://classroom-sync.example.invalid/classroom-api
 JUPYTERLAB_BEHAVIOR_AUDIT_LOG_DIR=/workspace/result/behavior-audit
 JUPYTERLAB_BEHAVIOR_AUDIT_DEADLINE_POLL_SECONDS=30
 ```
 
 不要在镜像、模板文本、日志或 ticket URL 中写入 API key、平台 JWT、对象存储凭据或课堂
-票据。学生仅从 BAMS 的 `https://14.103.139.131:40037` 入口进入新建测试工作台。
+票据。该同步地址必须是 BAMS 反向代理提供的 HTTPS `/classroom-api` 路径，不能填写课堂服务
+主机的 loopback 地址或 `40037` 工作台端口。学生仅从 BAMS 的 `https://14.103.139.131:40037`
+入口进入新建测试工作台。
 
 ## 5. 回滚
 

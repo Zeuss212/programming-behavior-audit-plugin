@@ -15,6 +15,7 @@ SYNC_BASE_URL_ENV = "JUPYTERLAB_BEHAVIOR_AUDIT_SYNC_BASE_URL"
 LOG_DIR_ENV = "JUPYTERLAB_BEHAVIOR_AUDIT_LOG_DIR"
 DEADLINE_POLL_SECONDS_ENV = "JUPYTERLAB_BEHAVIOR_AUDIT_DEADLINE_POLL_SECONDS"
 ALLOW_INSECURE_LOOPBACK_ENV = "JUPYTERLAB_BEHAVIOR_AUDIT_ALLOW_INSECURE_LOOPBACK"
+LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 @dataclass(frozen=True)
@@ -73,14 +74,11 @@ class PlatformConfig:
     @staticmethod
     def _validate_sync_base_url(value: str, allow_insecure_loopback: bool) -> None:
         parsed = urlparse(value)
+        if parsed.hostname in LOOPBACK_HOSTS:
+            if allow_insecure_loopback and parsed.scheme == "http":
+                return
+            raise RuntimeError("student mode sync_base_url must not target a loopback host.")
         if parsed.scheme == "https" and parsed.hostname:
-            return
-        loopback_hosts = {"127.0.0.1", "localhost", "::1"}
-        if (
-            allow_insecure_loopback
-            and parsed.scheme == "http"
-            and parsed.hostname in loopback_hosts
-        ):
             return
         raise RuntimeError("student mode sync_base_url must use HTTPS.")
 

@@ -11,7 +11,7 @@ docker run \
   --entrypoint /bin/sh \
   --tmpfs /workspace/result:rw,mode=1777 \
   --env JUPYTERLAB_BEHAVIOR_AUDIT_PLATFORM_MODE=student \
-  --env JUPYTERLAB_BEHAVIOR_AUDIT_SYNC_BASE_URL=https://classroom-sync.example.invalid \
+  --env JUPYTERLAB_BEHAVIOR_AUDIT_SYNC_BASE_URL=https://classroom-sync.example.invalid/classroom-api \
   --env JUPYTERLAB_BEHAVIOR_AUDIT_DEADLINE_POLL_SECONDS=30 \
   "$1" \
   -c '

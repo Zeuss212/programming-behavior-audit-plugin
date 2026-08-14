@@ -44,7 +44,7 @@ def test_classroom_release_040_declares_student_runtime_without_secrets() -> Non
     assert pyproject["tool"]["hatch"]["version"]["source"] == "nodejs"
     assert values == {
         "JUPYTERLAB_BEHAVIOR_AUDIT_PLATFORM_MODE": "student",
-        "JUPYTERLAB_BEHAVIOR_AUDIT_SYNC_BASE_URL": "https://classroom-sync.example.invalid",
+        "JUPYTERLAB_BEHAVIOR_AUDIT_SYNC_BASE_URL": "https://classroom-sync.example.invalid/classroom-api",
         "JUPYTERLAB_BEHAVIOR_AUDIT_LOG_DIR": "/workspace/result/behavior-audit",
         "JUPYTERLAB_BEHAVIOR_AUDIT_DEADLINE_POLL_SECONDS": "30",
         "JUPYTERLAB_BEHAVIOR_AUDIT_ANALYSIS_TIMEOUT_SEC": "180",
@@ -214,7 +214,7 @@ def test_verify_script_checks_classroom_capabilities_and_has_no_runtime_secret(
         "--env",
         "JUPYTERLAB_BEHAVIOR_AUDIT_PLATFORM_MODE=student",
         "--env",
-        "JUPYTERLAB_BEHAVIOR_AUDIT_SYNC_BASE_URL=https://classroom-sync.example.invalid",
+        "JUPYTERLAB_BEHAVIOR_AUDIT_SYNC_BASE_URL=https://classroom-sync.example.invalid/classroom-api",
         "--env",
         "JUPYTERLAB_BEHAVIOR_AUDIT_DEADLINE_POLL_SECONDS=30",
         "registry.invalid/behavior-audit:0.4.0-classroom",

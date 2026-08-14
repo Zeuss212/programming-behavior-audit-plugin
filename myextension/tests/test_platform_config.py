@@ -33,6 +33,36 @@ def test_student_mode_allows_loopback_http_only_when_explicitly_configured_for_t
     assert config.deadline_poll_seconds == 30
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://127.0.0.1:18080/classroom-api",
+        "https://localhost/classroom-api",
+        "https://[::1]/classroom-api",
+    ],
+)
+def test_student_mode_rejects_loopback_https_sync_service_urls(value: str):
+    with pytest.raises(RuntimeError, match="loopback"):
+        PlatformConfig.from_env(
+            {
+                "JUPYTERLAB_BEHAVIOR_AUDIT_PLATFORM_MODE": "student",
+                "JUPYTERLAB_BEHAVIOR_AUDIT_SYNC_BASE_URL": value,
+            }
+        )
+
+
+def test_student_mode_accepts_bams_https_classroom_api_prefix(tmp_path):
+    config = PlatformConfig.from_env(
+        {
+            "JUPYTERLAB_BEHAVIOR_AUDIT_PLATFORM_MODE": "student",
+            "JUPYTERLAB_BEHAVIOR_AUDIT_SYNC_BASE_URL": "https://bams.example.invalid/classroom-api",
+            "JUPYTERLAB_BEHAVIOR_AUDIT_LOG_DIR": str(tmp_path),
+        }
+    )
+
+    assert config.sync_base_url == "https://bams.example.invalid/classroom-api"
+
+
 def test_local_mode_does_not_require_platform_connection_configuration():
     config = PlatformConfig.from_env({})
 

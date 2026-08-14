@@ -29,7 +29,7 @@ TARGET_IMAGE='behavior-audit:0.4.0-classroom'
 
 ## BAMS 运行参数
 
-将 `runtime.env.example` 复制为平台运行配置，并替换其中的 `JUPYTERLAB_BEHAVIOR_AUDIT_SYNC_BASE_URL` 为真实课堂同步服务 HTTPS 地址。BAMS 必须把持久卷挂载到 `/workspace/result`。
+将 `runtime.env.example` 复制为平台运行配置，并替换其中的 `JUPYTERLAB_BEHAVIOR_AUDIT_SYNC_BASE_URL` 为 BAMS HTTPS 入口下的真实 `/classroom-api` 地址。该地址不能是课堂服务主机的 loopback 地址，也不能把 BAMS 工作台端口 `40037` 当作课堂 API。BAMS 必须把持久卷挂载到 `/workspace/result`。
 
 不要把 API Key、平台 JWT、S3 凭据或一次性票据写进 Dockerfile、环境示例或镜像。它们只能由 BAMS Secret 在运行时注入。学生入口仍只使用 `https://14.103.139.131:40037`。
 

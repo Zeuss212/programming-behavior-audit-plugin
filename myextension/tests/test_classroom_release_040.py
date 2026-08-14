@@ -243,6 +243,20 @@ def test_release_bundle_uses_the_current_built_wheel() -> None:
     assert release_wheel.read_bytes() == built_wheel.read_bytes()
 
 
+def test_checked_in_handoff_archive_uses_the_classroom_api_runtime_prefix() -> None:
+    archive = ROOT / "releases" / "behavior-audit-classroom-0.4.0-linux-amd64-buildkit.tar.gz"
+
+    with tarfile.open(archive, "r:gz") as bundle:
+        member = bundle.getmember("behavior-audit-classroom-0.4.0/runtime.env.example")
+        runtime = bundle.extractfile(member)
+
+        assert runtime is not None
+        assert (
+            b"JUPYTERLAB_BEHAVIOR_AUDIT_SYNC_BASE_URL="
+            b"https://classroom-sync.example.invalid/classroom-api\n" in runtime.read()
+        )
+
+
 def test_handoff_archive_contains_only_manifested_payloads_and_checksums(
     tmp_path: Path,
 ) -> None:

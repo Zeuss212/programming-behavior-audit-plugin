@@ -22,29 +22,37 @@
 
 **Files:**
 - Modify: `demo/macos_real_ai/tests/test_demo_assets.py:12-31`
-- Test: `demo/macos_real_ai/tests/test_demo_assets.py::DemoAssetTests::test_release_assets_target_0_4_0_and_the_three_session_logs`
+- Modify: `demo/macos_real_ai/tests/test_shell_safety.py:33-54`
+- Test: `demo/macos_real_ai/tests/test_shell_safety.py::ShellSafetyTests::test_preflight_uses_checked_in_classroom_release_by_default`
 
 **Interfaces:**
 - Consumes: current `package.json`, `demo/macos_real_ai/deploy_demo.sh`, and the published `0.4.0` checksum.
-- Produces: a source-level regression test that fails if the demo defaults back to an ignored local wheel or stale hash.
+- Produces: a behavioral regression test that fails if the demo defaults back to an ignored local wheel, a stale hash, or a non-reproducible release coordinate.
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
-def test_release_assets_target_0_4_0_and_the_three_session_logs(self) -> None:
-    package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
-    deploy = (DEMO_DIR / "deploy_demo.sh").read_text(encoding="utf-8")
+def test_preflight_uses_checked_in_classroom_release_by_default(self) -> None:
+    allowed = self.temp / "allowed.env"
+    allowed.write_text(
+        "DEMO_PORT=18995\n"
+        "DEMO_BASE_URL=https://ark.cn-beijing.volces.com/api/coding/v3\n"
+        "DEMO_MODEL=glm-5-2-260617\n",
+        encoding="utf-8",
+    )
 
-    self.assertEqual(package["version"], "0.4.0")
+    result = self.run_script("deploy_demo.sh", "--preflight", "--env-file", str(allowed))
+
+    self.assertEqual(result.returncode, 0, result.stderr)
     self.assertIn(
-        "deploy/bluedot/release-0.4.0/artifacts/myextension-0.4.0-py3-none-any.whl",
-        deploy,
+        "Delivery wheel: "
+        + str(
+            ROOT
+            / "deploy/bluedot/release-0.4.0/artifacts"
+            / "myextension-0.4.0-py3-none-any.whl"
+        ),
+        result.stdout,
     )
-    self.assertIn(
-        "bc9cb1cdd3e95056f5ed9eed1aff19e1cf36e112966772b9fbdc86cd3b10804c",
-        deploy,
-    )
-    self.assertNotIn("$PROJECT_ROOT/dist/", deploy)
 ```
 
 - [ ] **Step 2: Run the focused test to verify it fails**
@@ -55,10 +63,10 @@ Run:
 UV_CACHE_DIR=/private/tmp/classroom-platform-uv-cache \
 uv run --no-project --with 'pytest>=8,<9' \
 python -m pytest -q \
-demo/macos_real_ai/tests/test_demo_assets.py::DemoAssetTests::test_release_assets_target_0_4_0_and_the_three_session_logs
+demo/macos_real_ai/tests/test_shell_safety.py::ShellSafetyTests::test_preflight_uses_checked_in_classroom_release_by_default
 ```
 
-Expected: FAIL because the script still contains the `dist/myextension-0.3.0` path and old SHA-256.
+Expected: FAIL with `wheel SHA-256 mismatch`, because the default still selects the stale ignored `dist/myextension-0.3.0` wheel.
 
 ### Task 2: Sync defaults and human-facing guidance
 
@@ -80,7 +88,7 @@ DEMO_WHEEL="$PROJECT_ROOT/deploy/bluedot/release-0.4.0/artifacts/myextension-0.4
 EXPECTED_WHEEL_SHA256=${DEMO_EXPECTED_WHEEL_SHA256:-"bc9cb1cdd3e95056f5ed9eed1aff19e1cf36e112966772b9fbdc86cd3b10804c"}
 ```
 
-Keep the existing override parser and hash comparison untouched. Update only the comments and troubleshooting text that name the old local 0.3.0 wheel.
+Keep the existing override parser and hash comparison untouched. Update only the comments and troubleshooting text that name the old local 0.3.0 wheel. Remove the stale release-coordinate assertions from `test_demo_assets.py`; the shell-safety test above is the behavioral contract for the default artifact.
 
 - [ ] **Step 2: Run focused regression tests**
 
@@ -108,7 +116,8 @@ Expected: `artifacts/myextension-0.4.0-py3-none-any.whl: OK`.
 
 ```bash
 git add demo/macos_real_ai/deploy_demo.sh demo/macos_real_ai/.env.example \
-  demo/macos_real_ai/README.md demo/macos_real_ai/tests/test_demo_assets.py
+  demo/macos_real_ai/README.md demo/macos_real_ai/tests/test_demo_assets.py \
+  demo/macos_real_ai/tests/test_shell_safety.py
 git commit -m "fix: sync macOS demo to classroom release"
 ```
 

@@ -13,10 +13,11 @@ from classroom_sync.application import ClassroomServices
 from classroom_sync.auth.fincolab import Principal, StudentChildExperiment
 from classroom_sync.config import Settings
 from classroom_sync.domain.schemas import ClassroomSchemaRegistry
-from classroom_sync.errors import ValidationError
+from classroom_sync.errors import UpstreamUnavailableError, ValidationError
 from classroom_sync.main import create_app
 from classroom_sync.models import (
     Base,
+    ClassroomBriefAnalysisJob,
     EvidenceChunk,
     ExperimentPlanBinding,
     MonitorSession,
@@ -24,6 +25,10 @@ from classroom_sync.models import (
     StudentBrief,
 )
 from classroom_sync.services.assignments import AssignmentService
+from classroom_sync.services.brief_analysis import (
+    BriefAiAnalysis,
+    BriefAnalysisJobService,
+)
 from classroom_sync.services.briefs import BriefContent, BriefService, TeacherReviewInput
 from classroom_sync.services.deadlines import DeadlineService
 from classroom_sync.services.plans import PlanService
@@ -162,6 +167,122 @@ def test_one_logical_brief_keeps_first_submission_time_and_revisions():
         assert monitor_session is not None
         assert monitor_session.status == "completed"
         assert monitor_session.active_slot is None
+
+
+def test_server_requested_analysis_writes_pending_brief_and_durable_job():
+    now = datetime(2026, 8, 12, 8, 30, tzinfo=UTC)
+    service, factory, _registry = seeded_brief_service(now)
+
+    brief = service.submit(
+        IDS["session"], valid_content(), reason="student_manual", request_ai_analysis=True
+    )
+
+    assert brief.payload["ai_analysis_status"] == "pending"
+    assert brief.payload["ai_analysis"] is None
+    with factory() as session:
+        jobs = list(session.scalars(select(ClassroomBriefAnalysisJob)))
+    assert [(job.source_brief_id, job.status, job.attempts) for job in jobs] == [
+        (brief.id, "pending", 0)
+    ]
+
+
+def test_analysis_worker_appends_a_ready_revision_without_overwriting_base_brief():
+    now = datetime(2026, 8, 12, 8, 30, tzinfo=UTC)
+    brief_service, factory, _registry = seeded_brief_service(now)
+    base = brief_service.submit(
+        IDS["session"], valid_content(), reason="student_manual", request_ai_analysis=True
+    )
+
+    class AnalysisService:
+        def generate(self, _source):
+            return BriefAiAnalysis(
+                learning_overview="学生完成基础读取并修正了一次键访问错误。",
+                evidence_based_observations=["过程摘要显示学生进行了两次运行。"],
+                teaching_suggestions=["追问不存在键时的默认值处理。"],
+            )
+
+    worker = BriefAnalysisJobService(
+        factory,
+        brief_service,
+        AnalysisService(),
+        clock=lambda: now,
+    )
+
+    assert worker.run_due_jobs("worker-a") == 1
+
+    latest = brief_service.get_latest_brief(IDS["session"])
+    assert latest.revision == 2
+    assert latest.payload["summary"] == base.payload["summary"]
+    assert latest.payload["ai_analysis_status"] == "ready"
+    assert latest.payload["ai_analysis"] == {
+        "learning_overview": "学生完成基础读取并修正了一次键访问错误。",
+        "evidence_based_observations": ["过程摘要显示学生进行了两次运行。"],
+        "teaching_suggestions": ["追问不存在键时的默认值处理。"],
+    }
+    with factory() as session:
+        job = session.scalar(select(ClassroomBriefAnalysisJob))
+    assert job is not None
+    assert job.status == "completed"
+    assert job.lease_owner is None
+
+
+def test_analysis_worker_retries_from_the_actual_failure_time_then_marks_unavailable():
+    """A slow or retried provider must not shorten its next retry delay."""
+    start = datetime(2026, 8, 12, 8, 30, tzinfo=UTC)
+    current_time = [start]
+    brief_service, factory, _registry = seeded_brief_service(start)
+    base = brief_service.submit(
+        IDS["session"], valid_content(), reason="student_manual", request_ai_analysis=True
+    )
+
+    class UnavailableAnalysisService:
+        def generate(self, _source):
+            raise UpstreamUnavailableError("ai_brief_analysis_upstream_unavailable")
+
+    worker = BriefAnalysisJobService(
+        factory,
+        brief_service,
+        UnavailableAnalysisService(),
+        clock=lambda: current_time[0],
+    )
+
+    assert worker.run_due_jobs("worker-a") == 1
+    with factory() as session:
+        first_retry = session.scalar(select(ClassroomBriefAnalysisJob))
+    assert first_retry is not None
+    assert (first_retry.status, first_retry.attempts, first_retry.run_at.replace(tzinfo=UTC)) == (
+        "pending",
+        1,
+        start + timedelta(seconds=5),
+    )
+
+    current_time[0] = start + timedelta(seconds=5)
+    assert worker.run_due_jobs("worker-a") == 1
+    with factory() as session:
+        second_retry = session.scalar(select(ClassroomBriefAnalysisJob))
+    assert second_retry is not None
+    assert (second_retry.status, second_retry.attempts, second_retry.run_at.replace(tzinfo=UTC)) == (
+        "pending",
+        2,
+        start + timedelta(seconds=35),
+    )
+
+    current_time[0] = start + timedelta(seconds=35)
+    assert worker.run_due_jobs("worker-a") == 1
+
+    latest = brief_service.get_latest_brief(IDS["session"])
+    assert latest.revision == 2
+    assert latest.payload["summary"] == base.payload["summary"]
+    assert latest.payload["ai_analysis_status"] == "unavailable"
+    assert latest.payload["ai_analysis"] is None
+    with factory() as session:
+        completed = session.scalar(select(ClassroomBriefAnalysisJob))
+    assert completed is not None
+    assert (completed.status, completed.attempts, completed.failure_code) == (
+        "completed",
+        3,
+        "ai_brief_analysis_upstream_unavailable",
+    )
 
 
 def test_teacher_review_is_an_auditable_overlay_not_a_mutation_of_student_brief():

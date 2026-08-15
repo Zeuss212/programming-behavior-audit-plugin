@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import cast
 from uuid import uuid4
 
@@ -16,6 +16,7 @@ from classroom_sync.domain.schemas import ClassroomSchemaRegistry
 from classroom_sync.errors import AuthorizationError, NotFoundError, ValidationError
 from classroom_sync.models import (
     AuditEvent,
+    ClassroomBriefAnalysisJob,
     EvidenceChunk,
     MonitorSession,
     StudentAssignment,
@@ -61,6 +62,7 @@ class BriefService:
         content: BriefContent,
         *,
         reason: str,
+        request_ai_analysis: bool = False,
     ) -> StudentBrief:
         """Persist a new revision while retaining the logical brief and first submit time."""
 
@@ -105,7 +107,8 @@ class BriefService:
                 "knowledge_points": list(content.knowledge_points),
                 "process_overview": list(content.process_overview),
                 "issues": list(content.issues),
-                "ai_analysis_status": content.ai_analysis_status,
+                "ai_analysis_status": "pending" if request_ai_analysis else "not_requested",
+                "ai_analysis": None,
                 "generated_at": now.isoformat(),
             }
             self._schema_registry.validate("student-brief", payload)
@@ -121,6 +124,22 @@ class BriefService:
                 generated_at=now,
             )
             session.add(brief)
+            if request_ai_analysis:
+                session.add(
+                    ClassroomBriefAnalysisJob(
+                        id=str(uuid4()),
+                        source_brief_id=brief.id,
+                        run_at=now,
+                        status="pending",
+                        lease_owner=None,
+                        lease_expires_at=None,
+                        attempts=0,
+                        failure_code=None,
+                        completed_at=None,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
             monitor_session.status = status
             monitor_session.submission_reason = reason
             monitor_session.active_slot = None
@@ -170,6 +189,80 @@ class BriefService:
             self._audit(session, teacher_id, "teacher_review_submitted", review.id, now)
         return review
 
+    def complete_analysis_job(
+        self,
+        job_id: str,
+        *,
+        worker_id: str,
+        analysis: Mapping[str, object],
+    ) -> StudentBrief:
+        """Append one validated ready revision while atomically completing its lease."""
+
+        now = self._utc_now()
+        with self._session_factory.begin() as session:
+            job = self._locked_analysis_job(session, job_id, worker_id)
+            source = session.get(StudentBrief, job.source_brief_id)
+            if source is None:
+                raise NotFoundError("analysis_source_brief_not_found")
+            brief = self._append_analysis_revision(
+                session,
+                source,
+                ai_analysis_status="ready",
+                ai_analysis=dict(analysis),
+                generated_at=now,
+            )
+            job.status = "completed"
+            job.lease_owner = None
+            job.lease_expires_at = None
+            job.failure_code = None
+            job.completed_at = now
+            job.updated_at = now
+            self._audit(session, "classroom-ai-worker", "student_brief_ai_analysis_ready", brief.id, now)
+        return brief
+
+    def record_analysis_failure(
+        self,
+        job_id: str,
+        *,
+        worker_id: str,
+        failure_code: str,
+        retry_delay: timedelta | None,
+        occurred_at: datetime | None = None,
+    ) -> None:
+        """Either reschedule a leased job or persist one safe unavailable result."""
+
+        now = self._as_utc(occurred_at) if occurred_at is not None else self._utc_now()
+        with self._session_factory.begin() as session:
+            job = self._locked_analysis_job(session, job_id, worker_id)
+            job.failure_code = failure_code
+            job.lease_owner = None
+            job.lease_expires_at = None
+            job.updated_at = now
+            if retry_delay is not None:
+                job.status = "pending"
+                job.run_at = now + retry_delay
+                return
+
+            source = session.get(StudentBrief, job.source_brief_id)
+            if source is None:
+                raise NotFoundError("analysis_source_brief_not_found")
+            brief = self._append_analysis_revision(
+                session,
+                source,
+                ai_analysis_status="unavailable",
+                ai_analysis=None,
+                generated_at=now,
+            )
+            job.status = "completed"
+            job.completed_at = now
+            self._audit(
+                session,
+                "classroom-ai-worker",
+                "student_brief_ai_analysis_unavailable",
+                brief.id,
+                now,
+            )
+
     def get_latest_brief(self, session_id: str) -> StudentBrief:
         """Return the latest revision of the one student-facing logical brief."""
 
@@ -195,6 +288,58 @@ class BriefService:
             if assignment is None:
                 raise NotFoundError("student_assignment_not_found")
             return assignment
+
+    def _append_analysis_revision(
+        self,
+        session: Session,
+        source: StudentBrief,
+        *,
+        ai_analysis_status: str,
+        ai_analysis: dict[str, object] | None,
+        generated_at: datetime,
+    ) -> StudentBrief:
+        latest = session.scalar(
+            select(StudentBrief)
+            .where(StudentBrief.session_id == source.session_id)
+            .order_by(StudentBrief.revision.desc())
+            .limit(1)
+        )
+        if latest is None:
+            raise NotFoundError("student_brief_not_found")
+        payload = dict(source.payload)
+        payload["revision"] = latest.revision + 1
+        payload["ai_analysis_status"] = ai_analysis_status
+        payload["ai_analysis"] = ai_analysis
+        payload["generated_at"] = generated_at.isoformat()
+        self._schema_registry.validate("student-brief", payload)
+        brief = StudentBrief(
+            id=str(uuid4()),
+            session_id=source.session_id,
+            assignment_id=source.assignment_id,
+            revision=latest.revision + 1,
+            status=source.status,
+            data_completeness=source.data_completeness,
+            submission_reason=source.submission_reason,
+            payload=payload,
+            generated_at=generated_at,
+        )
+        session.add(brief)
+        return brief
+
+    @staticmethod
+    def _locked_analysis_job(
+        session: Session, job_id: str, worker_id: str
+    ) -> ClassroomBriefAnalysisJob:
+        job = session.scalar(
+            select(ClassroomBriefAnalysisJob)
+            .where(ClassroomBriefAnalysisJob.id == job_id)
+            .with_for_update()
+        )
+        if job is None:
+            raise NotFoundError("brief_analysis_job_not_found")
+        if job.status != "leased" or job.lease_owner != worker_id:
+            raise AuthorizationError("brief_analysis_lease_not_owned")
+        return job
 
     @staticmethod
     def _validate_evidence_refs(

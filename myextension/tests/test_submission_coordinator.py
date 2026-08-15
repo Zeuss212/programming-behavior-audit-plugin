@@ -90,6 +90,7 @@ def test_manual_and_deadline_submission_share_one_local_idempotent_result(
     assert len(client.payloads) == 1
     assert client.payloads[0]["reason"] == "student_manual"
     assert client.payloads[0]["knowledge_points"][0]["status"] == "not_demonstrated"
+    assert "ai_analysis_status" not in client.payloads[0]
     assert session_store.read(context().session_id)["status"] == "finalized"
     assert service.get_classroom_brief(context().session_id) is not None
 

@@ -29,7 +29,7 @@ class SubmitBriefRequest(BaseModel):
     knowledge_points: list[dict[str, object]]
     process_overview: list[str]
     issues: list[str]
-    ai_analysis_status: str
+    ai_analysis_status: str | None = None
     reason: str
 
 
@@ -154,9 +154,9 @@ def submit_brief(
             knowledge_points=tuple(payload.knowledge_points),
             process_overview=tuple(payload.process_overview),
             issues=tuple(payload.issues),
-            ai_analysis_status=payload.ai_analysis_status,
         ),
         reason=payload.reason,
+        request_ai_analysis=services.brief_analysis_service is not None,
     )
     return {
         "brief_id": brief.payload["brief_id"],

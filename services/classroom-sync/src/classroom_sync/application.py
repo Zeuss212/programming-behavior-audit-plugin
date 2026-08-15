@@ -7,6 +7,7 @@ from typing import Protocol
 
 from classroom_sync.auth.fincolab import Principal, StudentChildExperiment
 from classroom_sync.services.assignments import AssignmentService
+from classroom_sync.services.brief_analysis import BriefAnalysisJobService
 from classroom_sync.services.briefs import BriefService
 from classroom_sync.services.deadlines import DeadlineService
 from classroom_sync.services.plan_suggestions import PlanSuggestion, PlanSuggestionInput
@@ -47,3 +48,4 @@ class ClassroomServices:
     deadline_service: DeadlineService | None = None
     read_service: ClassroomReadService | None = None
     plan_suggestion_service: ClassroomPlanSuggestionService | None = None
+    brief_analysis_service: BriefAnalysisJobService | None = None

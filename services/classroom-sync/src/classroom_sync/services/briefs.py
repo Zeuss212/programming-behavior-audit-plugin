@@ -33,7 +33,6 @@ class BriefContent:
     knowledge_points: tuple[dict[str, object], ...]
     process_overview: tuple[str, ...]
     issues: tuple[str, ...]
-    ai_analysis_status: str
 
 
 @dataclass(frozen=True)

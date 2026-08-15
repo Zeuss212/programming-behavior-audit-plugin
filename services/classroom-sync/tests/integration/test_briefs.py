@@ -141,7 +141,6 @@ def valid_content(summary: str = "完成主要功能并验证运行结果。") -
         ),
         process_overview=("完成两次运行并修正一次键错误。",),
         issues=("缺少空键测试。",),
-        ai_analysis_status="not_requested",
     )
 
 
@@ -451,7 +450,6 @@ def test_plugin_can_manually_submit_one_brief_for_its_own_monitor_session():
             "knowledge_points": list(content.knowledge_points),
             "process_overview": list(content.process_overview),
             "issues": list(content.issues),
-            "ai_analysis_status": content.ai_analysis_status,
             "reason": "student_manual",
         },
     )
@@ -459,6 +457,41 @@ def test_plugin_can_manually_submit_one_brief_for_its_own_monitor_session():
     assert response.status_code == 201
     assert response.json()["revision"] == 1
     assert response.json()["status"] == "completed"
+    first = brief_service.get_latest_brief(IDS["session"])
+    assert first.payload["ai_analysis_status"] == "not_requested"
+
+    configured_app = create_app(
+        Settings(database_url="sqlite://"),
+        classroom_services=ClassroomServices(
+            identity_gateway=TeacherIdentityGateway(),
+            plan_service=PlanService(factory, registry, clock=lambda: now),
+            assignment_service=AssignmentService(factory, clock=lambda: now),
+            plugin_session_service=plugin_service,
+            brief_service=brief_service,
+            brief_analysis_service=object(),
+        ),
+    )
+    configured_response = request(
+        configured_app,
+        "POST",
+        f"/v1/classroom/plugin/sessions/{IDS['session']}/submit",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "summary": content.summary,
+            "knowledge_points": list(content.knowledge_points),
+            "process_overview": list(content.process_overview),
+            "issues": list(content.issues),
+            "ai_analysis_status": "ready",
+            "reason": "student_manual",
+        },
+    )
+
+    assert configured_response.status_code == 201
+    configured = brief_service.get_latest_brief(IDS["session"])
+    assert configured.payload["ai_analysis_status"] == "pending"
+    with factory() as session:
+        jobs = list(session.scalars(select(ClassroomBriefAnalysisJob)))
+    assert len(jobs) == 1
 
 
 def test_teacher_can_advance_the_hard_deadline_by_ending_class_early():

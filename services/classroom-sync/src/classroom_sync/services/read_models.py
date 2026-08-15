@@ -189,7 +189,16 @@ class ClassroomReadService:
     def _brief_summary(student_brief: StudentBrief | None) -> dict[str, object] | None:
         if student_brief is None:
             return None
-        return {"status": student_brief.status, "revision": student_brief.revision}
+        ai_analysis_status = student_brief.payload.get("ai_analysis_status")
+        return {
+            "status": student_brief.status,
+            "revision": student_brief.revision,
+            "ai_analysis_status": (
+                ai_analysis_status
+                if ai_analysis_status in {"not_requested", "pending", "ready", "unavailable"}
+                else "not_requested"
+            ),
+        }
 
     @staticmethod
     def _isoformat(value: datetime | None) -> str | None:

@@ -19,10 +19,15 @@ from classroom_sync.domain.schemas import ClassroomSchemaRegistry
 from classroom_sync.errors import AiSuggestionUnavailableError
 from classroom_sync.main import create_app
 from classroom_sync.services.assignments import AssignmentService
+from classroom_sync.services.brief_analysis import (
+    BriefAnalysisJobService,
+    OpenAiBriefAnalysisService,
+)
 from classroom_sync.services.briefs import BriefService
 from classroom_sync.services.deadlines import DeadlineService
 from classroom_sync.services.plan_suggestions import (
-    AiSuggestionSettings,
+    AiProviderSettings,
+    OpenAiCompletionClient,
     OpenAiPlanSuggestionService,
 )
 from classroom_sync.services.plans import PlanService
@@ -118,17 +123,20 @@ def create_runtime_services(settings: Settings) -> ClassroomServices:
     )
     deadline_service = DeadlineService(session_factory, brief_service, clock=utc_now)
     try:
-        ai_settings = AiSuggestionSettings.from_settings(settings)
+        ai_settings = AiProviderSettings.from_settings(settings)
     except AiSuggestionUnavailableError:
         ai_settings = None
-    plan_suggestion_service = (
-        OpenAiPlanSuggestionService(
-            ai_settings,
-            httpx.Client(timeout=ai_settings.timeout_seconds),
+    plan_suggestion_service = None
+    brief_analysis_service = None
+    if ai_settings is not None:
+        ai_client = httpx.Client(timeout=ai_settings.timeout_seconds)
+        plan_suggestion_service = OpenAiPlanSuggestionService(ai_settings, ai_client)
+        brief_analysis_service = BriefAnalysisJobService(
+            session_factory,
+            brief_service,
+            OpenAiBriefAnalysisService(OpenAiCompletionClient(ai_settings, ai_client)),
+            clock=utc_now,
         )
-        if ai_settings is not None
-        else None
-    )
     return ClassroomServices(
         identity_gateway=identity_gateway,
         plan_service=plan_service,
@@ -138,6 +146,7 @@ def create_runtime_services(settings: Settings) -> ClassroomServices:
         deadline_service=deadline_service,
         read_service=ClassroomReadService(session_factory),
         plan_suggestion_service=plan_suggestion_service,
+        brief_analysis_service=brief_analysis_service,
     )
 
 

@@ -4,6 +4,7 @@ from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from classroom_sync.application import ClassroomServices
 from classroom_sync.domain.schemas import ClassroomSchemaRegistry
 from classroom_sync.models import (
     Base,
@@ -14,6 +15,7 @@ from classroom_sync.models import (
 )
 from classroom_sync.services.briefs import BriefService
 from classroom_sync.services.deadlines import DeadlineService
+from classroom_sync.worker import run_due_classroom_jobs
 
 IDS = {
     "binding": "c65f6e60-ecc1-4e36-9c0d-5ed2d0f3b67d",
@@ -158,3 +160,31 @@ def test_worker_claimed_job_closes_once_and_subsequent_ticks_are_noops():
     assert len(original_claim) == 1
     assert service.close_session(IDS["session"], worker_id="worker-a").revision == 1
     assert service.claim_due_jobs("worker-a", now + timedelta(days=1)) == ()
+
+
+def test_classroom_worker_runs_deadline_and_configured_analysis_families_in_one_tick():
+    """Removing either durable job family from the worker loop breaks this total."""
+    now = datetime(2026, 8, 12, 8, 0, tzinfo=UTC)
+    deadline_service, _factory = seeded_deadline_service(now)
+    deadline_service.schedule_session_deadline(IDS["session"])
+    deadline_service.record_teacher_end(IDS["session"], now - timedelta(minutes=15))
+
+    class AnalysisService:
+        def __init__(self) -> None:
+            self.worker_ids: list[str] = []
+
+        def run_due_jobs(self, worker_id: str) -> int:
+            self.worker_ids.append(worker_id)
+            return 1
+
+    analysis_service = AnalysisService()
+    services = ClassroomServices(
+        identity_gateway=object(),
+        plan_service=object(),
+        assignment_service=object(),
+        deadline_service=deadline_service,
+        brief_analysis_service=analysis_service,
+    )
+
+    assert run_due_classroom_jobs(services, "worker-a") == 2
+    assert analysis_service.worker_ids == ["worker-a"]

@@ -205,7 +205,6 @@ class SubmissionCoordinator:
             "knowledge_points": rows,
             "process_overview": process_overview[:5],
             "issues": issues[:3],
-            "ai_analysis_status": "not_requested",
             "reason": "",  # Filled from the durable state immediately before submit.
         }
 

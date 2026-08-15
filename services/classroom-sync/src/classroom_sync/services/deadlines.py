@@ -267,7 +267,6 @@ class DeadlineService:
             knowledge_points=tuple(points),
             process_overview=("系统自动收口，未收到学生手动提交。",),
             issues=("请优先查看数据完整度和证据引用。",),
-            ai_analysis_status="not_requested",
         )
 
     def _utc_now(self) -> datetime:

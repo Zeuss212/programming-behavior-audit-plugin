@@ -244,7 +244,11 @@ def test_teacher_reads_own_experiment_plan_and_allowlisted_monitoring(classroom_
                 "last_activity_at": (NOW + timedelta(minutes=10)).isoformat(),
                 "submission_reason": "student_manual",
             },
-            "brief": {"status": "completed", "revision": 1},
+            "brief": {
+                "status": "completed",
+                "revision": 1,
+                "ai_analysis_status": "not_requested",
+            },
         },
         {
             "student_id": "student-2",

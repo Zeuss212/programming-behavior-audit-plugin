@@ -10,7 +10,9 @@ import pytest
 from classroom_sync.config import Settings
 from classroom_sync.errors import AiSuggestionUnavailableError, UpstreamUnavailableError
 from classroom_sync.services.plan_suggestions import (
+    AiProviderSettings,
     AiSuggestionSettings,
+    OpenAiCompletionClient,
     OpenAiPlanSuggestionService,
     PlanSuggestionInput,
 )
@@ -33,6 +35,35 @@ def response_with(content: str) -> httpx.Response:
         200,
         json={"choices": [{"message": {"content": content}}]},
     )
+
+
+def test_completion_client_uses_coding_plan_endpoint_without_serializing_key() -> None:
+    recorded: list[httpx.Request] = []
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        recorded.append(request)
+        return response_with("课堂方案草稿")
+
+    client = httpx.Client(transport=httpx.MockTransport(responder))
+    settings = AiProviderSettings.from_settings(
+        configured_settings(
+            ai_base_url="https://open.bigmodel.cn/api/coding/paas/v4",
+            ai_model="glm-5.2",
+            ai_timeout_seconds=30,
+        )
+    )
+    assert settings is not None
+
+    result = OpenAiCompletionClient(settings, client).complete(
+        [{"role": "user", "content": "生成一个课堂方案"}],
+        temperature=0.2,
+        max_tokens=1200,
+    )
+
+    assert result == "课堂方案草稿"
+    assert recorded[0].url == "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions"
+    assert recorded[0].headers["authorization"] == "Bearer server-only-secret"
+    assert "server-only-secret" not in recorded[0].content.decode("utf-8")
 
 
 def test_adapter_posts_only_bounded_teaching_text_and_validates_output() -> None:

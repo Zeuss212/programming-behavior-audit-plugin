@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
@@ -16,7 +15,7 @@ from classroom_sync.errors import AiSuggestionUnavailableError, UpstreamUnavaila
 
 
 @dataclass(frozen=True)
-class AiSuggestionSettings:
+class AiProviderSettings:
     """Complete provider settings, derived only from server runtime configuration."""
 
     base_url: str
@@ -25,7 +24,7 @@ class AiSuggestionSettings:
     timeout_seconds: int = 15
 
     @classmethod
-    def from_settings(cls, settings: Settings) -> AiSuggestionSettings | None:
+    def from_settings(cls, settings: Settings) -> AiProviderSettings | None:
         values = (settings.ai_base_url, settings.ai_model, settings.ai_api_key)
         if all(value is None for value in values):
             return None
@@ -65,6 +64,71 @@ class AiSuggestionSettings:
         )
 
 
+AiSuggestionSettings = AiProviderSettings
+
+
+class OpenAiCompletionClient:
+    """Small OpenAI-compatible boundary that never logs provider credentials."""
+
+    def __init__(self, settings: AiProviderSettings, client: httpx.Client) -> None:
+        self._settings = settings
+        self._client = client
+
+    def complete(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float,
+        max_tokens: int,
+    ) -> str:
+        try:
+            response = self._client.post(
+                self.completion_url(self._settings.base_url),
+                headers={"Authorization": f"Bearer {self._settings.api_key}"},
+                json={
+                    "model": self._settings.model,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "messages": messages,
+                },
+                timeout=self._settings.timeout_seconds,
+            )
+        except httpx.RequestError as error:
+            raise UpstreamUnavailableError("ai_provider_upstream_unavailable") from error
+
+        if response.status_code >= 400:
+            raise UpstreamUnavailableError("ai_provider_upstream_unavailable")
+
+        try:
+            return self._response_content(response.json())
+        except (KeyError, TypeError, ValueError) as error:
+            raise UpstreamUnavailableError("ai_provider_upstream_unavailable") from error
+
+    @staticmethod
+    def completion_url(base_url: str) -> str:
+        if base_url.endswith("/chat/completions"):
+            return base_url
+        return f"{base_url}/chat/completions"
+
+    @staticmethod
+    def _response_content(payload: object) -> str:
+        if not isinstance(payload, dict):
+            raise TypeError("provider response is not an object")
+        choices = payload.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise ValueError("provider response has no choices")
+        choice = choices[0]
+        if not isinstance(choice, dict):
+            raise TypeError("provider choice is invalid")
+        message = choice.get("message")
+        if not isinstance(message, dict):
+            raise TypeError("provider message is invalid")
+        content = message.get("content")
+        if not isinstance(content, str):
+            raise TypeError("provider content is invalid")
+        return content
+
+
 class PlanSuggestionInput(BaseModel):
     """The bounded teacher text that may be sent to the configured provider."""
 
@@ -101,31 +165,25 @@ class PlanSuggestion:
 class OpenAiPlanSuggestionService:
     """A synchronous OpenAI-compatible adapter with a bounded request surface."""
 
-    def __init__(self, settings: AiSuggestionSettings | None, client: httpx.Client) -> None:
+    def __init__(self, settings: AiProviderSettings | None, client: httpx.Client) -> None:
         self._settings = settings
-        self._client = client
+        self._completion_client = (
+            OpenAiCompletionClient(settings, client) if settings is not None else None
+        )
 
     def generate(self, suggestion_input: PlanSuggestionInput) -> PlanSuggestion:
-        settings = self._settings
-        if settings is None:
+        completion_client = self._completion_client
+        if completion_client is None:
             raise AiSuggestionUnavailableError("ai_suggestion_not_configured")
 
         try:
-            response = self._client.post(
-                self._completion_url(settings.base_url),
-                headers={"Authorization": f"Bearer {settings.api_key}"},
-                json=self._request_payload(settings, suggestion_input),
-                timeout=settings.timeout_seconds,
+            content = completion_client.complete(
+                self._messages(suggestion_input), temperature=0.2, max_tokens=1200
             )
-        except httpx.RequestError as error:
+        except UpstreamUnavailableError as error:
             raise UpstreamUnavailableError("ai_suggestion_upstream_unavailable") from error
 
-        if response.status_code >= 400:
-            raise UpstreamUnavailableError("ai_suggestion_upstream_unavailable")
-
         try:
-            payload = response.json()
-            content = self._response_content(payload)
             suggestion = _ProviderSuggestion.model_validate_json(self._strip_optional_json_fence(content))
         except (json.JSONDecodeError, KeyError, TypeError, PydanticValidationError, ValueError) as error:
             raise UpstreamUnavailableError("ai_suggestion_upstream_unavailable") from error
@@ -136,20 +194,8 @@ class OpenAiPlanSuggestionService:
         )
 
     @staticmethod
-    def _completion_url(base_url: str) -> str:
-        if base_url.endswith("/chat/completions"):
-            return base_url
-        return f"{base_url}/chat/completions"
-
-    @staticmethod
-    def _request_payload(
-        settings: AiSuggestionSettings, suggestion_input: PlanSuggestionInput
-    ) -> dict[str, Any]:
-        return {
-            "model": settings.model,
-            "temperature": 0.2,
-            "max_tokens": 1200,
-            "messages": [
+    def _messages(suggestion_input: PlanSuggestionInput) -> list[dict[str, str]]:
+        return [
                 {
                     "role": "system",
                     "content": (
@@ -168,26 +214,7 @@ class OpenAiPlanSuggestionService:
                         ensure_ascii=False,
                     ),
                 },
-            ],
-        }
-
-    @staticmethod
-    def _response_content(payload: object) -> str:
-        if not isinstance(payload, dict):
-            raise TypeError("provider response is not an object")
-        choices = payload.get("choices")
-        if not isinstance(choices, list) or not choices:
-            raise ValueError("provider response has no choices")
-        choice = choices[0]
-        if not isinstance(choice, dict):
-            raise TypeError("provider choice is invalid")
-        message = choice.get("message")
-        if not isinstance(message, dict):
-            raise TypeError("provider message is invalid")
-        content = message.get("content")
-        if not isinstance(content, str):
-            raise TypeError("provider content is invalid")
-        return content
+        ]
 
     @staticmethod
     def _strip_optional_json_fence(content: str) -> str:

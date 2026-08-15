@@ -10,7 +10,7 @@ from classroom_sync.config import Settings
 from classroom_sync.domain.schemas import ClassroomSchemaRegistry
 from classroom_sync.errors import AiSuggestionUnavailableError
 from classroom_sync.runtime import contract_directory, s3_client_config
-from classroom_sync.services.plan_suggestions import AiSuggestionSettings
+from classroom_sync.services.plan_suggestions import AiProviderSettings, AiSuggestionSettings
 
 
 def test_runtime_configuration_requires_all_trusted_dependencies():
@@ -58,6 +58,33 @@ def test_ai_settings_require_all_three_server_values() -> None:
 
     with pytest.raises(AiSuggestionUnavailableError, match="ai_suggestion_not_configured"):
         AiSuggestionSettings.from_settings(settings)
+
+
+def test_ai_provider_settings_accept_coding_plan_url_and_bound_timeout() -> None:
+    settings = Settings(
+        database_url="sqlite://",
+        ai_base_url="https://open.bigmodel.cn/api/coding/paas/v4",
+        ai_model="glm-5.2",
+        ai_api_key="server-only-secret",
+        ai_timeout_seconds=30,
+    )
+
+    provider = AiProviderSettings.from_settings(settings)
+
+    assert provider is not None
+    assert provider.base_url == "https://open.bigmodel.cn/api/coding/paas/v4"
+    assert provider.timeout_seconds == 30
+
+    with pytest.raises(AiSuggestionUnavailableError, match="ai_suggestion_not_configured"):
+        AiProviderSettings.from_settings(
+            Settings(
+                database_url="sqlite://",
+                ai_base_url="https://open.bigmodel.cn/api/coding/paas/v4",
+                ai_model="glm-5.2",
+                ai_api_key="server-only-secret",
+                ai_timeout_seconds=31,
+            )
+        )
 
 
 def test_runtime_uses_bounded_s3_timeouts_for_retryable_storage_outages():

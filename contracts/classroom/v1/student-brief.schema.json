@@ -81,6 +81,30 @@
       "items": {"type": "string", "minLength": 1, "maxLength": 500}
     },
     "ai_analysis_status": {"enum": ["not_requested", "pending", "ready", "unavailable"]},
+    "ai_analysis": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": [
+        "learning_overview",
+        "evidence_based_observations",
+        "teaching_suggestions"
+      ],
+      "properties": {
+        "learning_overview": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "evidence_based_observations": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "items": {"type": "string", "minLength": 1, "maxLength": 500}
+        },
+        "teaching_suggestions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "items": {"type": "string", "minLength": 1, "maxLength": 500}
+        }
+      }
+    },
     "generated_at": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/timestamp"}
   }
 }

@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -184,6 +184,28 @@ class StudentBrief(Base):
     submission_reason: Mapped[str] = mapped_column(String(32), nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ClassroomBriefAnalysisJob(Base):
+    __tablename__ = "classroom_brief_analysis_jobs"
+    __table_args__ = (
+        UniqueConstraint("source_brief_id", name="uq_classroom_brief_analysis_jobs_source_brief"),
+        Index("ix_classroom_brief_analysis_jobs_status_run_at", "status", "run_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source_brief_id: Mapped[str] = mapped_column(
+        ForeignKey("student_briefs.id", ondelete="CASCADE"), nullable=False
+    )
+    run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    lease_owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False)
+    failure_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class TeacherReview(Base):

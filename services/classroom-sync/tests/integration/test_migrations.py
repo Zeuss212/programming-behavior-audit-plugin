@@ -7,7 +7,7 @@ from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError
 
-from classroom_sync.models import Base
+from classroom_sync.models import Base, ClassroomBriefAnalysisJob
 
 CORE_TABLES = {
     "plan_drafts",
@@ -20,6 +20,7 @@ CORE_TABLES = {
     "student_briefs",
     "teacher_reviews",
     "classroom_deadline_jobs",
+    "classroom_brief_analysis_jobs",
     "audit_events",
 }
 
@@ -218,3 +219,18 @@ def test_core_migration_round_trip_and_uniqueness(tmp_path: Path):
                     "created_at": now,
                 },
             )
+
+
+def test_analysis_job_migration_has_one_source_brief_idempotency_key(tmp_path: Path):
+    database_url = f"sqlite:///{tmp_path / 'classroom-analysis.db'}"
+    config = migration_config(database_url)
+
+    command.upgrade(config, "head")
+
+    inspector = inspect(create_engine(database_url))
+    assert ClassroomBriefAnalysisJob.__tablename__ == "classroom_brief_analysis_jobs"
+    assert "classroom_brief_analysis_jobs" in inspector.get_table_names()
+    assert any(
+        constraint["column_names"] == ["source_brief_id"]
+        for constraint in inspector.get_unique_constraints("classroom_brief_analysis_jobs")
+    )

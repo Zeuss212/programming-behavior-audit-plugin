@@ -124,6 +124,7 @@ class BriefService:
             )
             session.add(brief)
             if request_ai_analysis:
+                session.flush()
                 session.add(
                     ClassroomBriefAnalysisJob(
                         id=str(uuid4()),

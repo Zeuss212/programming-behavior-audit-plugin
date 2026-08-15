@@ -5,7 +5,7 @@ from pathlib import Path
 import httpx
 import jwt
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -42,12 +42,18 @@ IDS = {
 }
 
 
-def seeded_brief_service(now: datetime):
+def seeded_brief_service(now: datetime, *, enforce_foreign_keys: bool = False):
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+    if enforce_foreign_keys:
+        event.listen(
+            engine,
+            "connect",
+            lambda connection, _record: connection.execute("PRAGMA foreign_keys=ON"),
+        )
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     with factory.begin() as session:
@@ -63,6 +69,7 @@ def seeded_brief_service(now: datetime):
                 updated_at=None,
             )
         )
+        session.flush()
         session.add(
             StudentAssignment(
                 id=IDS["assignment"],
@@ -82,6 +89,7 @@ def seeded_brief_service(now: datetime):
                 updated_at=now,
             )
         )
+        session.flush()
         session.add(
             MonitorSession(
                 id=IDS["session"],
@@ -103,6 +111,7 @@ def seeded_brief_service(now: datetime):
                 updated_at=now,
             )
         )
+        session.flush()
         session.add(
             EvidenceChunk(
                 id="3e72ccff-32ca-48e0-acff-a4a10cf51b0b",
@@ -170,7 +179,7 @@ def test_one_logical_brief_keeps_first_submission_time_and_revisions():
 
 def test_server_requested_analysis_writes_pending_brief_and_durable_job():
     now = datetime(2026, 8, 12, 8, 30, tzinfo=UTC)
-    service, factory, _registry = seeded_brief_service(now)
+    service, factory, _registry = seeded_brief_service(now, enforce_foreign_keys=True)
 
     brief = service.submit(
         IDS["session"], valid_content(), reason="student_manual", request_ai_analysis=True

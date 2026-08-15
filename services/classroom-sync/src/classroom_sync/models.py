@@ -79,11 +79,12 @@ class StudentAssignment(Base):
     __tablename__ = "student_assignments"
     __table_args__ = (
         UniqueConstraint(
+            "plan_id",
             "space_id",
             "parent_algorithm_id",
             "student_id",
             "child_algorithm_id",
-            name="uq_student_assignments_student_child",
+            name="uq_student_assignments_plan_student_child",
         ),
     )
 

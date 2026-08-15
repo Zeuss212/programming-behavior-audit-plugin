@@ -59,6 +59,7 @@ class AssignmentService:
             assignments: list[StudentAssignment] = []
             for entry in roster_entries:
                 assignment = repository.get_assignment(
+                    plan_id=plan_version.plan_id,
                     space_id=plan_version.space_id,
                     parent_algorithm_id=plan_version.parent_algorithm_id,
                     student_id=entry.student_id,

@@ -24,7 +24,7 @@ Add an Alembic migration after `0002_brief_analysis_jobs` that drops `uq_student
 
 `plan_id, space_id, parent_algorithm_id, student_id, child_algorithm_id`
 
-The migration changes only a constraint. All existing assignment, session, and brief data stays in place. Its downgrade restores the former constraint; downgrade is valid for the current local data because existing rows are one-per-student-child under the stricter legacy rule.
+The migration changes only a constraint. All existing assignment, session, and brief data stays in place. Its downgrade restores the former constraint only when no two retained rows differ solely by `plan_id`; after new multi-plan assignments exist, rollback requires restoring a pre-migration backup rather than deleting or merging classroom history.
 
 ## Validation
 

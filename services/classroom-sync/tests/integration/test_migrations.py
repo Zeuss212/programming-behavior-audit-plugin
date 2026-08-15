@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError
 
@@ -31,6 +32,12 @@ def migration_config(database_url: str) -> Config:
     config.set_main_option("script_location", str(service_root / "migrations"))
     config.set_main_option("sqlalchemy.url", database_url)
     return config
+
+
+def test_migration_revision_ids_fit_alembic_default_version_column():
+    """PostgreSQL's default alembic_version column permits at most 32 characters."""
+    scripts = ScriptDirectory.from_config(migration_config("sqlite://"))
+    assert all(len(script.revision) <= 32 for script in scripts.walk_revisions())
 
 
 def test_core_migration_round_trip_and_uniqueness(tmp_path: Path):
@@ -93,6 +100,25 @@ def test_core_migration_round_trip_and_uniqueness(tmp_path: Path):
                 "workbench_id": "workbench-1",
                 "student_id": "student-1",
                 "plan_id": "plan-1",
+                "plan_version": 1,
+                "status": "pending_acceptance",
+                "scheduled_start_at": now,
+                "scheduled_end_at": now,
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+        connection.execute(
+            tables["student_assignments"].insert(),
+            {
+                "id": "assignment-plan-2",
+                "binding_id": "binding-1",
+                "space_id": "space-1",
+                "parent_algorithm_id": "parent-1",
+                "child_algorithm_id": "child-1",
+                "workbench_id": "workbench-1",
+                "student_id": "student-1",
+                "plan_id": "plan-2",
                 "plan_version": 1,
                 "status": "pending_acceptance",
                 "scheduled_start_at": now,

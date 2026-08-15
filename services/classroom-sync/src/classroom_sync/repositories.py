@@ -70,6 +70,7 @@ class ClassroomRepository:
     def get_assignment(
         self,
         *,
+        plan_id: str,
         space_id: str,
         parent_algorithm_id: str,
         student_id: str,
@@ -77,6 +78,7 @@ class ClassroomRepository:
     ) -> StudentAssignment | None:
         return self.session.scalar(
             select(StudentAssignment).where(
+                StudentAssignment.plan_id == plan_id,
                 StudentAssignment.space_id == space_id,
                 StudentAssignment.parent_algorithm_id == parent_algorithm_id,
                 StudentAssignment.student_id == student_id,

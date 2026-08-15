@@ -4,6 +4,7 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 compose="$root/deploy/classroom/local-demo/docker-compose.yml"
 project=classroom-local-demo
+ai_env="$root/deploy/classroom/local-demo/.env.ai"
 
 if lsof -nP -iTCP:18080 -iTCP:18081 -iTCP:18082 -sTCP:LISTEN; then
   echo "a local classroom demo port is already in use" >&2
@@ -24,7 +25,11 @@ wait_for_url() {
   return 1
 }
 
-docker compose -p "$project" -f "$compose" up --build -d
+if [ -f "$ai_env" ]; then
+  docker compose --env-file "$ai_env" -p "$project" -f "$compose" up --build -d
+else
+  docker compose -p "$project" -f "$compose" up --build -d
+fi
 wait_for_url http://127.0.0.1:18082/health/live
 wait_for_url http://127.0.0.1:18080/health/ready
 wait_for_url http://127.0.0.1:18081/classroom-api/health/ready

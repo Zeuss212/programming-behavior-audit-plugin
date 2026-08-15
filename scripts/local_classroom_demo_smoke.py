@@ -15,6 +15,8 @@ from classroom_contract_smoke import HttpSmokeClient, run_smoke
 FACADE_BASE_URL = "http://127.0.0.1:18082"
 SYNC_BASE_URL = "http://127.0.0.1:18080"
 DEFAULT_STATE_FILE = Path("/private/tmp/classroom-local-demo-smoke-state.json")
+SAFE_AI_ANALYSIS_STATUSES = frozenset({"not_requested", "pending", "ready", "unavailable"})
+SENSITIVE_MONITORING_FIELDS = frozenset({"api_key", "access_token", "object_key", "evidence_refs"})
 
 
 class LocalDemoSmokeFailure(RuntimeError):
@@ -82,6 +84,25 @@ def _require_login(base_url: str, username: str, password: str, expected_token: 
         raise LocalDemoSmokeFailure(f"{username} login returned an unexpected token")
 
 
+def _require_safe_monitoring_briefs(monitoring: dict[str, object]) -> None:
+    """Reject teacher monitoring DTOs that expose unsupported AI state or private data."""
+
+    encoded = json.dumps(monitoring, ensure_ascii=False, sort_keys=True)
+    if any(f'"{field}"' in encoded for field in SENSITIVE_MONITORING_FIELDS):
+        raise LocalDemoSmokeFailure("monitoring response exposed sensitive fields")
+    students = monitoring.get("students")
+    if not isinstance(students, list):
+        raise LocalDemoSmokeFailure("monitoring response has invalid students")
+    for student in students:
+        if not isinstance(student, dict):
+            raise LocalDemoSmokeFailure("monitoring response has invalid student")
+        brief = student.get("brief")
+        if brief is None:
+            continue
+        if not isinstance(brief, dict) or brief.get("ai_analysis_status") not in SAFE_AI_ANALYSIS_STATUSES:
+            raise LocalDemoSmokeFailure("monitoring response has invalid AI analysis status")
+
+
 def run_local_demo_smoke(
     *,
     facade_base_url: str = FACADE_BASE_URL,
@@ -89,6 +110,7 @@ def run_local_demo_smoke(
     state_file: Path = DEFAULT_STATE_FILE,
     contract_runner: Callable[..., dict[str, object]] = run_smoke,
     expected_teacher_token: str = "teacher-token",
+    monitoring_reader: Callable[[str], dict[str, object]] | None = None,
 ) -> dict[str, object]:
     """Check the façade boundary then reuse the existing teacher/student contract flow."""
 
@@ -125,6 +147,19 @@ def run_local_demo_smoke(
         state_file.unlink(missing_ok=True)
     if result.get("phase") != "submitted":
         raise LocalDemoSmokeFailure("local classroom contract did not submit a brief")
+    plan_version_id = result.get("plan_version_id")
+    if not isinstance(plan_version_id, str) or not plan_version_id:
+        raise LocalDemoSmokeFailure("local classroom contract did not return a plan version")
+    reader = monitoring_reader or (
+        lambda plan_version_id: _require_status(
+            sync_base_url,
+            "GET",
+            f"/v1/classroom/teacher/plans/{plan_version_id}/monitoring",
+            200,
+            token=expected_teacher_token,
+        )
+    )
+    _require_safe_monitoring_briefs(reader(plan_version_id))
     return result
 
 

@@ -70,6 +70,10 @@ services:
       CLASSROOM_FINCOLAB_ORGANIZATION_ID: local-org
       CLASSROOM_PLUGIN_JWT_SECRET: local-demo-plugin-jwt-secret-at-least-32-characters
       CLASSROOM_API_PORT: "8080"
+      CLASSROOM_AI_BASE_URL: ${CLASSROOM_AI_BASE_URL:-}
+      CLASSROOM_AI_MODEL: ${CLASSROOM_AI_MODEL:-}
+      CLASSROOM_AI_API_KEY: ${CLASSROOM_AI_API_KEY:-}
+      CLASSROOM_AI_TIMEOUT_SECONDS: ${CLASSROOM_AI_TIMEOUT_SECONDS:-30}
     depends_on:
       postgres:
         condition: service_healthy

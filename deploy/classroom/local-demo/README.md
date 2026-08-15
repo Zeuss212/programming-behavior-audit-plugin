@@ -43,6 +43,18 @@ scripts/start-local-classroom-frontend.sh
 
 Vue 启动器同样保持前台运行，只监听 127.0.0.1:5175。它的 local-demo 模式把 /api 转发给本地 façade，并把 /classroom-api 原样转发给本地 Nginx。
 
+## 可选：本地 GLM Coding Plan 教学分析
+
+默认不启用 AI，学生简报仍会正常提交并显示“未配置 AI 分析”。只有在你明确准备消耗 Coding Plan 配额时，才在课堂服务 worktree 本地执行：
+
+~~~sh
+cp deploy/classroom/local-demo/.env.ai.example deploy/classroom/local-demo/.env.ai
+~~~
+
+在 `.env.ai` 的 `CLASSROOM_AI_API_KEY=` 后粘贴你的 GLM Coding Plan Key，保留默认的 `https://open.bigmodel.cn/api/coding/paas/v4` 与 `glm-5.2`，再停止并重新启动本地 demo。该 Key 只会被 `sync-api` 和 `deadline-worker` 容器读取；不要粘贴到聊天、Jupyter、浏览器存储或 Git。`.env.ai` 已被忽略，不能提交。
+
+重新启动后，以 `student001` 提交本节简报，在教师课堂监控页刷新：会先显示“AI 分析生成中”，成功后显示“AI 分析已完成”，失败三次后显示“AI 分析不可用”。无论失败与否，学生的基础简报都会保留；AI 内容仅作辅助教学分析，不自动评分。
+
 ## 教师—学生演示顺序
 
 1. 在独立浏览器 profile A 打开 http://127.0.0.1:5175，登录 teacher001。
@@ -63,7 +75,7 @@ Vue 启动器同样保持前台运行，只监听 127.0.0.1:5175。它的 local-
 PYTHONPATH=scripts uv run --no-project python scripts/local_classroom_demo_smoke.py
 ~~~
 
-该命令验证 façade 登录、student002 跨课程拒绝、同步服务就绪，并复用既有课堂契约状态机完成发布、接受、插件会话、证据提交和简报生成。输出不包含 bearer、课堂票据、插件令牌或原始证据。
+该命令验证 façade 登录、student002 跨课程拒绝、同步服务就绪，并完成发布、接受、插件会话、证据提交和简报生成。它需要一个全新的本地 demo 数据库；若 student001 已提交过本节实验，先按下方“停止与重置”显式重置，再运行该命令。输出不包含 bearer、课堂票据、插件令牌或原始证据。
 
 ## 停止与重置
 
@@ -91,4 +103,3 @@ reset 只删除 classroom-local-demo-postgres 和 classroom-local-demo-minio 两
 | Jupyter 启动器提示 wheel 缺失 | 在课堂服务 worktree 重新运行 uv build --wheel。 |
 | Vue 页面没有课堂入口 | 确认用 scripts/start-local-classroom-frontend.sh 启动；该命令使用 .env.local-demo。 |
 | Jupyter 显示未注册课堂会话 | 必须先从 student001 的课堂任务页点击进入工作台，不能直接打开 Jupyter URL。 |
-

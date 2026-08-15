@@ -8,6 +8,7 @@ from pathlib import Path
 from threading import Thread
 from typing import Iterator
 
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 FACADE_PATH = ROOT / "deploy" / "classroom" / "local-demo" / "fincolab_demo.py"
@@ -46,7 +47,11 @@ def test_local_smoke_checks_real_facade_then_runs_contract_state_machine_twice(t
         calls.append(repeat_existing)
         assert state_file == state_path
         assert now.tzinfo is not None
-        return {"phase": "submitted" if repeat_existing else "collecting", "session_id": "session-local"}
+        return {
+            "phase": "submitted" if repeat_existing else "collecting",
+            "session_id": "session-local",
+            "plan_version_id": "plan-version-local",
+        }
 
     with demo_facade_url() as facade_url:
         result = smoke.run_local_demo_smoke(
@@ -54,9 +59,16 @@ def test_local_smoke_checks_real_facade_then_runs_contract_state_machine_twice(t
             sync_base_url="http://127.0.0.1:18080",
             state_file=state_path,
             contract_runner=fake_contract_runner,
+            monitoring_reader=lambda _plan_version_id: {
+                "students": [{"brief": {"ai_analysis_status": "not_requested"}}]
+            },
         )
 
-    assert result == {"phase": "submitted", "session_id": "session-local"}
+    assert result == {
+        "phase": "submitted",
+        "session_id": "session-local",
+        "plan_version_id": "plan-version-local",
+    }
     assert calls == [False, True]
     assert not state_path.exists()
 
@@ -78,3 +90,24 @@ def test_local_smoke_rejects_an_unexpected_facade_login_token(tmp_path: Path):
             assert "teacher001 login" in str(error)
         else:
             raise AssertionError("the façade token mismatch must fail before contract smoke")
+
+
+def test_local_smoke_rejects_unsafe_or_unknown_ai_monitoring_fields() -> None:
+    smoke = _load_module(SMOKE_PATH, "local_classroom_demo_smoke_ai_monitoring")
+
+    smoke._require_safe_monitoring_briefs(
+        {"students": [{"brief": {"ai_analysis_status": "ready"}}]}
+    )
+
+    with pytest.raises(smoke.LocalDemoSmokeFailure, match="AI analysis status"):
+        smoke._require_safe_monitoring_briefs(
+            {"students": [{"brief": {"ai_analysis_status": "forged_ready"}}]}
+        )
+    with pytest.raises(smoke.LocalDemoSmokeFailure, match="sensitive"):
+        smoke._require_safe_monitoring_briefs(
+            {
+                "students": [
+                    {"brief": {"ai_analysis_status": "not_requested", "object_key": "private"}}
+                ]
+            }
+        )

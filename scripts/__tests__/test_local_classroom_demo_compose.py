@@ -71,6 +71,24 @@ def test_resolved_dependencies_wait_for_storage_and_sync_readiness():
     assert services["deadline-worker"]["depends_on"]["sync-api"]["condition"] == "service_healthy"
 
 
+def test_optional_glm_environment_reaches_only_the_server_and_worker():
+    config = _resolved_compose()
+    services = config["services"]
+    assert isinstance(services, dict)
+    expected = {
+        "CLASSROOM_AI_BASE_URL": "",
+        "CLASSROOM_AI_MODEL": "",
+        "CLASSROOM_AI_API_KEY": "",
+        "CLASSROOM_AI_TIMEOUT_SECONDS": "30",
+    }
+
+    assert {name: services["sync-api"]["environment"][name] for name in expected} == expected
+    assert {name: services["deadline-worker"]["environment"][name] for name in expected} == expected
+    for service_name in {"postgres", "minio", "minio-init", "demo-fincolab", "classroom-nginx"}:
+        environment = services[service_name].get("environment", {})
+        assert not any(name.startswith("CLASSROOM_AI_") for name in environment)
+
+
 def _write_executable(path: Path, body: str) -> None:
     path.write_text(body, encoding="utf-8")
     path.chmod(0o755)
@@ -118,6 +136,24 @@ def test_start_runs_only_the_named_project_after_ports_are_free(tmp_path: Path):
         "curl -fsS http://127.0.0.1:18080/health/ready",
         "curl -fsS http://127.0.0.1:18081/classroom-api/health/ready",
     ]
+
+
+def test_start_loads_the_ignored_local_ai_environment_when_present(tmp_path: Path):
+    environment, trace = _script_environment(tmp_path)
+    ai_env = ROOT / "deploy" / "classroom" / "local-demo" / ".env.ai"
+    original = ai_env.read_bytes() if ai_env.exists() else None
+    try:
+        ai_env.write_text("CLASSROOM_AI_API_KEY=local-test-only\n", encoding="utf-8")
+        completed = subprocess.run(["sh", str(START)], cwd=ROOT, env=environment, check=False, text=True, capture_output=True)
+    finally:
+        if original is None:
+            ai_env.unlink(missing_ok=True)
+        else:
+            ai_env.write_bytes(original)
+
+    assert completed.returncode == 0, completed.stderr
+    lines = trace.read_text(encoding="utf-8").splitlines()
+    assert lines[0] == f"docker compose --env-file {ai_env} -p classroom-local-demo -f {COMPOSE} up --build -d"
 
 
 def test_start_refuses_to_take_over_an_existing_port(tmp_path: Path):

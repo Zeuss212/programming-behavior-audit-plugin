@@ -277,6 +277,17 @@ class BriefService:
                 raise NotFoundError("student_brief_not_found")
             return brief
 
+    def get_latest_teacher_review(self, session_id: str) -> TeacherReview | None:
+        """Return the most recent teacher conclusion without mutating the brief."""
+
+        with self._session_factory() as session:
+            return session.scalar(
+                select(TeacherReview)
+                .where(TeacherReview.session_id == session_id)
+                .order_by(TeacherReview.created_at.desc())
+                .limit(1)
+            )
+
     def get_assignment_for_session(self, session_id: str) -> StudentAssignment:
         """Read the assignment context required for teacher authorization."""
 

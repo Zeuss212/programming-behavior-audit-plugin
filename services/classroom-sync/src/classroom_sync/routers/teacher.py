@@ -78,6 +78,19 @@ def get_student_brief(
     return cast(dict[str, object], services.brief_service.get_latest_brief(session_id).payload)
 
 
+@router.get("/sessions/{session_id}/reviews/latest")
+def get_latest_teacher_review(
+    session_id: str,
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, object]:
+    services, _principal = require_teacher_for_session(request, authorization, session_id)
+    if services.brief_service is None:
+        raise TypeError("Brief service is not configured.")
+    review = services.brief_service.get_latest_teacher_review(session_id)
+    return {"review": None if review is None else review.payload}
+
+
 @router.post("/sessions/{session_id}/reviews", status_code=status.HTTP_201_CREATED)
 def review_student_brief(
     session_id: str,

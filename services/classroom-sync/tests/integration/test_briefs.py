@@ -472,6 +472,69 @@ def test_teacher_routes_can_read_brief_and_append_review_only_after_owner_check(
     assert identity.calls == [("teacher-1", "space-1", "parent-1")] * 2
 
 
+def test_teacher_can_read_the_latest_review_or_an_explicit_empty_result():
+    """Teacher review history is readable without changing the automatic brief."""
+    now = datetime(2026, 8, 12, 8, 30, tzinfo=UTC)
+    _, factory, registry = seeded_brief_service(now)
+    review_times = iter((now, now + timedelta(minutes=1)))
+    brief_service = BriefService(factory, registry, clock=lambda: next(review_times))
+    identity = TeacherIdentityGateway()
+    app = create_app(
+        Settings(database_url="sqlite://"),
+        classroom_services=ClassroomServices(
+            identity_gateway=identity,
+            plan_service=PlanService(factory, registry, clock=lambda: now),
+            assignment_service=AssignmentService(factory, clock=lambda: now),
+            brief_service=brief_service,
+        ),
+    )
+    headers = {"Authorization": "Bearer teacher-token"}
+    path = f"/v1/classroom/teacher/sessions/{IDS['session']}/reviews/latest"
+
+    empty_response = request(app, "GET", path, headers=headers)
+
+    first = brief_service.review(
+        IDS["session"],
+        teacher_id="teacher-1",
+        review_input=TeacherReviewInput(
+            knowledge_point_reviews=(
+                {
+                    "knowledge_point_id": "KP_DICT0001",
+                    "status": "partial",
+                    "reason": "首次复核仍需补充解释。",
+                },
+            ),
+            comment="第一次复核。",
+        ),
+    )
+    second = brief_service.review(
+        IDS["session"],
+        teacher_id="teacher-1",
+        review_input=TeacherReviewInput(
+            knowledge_point_reviews=(
+                {
+                    "knowledge_point_id": "KP_DICT0001",
+                    "status": "mastered",
+                    "reason": "代码与运行结果均已验证。",
+                },
+            ),
+            comment="第二次复核：证据充分。",
+        ),
+    )
+    latest = brief_service.get_latest_teacher_review(IDS["session"])
+    latest_response = request(app, "GET", path, headers=headers)
+
+    assert empty_response.status_code == 200
+    assert empty_response.json() == {"review": None}
+    assert latest is not None
+    assert latest.id == second.id
+    assert latest.id != first.id
+    assert latest_response.status_code == 200
+    assert latest_response.json()["review"]["comment"] == "第二次复核：证据充分。"
+    assert latest_response.json()["review"]["knowledge_point_reviews"][0]["status"] == "mastered"
+    assert identity.calls == [("teacher-1", "space-1", "parent-1")] * 2
+
+
 class UnusedStorage:
     def put_bytes(self, key: str, body: bytes, *, content_type: str) -> None:
         raise AssertionError((key, body, content_type))

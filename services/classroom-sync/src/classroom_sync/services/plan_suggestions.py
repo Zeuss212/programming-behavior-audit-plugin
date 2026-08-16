@@ -93,16 +93,26 @@ class OpenAiCompletionClient:
                 },
                 timeout=self._settings.timeout_seconds,
             )
+        except httpx.TimeoutException as error:
+            raise UpstreamUnavailableError("ai_provider_timeout") from error
         except httpx.RequestError as error:
-            raise UpstreamUnavailableError("ai_provider_upstream_unavailable") from error
+            raise UpstreamUnavailableError("ai_provider_network_unavailable") from error
 
-        if response.status_code >= 400:
-            raise UpstreamUnavailableError("ai_provider_upstream_unavailable")
+        if response.status_code in {401, 403}:
+            raise UpstreamUnavailableError(
+                "ai_provider_authorization_or_policy_rejected", retryable=False
+            )
+        if response.status_code == 429:
+            raise UpstreamUnavailableError("ai_provider_rate_limited")
+        if response.status_code >= 500:
+            raise UpstreamUnavailableError("ai_provider_server_unavailable")
+        if not response.is_success:
+            raise UpstreamUnavailableError("ai_provider_request_rejected", retryable=False)
 
         try:
             return self._response_content(response.json())
         except (KeyError, TypeError, ValueError) as error:
-            raise UpstreamUnavailableError("ai_provider_upstream_unavailable") from error
+            raise UpstreamUnavailableError("ai_provider_response_invalid", retryable=False) from error
 
     @staticmethod
     def completion_url(base_url: str) -> str:

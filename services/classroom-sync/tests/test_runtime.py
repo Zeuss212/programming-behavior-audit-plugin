@@ -36,6 +36,7 @@ def test_runtime_configuration_reads_explicit_test_dependencies_from_environment
             "CLASSROOM_AI_MODEL": "classroom-model",
             "CLASSROOM_AI_API_KEY": "server-only-secret",
             "CLASSROOM_AI_TIMEOUT_SECONDS": "20",
+            "CLASSROOM_AI_MAX_ATTEMPTS": "1",
         }
     )
 
@@ -45,6 +46,7 @@ def test_runtime_configuration_reads_explicit_test_dependencies_from_environment
     assert settings.fincolab_organization_id == "local-org"
     assert settings.ai_base_url == "https://ai.example/v1"
     assert settings.ai_timeout_seconds == 20
+    assert settings.ai_max_attempts == 1
 
 
 def test_ai_settings_require_all_three_server_values() -> None:

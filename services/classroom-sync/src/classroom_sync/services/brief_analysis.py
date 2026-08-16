@@ -82,13 +82,15 @@ class OpenAiBriefAnalysisService:
         self._completion_client = completion_client
 
     def generate(self, source: BriefAnalysisInput) -> BriefAiAnalysis:
+        content = self._completion_client.complete(
+            self.messages_for(source), temperature=0.2, max_tokens=1200
+        )
         try:
-            content = self._completion_client.complete(
-                self.messages_for(source), temperature=0.2, max_tokens=1200
-            )
             return BriefAiAnalysis.model_validate_json(self._strip_optional_json_fence(content))
-        except (PydanticValidationError, ValueError, UpstreamUnavailableError) as error:
-            raise UpstreamUnavailableError("ai_brief_analysis_upstream_unavailable") from error
+        except (PydanticValidationError, ValueError) as error:
+            raise UpstreamUnavailableError(
+                "ai_brief_analysis_response_invalid", retryable=False
+            ) from error
 
     @staticmethod
     def messages_for(source: BriefAnalysisInput) -> list[dict[str, str]]:
@@ -136,7 +138,6 @@ class BriefAnalysisGenerator(Protocol):
 class BriefAnalysisJobService:
     """Lease, execute, and retry brief analysis without blocking student submission."""
 
-    _MAX_ATTEMPTS = 3
     _RETRY_DELAYS = (timedelta(seconds=5), timedelta(seconds=30))
     _LEASE_SECONDS = 60
 
@@ -147,11 +148,15 @@ class BriefAnalysisJobService:
         analysis_service: BriefAnalysisGenerator,
         *,
         clock: Callable[[], datetime],
+        max_attempts: int = 3,
     ) -> None:
+        if not 1 <= max_attempts <= 3:
+            raise ValueError("max_attempts must be between 1 and 3")
         self._session_factory = session_factory
         self._brief_service = brief_service
         self._analysis_service = analysis_service
         self._clock = clock
+        self._max_attempts = max_attempts
 
     def claim_due_jobs(
         self, worker_id: str, now: datetime | None = None
@@ -196,12 +201,12 @@ class BriefAnalysisJobService:
                     worker_id=worker_id,
                     analysis=analysis.model_dump(),
                 )
-            except UpstreamUnavailableError:
+            except UpstreamUnavailableError as error:
                 self._brief_service.record_analysis_failure(
                     job.id,
                     worker_id=worker_id,
-                    failure_code="ai_brief_analysis_upstream_unavailable",
-                    retry_delay=self._retry_delay(job.attempts),
+                    failure_code=error.code,
+                    retry_delay=self._retry_delay(job.attempts) if error.retryable else None,
                     occurred_at=self._utc_now(),
                 )
         return len(jobs)
@@ -217,7 +222,7 @@ class BriefAnalysisJobService:
             return BriefAnalysisInput.from_brief_payload(source.payload)
 
     def _retry_delay(self, attempts: int) -> timedelta | None:
-        if attempts >= self._MAX_ATTEMPTS:
+        if attempts >= self._max_attempts:
             return None
         return self._RETRY_DELAYS[attempts - 1]
 

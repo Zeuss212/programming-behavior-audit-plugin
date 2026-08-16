@@ -136,6 +136,7 @@ def create_runtime_services(settings: Settings) -> ClassroomServices:
             brief_service,
             OpenAiBriefAnalysisService(OpenAiCompletionClient(ai_settings, ai_client)),
             clock=utc_now,
+            max_attempts=settings.ai_max_attempts,
         )
     return ClassroomServices(
         identity_gateway=identity_gateway,

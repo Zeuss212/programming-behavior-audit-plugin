@@ -293,6 +293,68 @@ def test_analysis_worker_retries_from_the_actual_failure_time_then_marks_unavail
     )
 
 
+def test_analysis_worker_stops_after_one_local_attempt_when_configured():
+    """A controlled local provider probe must not spend the normal retry budget."""
+    now = datetime(2026, 8, 12, 8, 30, tzinfo=UTC)
+    brief_service, factory, _registry = seeded_brief_service(now)
+    brief_service.submit(IDS["session"], valid_content(), reason="student_manual", request_ai_analysis=True)
+    calls = [0]
+
+    class UnavailableAnalysisService:
+        def generate(self, _source):
+            calls[0] += 1
+            raise UpstreamUnavailableError("ai_provider_timeout")
+
+    worker = BriefAnalysisJobService(
+        factory,
+        brief_service,
+        UnavailableAnalysisService(),
+        clock=lambda: now,
+        max_attempts=1,
+    )
+
+    assert worker.run_due_jobs("worker-a") == 1
+    with factory() as session:
+        completed = session.scalar(select(ClassroomBriefAnalysisJob))
+    assert completed is not None
+    assert calls == [1]
+    assert (completed.status, completed.attempts, completed.failure_code) == (
+        "completed",
+        1,
+        "ai_provider_timeout",
+    )
+
+
+def test_analysis_worker_does_not_retry_coding_plan_authorization_or_policy_rejections():
+    """A deterministic provider denial should reach the teacher as unavailable once."""
+    now = datetime(2026, 8, 12, 8, 30, tzinfo=UTC)
+    brief_service, factory, _registry = seeded_brief_service(now)
+    brief_service.submit(IDS["session"], valid_content(), reason="student_manual", request_ai_analysis=True)
+
+    class RejectedAnalysisService:
+        def generate(self, _source):
+            raise UpstreamUnavailableError(
+                "ai_provider_authorization_or_policy_rejected", retryable=False
+            )
+
+    worker = BriefAnalysisJobService(
+        factory,
+        brief_service,
+        RejectedAnalysisService(),
+        clock=lambda: now,
+    )
+
+    assert worker.run_due_jobs("worker-a") == 1
+    with factory() as session:
+        completed = session.scalar(select(ClassroomBriefAnalysisJob))
+    assert completed is not None
+    assert (completed.status, completed.attempts, completed.failure_code) == (
+        "completed",
+        1,
+        "ai_provider_authorization_or_policy_rejected",
+    )
+
+
 def test_teacher_review_is_an_auditable_overlay_not_a_mutation_of_student_brief():
     """Teacher judgment remains separately attributable from automatic results."""
     now = datetime(2026, 8, 12, 8, 30, tzinfo=UTC)

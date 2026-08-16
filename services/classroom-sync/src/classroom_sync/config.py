@@ -28,6 +28,7 @@ class Settings:
     ai_model: str | None = None
     ai_api_key: str | None = field(default=None, repr=False)
     ai_timeout_seconds: int | None = 15
+    ai_max_attempts: int = 3
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
@@ -51,6 +52,9 @@ class Settings:
             ai_api_key=cls._optional(values, "CLASSROOM_AI_API_KEY"),
             ai_timeout_seconds=cls._optional_integer(
                 values, "CLASSROOM_AI_TIMEOUT_SECONDS", default=15
+            ),
+            ai_max_attempts=cls._bounded_integer(
+                values, "CLASSROOM_AI_MAX_ATTEMPTS", default=3, minimum=1, maximum=3
             ),
         )
 
@@ -87,3 +91,18 @@ class Settings:
             return int(value)
         except ValueError:
             return None
+
+    @staticmethod
+    def _bounded_integer(
+        values: Mapping[str, str], name: str, *, default: int, minimum: int, maximum: int
+    ) -> int:
+        value = Settings._optional(values, name)
+        if value is None:
+            return default
+        try:
+            parsed = int(value)
+        except ValueError as error:
+            raise RuntimeError(f"{name} must be an integer between {minimum} and {maximum}.") from error
+        if not minimum <= parsed <= maximum:
+            raise RuntimeError(f"{name} must be an integer between {minimum} and {maximum}.")
+        return parsed

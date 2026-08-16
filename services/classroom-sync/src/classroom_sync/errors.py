@@ -47,6 +47,10 @@ class UpstreamUnavailableError(ClassroomServiceError):
     status_code = 503
     retryable = True
 
+    def __init__(self, code: str, *, retryable: bool = True) -> None:
+        super().__init__(code)
+        self.retryable = retryable
+
 
 class AiSuggestionUnavailableError(ClassroomServiceError):
     """The optional AI drafting facility is not configured for this classroom."""

@@ -74,6 +74,7 @@ services:
       CLASSROOM_AI_MODEL: ${CLASSROOM_AI_MODEL:-}
       CLASSROOM_AI_API_KEY: ${CLASSROOM_AI_API_KEY:-}
       CLASSROOM_AI_TIMEOUT_SECONDS: ${CLASSROOM_AI_TIMEOUT_SECONDS:-30}
+      CLASSROOM_AI_MAX_ATTEMPTS: ${CLASSROOM_AI_MAX_ATTEMPTS:-3}
     depends_on:
       postgres:
         condition: service_healthy

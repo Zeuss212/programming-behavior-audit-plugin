@@ -126,5 +126,39 @@ def test_brief_analysis_adapter_maps_malformed_glm_json_to_safe_retryable_error(
         )
     )
 
-    with pytest.raises(UpstreamUnavailableError, match="ai_brief_analysis_upstream_unavailable"):
+    with pytest.raises(UpstreamUnavailableError) as error:
         service.generate(BriefAnalysisInput("摘要", (), (), ()))
+
+    assert error.value.code == "ai_brief_analysis_response_invalid"
+    assert error.value.retryable is False
+
+
+def test_brief_analysis_adapter_maps_coding_plan_authorization_to_safe_terminal_error() -> None:
+    """A provider denial must be diagnosable without retaining its response body."""
+    provider = AiProviderSettings.from_settings(
+        Settings(
+            database_url="sqlite://",
+            ai_base_url="https://open.bigmodel.cn/api/coding/paas/v4",
+            ai_model="glm-5.2",
+            ai_api_key="server-only-secret",
+            ai_timeout_seconds=30,
+        )
+    )
+    assert provider is not None
+    service = OpenAiBriefAnalysisService(
+        OpenAiCompletionClient(
+            provider,
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda _request: httpx.Response(403, text="provider-private-detail")
+                )
+            ),
+        )
+    )
+
+    with pytest.raises(UpstreamUnavailableError) as error:
+        service.generate(BriefAnalysisInput("摘要", (), (), ()))
+
+    assert error.value.code == "ai_provider_authorization_or_policy_rejected"
+    assert error.value.retryable is False
+    assert "provider-private-detail" not in str(error.value)

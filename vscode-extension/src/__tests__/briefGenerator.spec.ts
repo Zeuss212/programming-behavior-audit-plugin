@@ -83,7 +83,7 @@ function events(): readonly AuditEvent[] {
 }
 
 describe('generateClassroomBrief', () => {
-  it.each(terminalStatuses)('creates the five objective categories for %s sessions', (status) => {
+  it.each(terminalStatuses)('creates the teacher-facing categories for %s sessions', (status) => {
     const brief = generateClassroomBrief({
       session: state(status),
       plan: plan(),
@@ -100,13 +100,18 @@ describe('generateClassroomBrief', () => {
       'run_statistics',
       'evidence_summary',
       'attention_point',
+      'teacher_evaluation',
     ]);
     expect(brief.session_result.status).toBe(status);
     expect(brief.effective_observation.milliseconds).toBe(40_000);
     expect(brief.run_statistics).toEqual({ total: 3, success: 1, failure: 1, unknown: 1 });
-    expect(JSON.stringify(brief).toLowerCase()).not.toMatch(
-      /score|rank|mastery|ability|personality/,
-    );
+    expect(brief.schema_version).toBe(2);
+    expect(brief.teacher_evaluation).toMatchObject({
+      label: '课题实践表现',
+      overall_grade: 'B',
+      evidence_confidence: 'medium',
+    });
+    expect(brief.teacher_evaluation.limitations).toContain('运行成功不等同于题目答案正确');
   });
 
   it('is deterministic and limits objective evidence to 20 items and 8 KiB', () => {

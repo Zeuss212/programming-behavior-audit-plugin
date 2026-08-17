@@ -1,7 +1,8 @@
 export const PLAN_SCHEMA_VERSION = 1 as const;
 export const AUDIT_EVENT_SCHEMA_VERSION = 1 as const;
 export const SESSION_SCHEMA_VERSION = 1 as const;
-export const CLASSROOM_BRIEF_SCHEMA_VERSION = 1 as const;
+export const LEGACY_CLASSROOM_BRIEF_SCHEMA_VERSION = 1 as const;
+export const CLASSROOM_BRIEF_SCHEMA_VERSION = 2 as const;
 export const EXPORT_MANIFEST_SCHEMA_VERSION = 1 as const;
 
 export type JsonPrimitive = boolean | number | string | null;
@@ -118,8 +119,52 @@ export interface EvidenceSummaryItem {
   readonly summary: string;
 }
 
-export interface ClassroomBrief {
-  readonly schema_version: typeof CLASSROOM_BRIEF_SCHEMA_VERSION;
+export type TeacherPerformanceGrade = 'S' | 'A' | 'B' | 'C' | 'D';
+export type EvidenceConfidence = 'high' | 'medium' | 'low';
+export type ClassroomFocusReference =
+  | 'stable'
+  | 'fluctuating'
+  | 'frequent_switching'
+  | 'insufficient';
+
+export interface TeacherEvaluationDimension {
+  readonly name: '运行验证' | '调试与修正' | '任务推进';
+  readonly score: number;
+  readonly maximum_score: number;
+  readonly evidence_event_ids: readonly string[];
+}
+
+export interface TeacherEvaluation {
+  readonly label: '课题实践表现';
+  readonly overall_grade: TeacherPerformanceGrade;
+  readonly evidence_confidence: EvidenceConfidence;
+  readonly summary: string;
+  readonly dimensions: readonly TeacherEvaluationDimension[];
+  readonly classroom_focus: {
+    readonly reference: ClassroomFocusReference;
+    readonly focus_loss_count: number;
+    readonly focus_loss_milliseconds: number;
+    readonly longest_focus_loss_milliseconds: number;
+    readonly unclosed_focus_loss: boolean;
+    readonly note: string;
+  };
+  readonly metrics: {
+    readonly edit_count: number;
+    readonly save_count: number;
+    readonly run_count: number;
+    readonly determinate_run_count: number;
+    readonly successful_run_count: number;
+    readonly failed_run_count: number;
+    readonly unknown_run_count: number;
+    readonly execution_success_rate: number | null;
+    readonly recovery_success_count: number;
+    readonly complete_work_cycle_count: number;
+  };
+  readonly teaching_suggestion: string;
+  readonly limitations: string;
+}
+
+interface ClassroomBriefBase {
   readonly session_id: string;
   readonly generated_at: string;
   readonly session_result: {
@@ -139,6 +184,17 @@ export interface ClassroomBrief {
   readonly evidence_summary: readonly EvidenceSummaryItem[];
   readonly attention_point: string | null;
 }
+
+export interface ClassroomBriefV1 extends ClassroomBriefBase {
+  readonly schema_version: typeof LEGACY_CLASSROOM_BRIEF_SCHEMA_VERSION;
+}
+
+export interface ClassroomBriefV2 extends ClassroomBriefBase {
+  readonly schema_version: typeof CLASSROOM_BRIEF_SCHEMA_VERSION;
+  readonly teacher_evaluation: TeacherEvaluation;
+}
+
+export type ClassroomBrief = ClassroomBriefV1 | ClassroomBriefV2;
 
 export interface ExportManifestFile {
   readonly path: string;

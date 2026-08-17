@@ -275,12 +275,18 @@ describe('CompatibleAiClient', () => {
       client.analyzeSession({
         sessionId: 'session-ai-001',
         workspaceRoot: '/private/tmp/student-workspace',
-        brief: { session_result: { status: 'completed' }, attention_point: null },
+        brief: {
+          session_result: { status: 'completed' },
+          attention_point: null,
+          teacher_evaluation: { overall_grade: 'B' },
+        },
         evidence: [],
         codeFragments: [],
       }),
     ).resolves.toEqual(sessionAnalysis);
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(sleep).toHaveBeenCalledWith(2000);
+    expect(requestBody(fetcher, 1)).toContain('\\"teacher_evaluation\\":{\\"overall_grade\\":\\"B\\"}');
+    expect(requestBody(fetcher, 1)).toContain('不得重算、替换或用 AI 结论覆盖');
   });
 });

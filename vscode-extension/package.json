@@ -3,7 +3,7 @@
   "displayName": "编程行为分析",
   "description": "面向课堂演示的本地编程行为采集与简报扩展。",
   "publisher": "bluedot-ai",
-  "version": "0.1.1",
+  "version": "0.1.3",
   "license": "BSD-3-Clause",
   "repository": {
     "type": "git",
@@ -157,8 +157,8 @@
     "test:soak": "node scripts/accelerated-soak.mjs",
     "test": "npm run test:unit",
     "verify": "npm run lint && npm run typecheck && npm run test:unit && npm run build",
-    "verify:vsix": "node scripts/verify-vsix.mjs behavior-audit-vscode-0.1.1.vsix",
-    "package": "npm run verify && vsce package --out behavior-audit-vscode-0.1.1.vsix && npm run verify:vsix"
+    "verify:vsix": "node scripts/verify-vsix.mjs behavior-audit-vscode-0.1.3.vsix",
+    "package": "npm run verify && vsce package --out behavior-audit-vscode-0.1.3.vsix && npm run verify:vsix"
   },
   "dependencies": {
     "@vscode/python-extension": "1.0.6",

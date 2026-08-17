@@ -23,12 +23,14 @@ export type SessionArtifactKind =
   | 'operation_log'
   | 'process_log'
   | 'classroom_brief'
+  | 'teacher_brief'
   | 'ai_analysis';
 
 const ARTIFACT_FILES: Readonly<Record<SessionArtifactKind, string>> = {
   operation_log: 'operation_log.json',
   process_log: 'process_log.md',
   classroom_brief: 'classroom_brief.json',
+  teacher_brief: 'teacher_brief.md',
   ai_analysis: 'ai_analysis.json',
 };
 

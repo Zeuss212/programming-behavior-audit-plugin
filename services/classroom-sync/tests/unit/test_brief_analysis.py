@@ -99,6 +99,9 @@ def test_brief_analysis_adapter_sends_only_allowlisted_text_and_validates_glm_js
     assert "chunk-1#event-1" not in encoded
     assert "must-not-leave-server" not in encoded
     assert "server-only-secret" not in encoded
+    body = json.loads(encoded)
+    assert "thinking" not in body
+    assert "response_format" not in body
 
 
 def test_brief_analysis_adapter_maps_malformed_glm_json_to_safe_retryable_error() -> None:

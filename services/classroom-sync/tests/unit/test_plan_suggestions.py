@@ -30,10 +30,13 @@ def configured_settings(**overrides: object) -> Settings:
     return Settings(**values)  # type: ignore[arg-type]
 
 
-def response_with(content: str) -> httpx.Response:
+def response_with(content: str, *, finish_reason: str | None = None) -> httpx.Response:
+    choice: dict[str, object] = {"message": {"content": content}}
+    if finish_reason is not None:
+        choice["finish_reason"] = finish_reason
     return httpx.Response(
         200,
-        json={"choices": [{"message": {"content": content}}]},
+        json={"choices": [choice]},
     )
 
 
@@ -66,7 +69,7 @@ def test_completion_client_uses_coding_plan_endpoint_without_serializing_key() -
     assert "server-only-secret" not in recorded[0].content.decode("utf-8")
 
 
-def test_adapter_posts_only_bounded_teaching_text_and_validates_output() -> None:
+def test_adapter_uses_the_fast_json_profile_for_bounded_teaching_text() -> None:
     recorded: list[httpx.Request] = []
 
     def responder(request: httpx.Request) -> httpx.Response:
@@ -95,9 +98,52 @@ def test_adapter_posts_only_bounded_teaching_text_and_validates_output() -> None
     assert recorded[0].headers["authorization"] == "Bearer server-only-secret"
     body = json.loads(recorded[0].content)
     assert body["temperature"] == 0.2
-    assert body["max_tokens"] == 1200
+    assert body["max_tokens"] == 2048
+    assert body["thinking"] == {"type": "disabled"}
+    assert body["response_format"] == {"type": "json_object"}
     assert "server-only-secret" not in recorded[0].content.decode("utf-8")
     assert "实现字典查询" in recorded[0].content.decode("utf-8")
+
+
+def test_adapter_retries_once_with_4096_tokens_after_a_length_response() -> None:
+    recorded: list[httpx.Request] = []
+    responses = iter(
+        [
+            response_with(
+                json.dumps({"title": "未完成的课堂方案", "knowledge_points": []}),
+                finish_reason="length",
+            ),
+            response_with(
+                json.dumps(
+                    {
+                        "title": "字典课堂练习",
+                        "knowledge_points": [
+                            {"name": "字典读取", "description": "按键读取并验证结果。"}
+                        ],
+                    }
+                )
+            ),
+        ]
+    )
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        recorded.append(request)
+        return next(responses)
+
+    service = OpenAiPlanSuggestionService(
+        AiSuggestionSettings.from_settings(configured_settings()),
+        httpx.Client(transport=httpx.MockTransport(responder)),
+    )
+
+    result = service.generate(PlanSuggestionInput(title="", statement="实现字典查询"))
+
+    assert result.title == "字典课堂练习"
+    assert [json.loads(request.content)["max_tokens"] for request in recorded] == [2048, 4096]
+    assert all(
+        json.loads(request.content)["thinking"] == {"type": "disabled"}
+        and json.loads(request.content)["response_format"] == {"type": "json_object"}
+        for request in recorded
+    )
 
 
 @pytest.mark.parametrize(

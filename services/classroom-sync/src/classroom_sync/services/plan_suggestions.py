@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from typing import Literal
 from urllib.parse import urlsplit
 
 import httpx
@@ -67,6 +68,14 @@ class AiProviderSettings:
 AiSuggestionSettings = AiProviderSettings
 
 
+@dataclass(frozen=True)
+class OpenAiCompletionResult:
+    """The text and safe completion metadata returned by one provider call."""
+
+    content: str
+    finish_reason: str | None
+
+
 class OpenAiCompletionClient:
     """Small OpenAI-compatible boundary that never logs provider credentials."""
 
@@ -80,17 +89,42 @@ class OpenAiCompletionClient:
         *,
         temperature: float,
         max_tokens: int,
+        thinking_mode: Literal["disabled"] | None = None,
+        json_mode: bool = False,
     ) -> str:
+        return self.complete_with_metadata(
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            thinking_mode=thinking_mode,
+            json_mode=json_mode,
+        ).content
+
+    def complete_with_metadata(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float,
+        max_tokens: int,
+        thinking_mode: Literal["disabled"] | None = None,
+        json_mode: bool = False,
+    ) -> OpenAiCompletionResult:
+        request_body: dict[str, object] = {
+            "model": self._settings.model,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "messages": messages,
+        }
+        if thinking_mode is not None:
+            request_body["thinking"] = {"type": thinking_mode}
+        if json_mode:
+            request_body["response_format"] = {"type": "json_object"}
+
         try:
             response = self._client.post(
                 self.completion_url(self._settings.base_url),
                 headers={"Authorization": f"Bearer {self._settings.api_key}"},
-                json={
-                    "model": self._settings.model,
-                    "temperature": temperature,
-                    "max_tokens": max_tokens,
-                    "messages": messages,
-                },
+                json=request_body,
                 timeout=self._settings.timeout_seconds,
             )
         except httpx.TimeoutException as error:
@@ -110,7 +144,7 @@ class OpenAiCompletionClient:
             raise UpstreamUnavailableError("ai_provider_request_rejected", retryable=False)
 
         try:
-            return self._response_content(response.json())
+            return self._response_result(response.json())
         except (KeyError, TypeError, ValueError) as error:
             raise UpstreamUnavailableError("ai_provider_response_invalid", retryable=False) from error
 
@@ -122,6 +156,10 @@ class OpenAiCompletionClient:
 
     @staticmethod
     def _response_content(payload: object) -> str:
+        return OpenAiCompletionClient._response_result(payload).content
+
+    @staticmethod
+    def _response_result(payload: object) -> OpenAiCompletionResult:
         if not isinstance(payload, dict):
             raise TypeError("provider response is not an object")
         choices = payload.get("choices")
@@ -136,7 +174,10 @@ class OpenAiCompletionClient:
         content = message.get("content")
         if not isinstance(content, str):
             raise TypeError("provider content is invalid")
-        return content
+        finish_reason = choice.get("finish_reason")
+        if finish_reason is not None and not isinstance(finish_reason, str):
+            raise TypeError("provider finish reason is invalid")
+        return OpenAiCompletionResult(content=content, finish_reason=finish_reason)
 
 
 class PlanSuggestionInput(BaseModel):
@@ -187,14 +228,28 @@ class OpenAiPlanSuggestionService:
             raise AiSuggestionUnavailableError("ai_suggestion_not_configured")
 
         try:
-            content = completion_client.complete(
-                self._messages(suggestion_input), temperature=0.2, max_tokens=1200
+            completion = completion_client.complete_with_metadata(
+                self._messages(suggestion_input),
+                temperature=0.2,
+                max_tokens=2048,
+                thinking_mode="disabled",
+                json_mode=True,
             )
+            if completion.finish_reason == "length":
+                completion = completion_client.complete_with_metadata(
+                    self._messages(suggestion_input),
+                    temperature=0.2,
+                    max_tokens=4096,
+                    thinking_mode="disabled",
+                    json_mode=True,
+                )
         except UpstreamUnavailableError as error:
             raise UpstreamUnavailableError("ai_suggestion_upstream_unavailable") from error
 
         try:
-            suggestion = _ProviderSuggestion.model_validate_json(self._strip_optional_json_fence(content))
+            suggestion = _ProviderSuggestion.model_validate_json(
+                self._strip_optional_json_fence(completion.content)
+            )
         except (json.JSONDecodeError, KeyError, TypeError, PydanticValidationError, ValueError) as error:
             raise UpstreamUnavailableError("ai_suggestion_upstream_unavailable") from error
 

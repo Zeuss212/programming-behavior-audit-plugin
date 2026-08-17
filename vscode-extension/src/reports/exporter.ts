@@ -6,6 +6,7 @@ import { AuditError } from '../domain/errors';
 import {
   CLASSROOM_BRIEF_SCHEMA_VERSION,
   EXPORT_MANIFEST_SCHEMA_VERSION,
+  LEGACY_CLASSROOM_BRIEF_SCHEMA_VERSION,
   type AuditEvent,
   type ClassroomBrief,
   type ExportManifest,
@@ -16,9 +17,61 @@ import type { SessionArtifactKind, SessionRepository } from '../storage/sessionR
 import { normalizeAnalysisArtifact } from './analysisLog';
 import { generateClassroomBrief } from './briefGenerator';
 import { generateOperationLog, generateProcessLog } from './logGenerator';
+import { renderTeacherBrief } from './teacherBrief';
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isTeacherEvaluation(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const focus = value.classroom_focus;
+  const metrics = value.metrics;
+  const dimensions = value.dimensions;
+  const validDimensions =
+    Array.isArray(dimensions) &&
+    dimensions.every(
+      (dimension) =>
+        isRecord(dimension) &&
+        ['运行验证', '调试与修正', '任务推进'].includes(dimension.name as string) &&
+        typeof dimension.score === 'number' &&
+        typeof dimension.maximum_score === 'number' &&
+        Array.isArray(dimension.evidence_event_ids) &&
+        dimension.evidence_event_ids.every((eventId) => typeof eventId === 'string'),
+    );
+  return (
+    value.label === '课题实践表现' &&
+    ['S', 'A', 'B', 'C', 'D'].includes(value.overall_grade as string) &&
+    ['high', 'medium', 'low'].includes(value.evidence_confidence as string) &&
+    typeof value.summary === 'string' &&
+    validDimensions &&
+    isRecord(focus) &&
+    ['stable', 'fluctuating', 'frequent_switching', 'insufficient'].includes(
+      focus.reference as string,
+    ) &&
+    typeof focus.focus_loss_count === 'number' &&
+    typeof focus.focus_loss_milliseconds === 'number' &&
+    typeof focus.longest_focus_loss_milliseconds === 'number' &&
+    typeof focus.unclosed_focus_loss === 'boolean' &&
+    typeof focus.note === 'string' &&
+    isRecord(metrics) &&
+    typeof metrics.edit_count === 'number' &&
+    typeof metrics.save_count === 'number' &&
+    typeof metrics.run_count === 'number' &&
+    typeof metrics.determinate_run_count === 'number' &&
+    typeof metrics.successful_run_count === 'number' &&
+    typeof metrics.failed_run_count === 'number' &&
+    typeof metrics.unknown_run_count === 'number' &&
+    (typeof metrics.execution_success_rate === 'number' || metrics.execution_success_rate === null) &&
+    typeof metrics.recovery_success_count === 'number' &&
+    typeof metrics.complete_work_cycle_count === 'number' &&
+    typeof value.teaching_suggestion === 'string' &&
+    typeof value.limitations === 'string'
+  );
+}
 
 export interface ReportService {
   materialize(sessionId: string): Promise<ClassroomBrief>;
@@ -36,7 +89,8 @@ function parseBrief(bytes: Uint8Array): ClassroomBrief {
   try {
     const value = JSON.parse(decoder.decode(bytes)) as Partial<ClassroomBrief>;
     if (
-      value.schema_version !== CLASSROOM_BRIEF_SCHEMA_VERSION ||
+      (value.schema_version !== CLASSROOM_BRIEF_SCHEMA_VERSION &&
+        value.schema_version !== LEGACY_CLASSROOM_BRIEF_SCHEMA_VERSION) ||
       typeof value.session_id !== 'string' ||
       typeof value.generated_at !== 'string' ||
       value.session_result === undefined ||
@@ -46,6 +100,12 @@ function parseBrief(bytes: Uint8Array): ClassroomBrief {
       !('attention_point' in value)
     ) {
       throw new Error('Invalid classroom brief.');
+    }
+    if (
+      value.schema_version === CLASSROOM_BRIEF_SCHEMA_VERSION &&
+      !isTeacherEvaluation(value.teacher_evaluation)
+    ) {
+      throw new Error('Invalid teacher evaluation.');
     }
     return value as ClassroomBrief;
   } catch (error) {
@@ -79,10 +139,19 @@ export class FileReportService implements ReportService {
     }
 
     const existingBriefBytes = await this.repository.readArtifact(sessionId, 'classroom_brief');
-    const operationBytes = await this.repository.readArtifact(sessionId, 'operation_log');
-    const processBytes = await this.repository.readArtifact(sessionId, 'process_log');
-    if (existingBriefBytes !== undefined && operationBytes !== undefined && processBytes !== undefined) {
-      return parseBrief(existingBriefBytes);
+    if (existingBriefBytes !== undefined) {
+      const existingBrief = parseBrief(existingBriefBytes);
+      if (
+        existingBrief.schema_version === CLASSROOM_BRIEF_SCHEMA_VERSION &&
+        (await this.repository.readArtifact(sessionId, 'teacher_brief')) === undefined
+      ) {
+        await this.repository.writeArtifact(
+          sessionId,
+          'teacher_brief',
+          encoder.encode(renderTeacherBrief(existingBrief)),
+        );
+      }
+      return existingBrief;
     }
 
     const generatedAt =
@@ -99,6 +168,11 @@ export class FileReportService implements ReportService {
       sessionId,
       'classroom_brief',
       encoder.encode(`${canonicalJson(brief as unknown as JsonValue)}\n`),
+    );
+    await this.repository.writeArtifact(
+      sessionId,
+      'teacher_brief',
+      encoder.encode(renderTeacherBrief(brief)),
     );
     return brief;
   }
@@ -159,6 +233,16 @@ export class FileSessionExporter implements SessionExporter {
           exportedAt,
         ),
       });
+      const classroomBrief = parseBrief(
+        sources.find((source) => source.path === 'classroom_brief.json')?.bytes ?? new Uint8Array(),
+      );
+      if (classroomBrief.schema_version === CLASSROOM_BRIEF_SCHEMA_VERSION) {
+        const teacherBrief = await this.repository.readArtifact(sessionId, 'teacher_brief');
+        sources.push({
+          path: 'teacher_brief.md',
+          bytes: teacherBrief ?? encoder.encode(renderTeacherBrief(classroomBrief)),
+        });
+      }
 
       const exportDirectory = join(destination.fsPath, sessionId);
       try {

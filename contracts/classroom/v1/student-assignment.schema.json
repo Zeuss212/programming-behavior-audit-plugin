@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://classroom.local/contracts/v1/student-assignment.schema.json",
+  "title": "Student classroom assignment v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "assignment_id",
+    "space_id",
+    "parent_algorithm_id",
+    "child_algorithm_id",
+    "workbench_id",
+    "student_id",
+    "plan_id",
+    "plan_version",
+    "status",
+    "scheduled_start_at",
+    "scheduled_end_at"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "assignment_id": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/uuid"},
+    "space_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "parent_algorithm_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "child_algorithm_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "workbench_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "student_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "plan_id": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/uuid"},
+    "plan_version": {"type": "integer", "minimum": 1},
+    "status": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/assignment_status"},
+    "scheduled_start_at": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/timestamp"},
+    "scheduled_end_at": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/timestamp"}
+  }
+}

@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { canonicalJson, sha256Hex } from '../domain/canonicalJson';
 import {
   AUDIT_EVENT_SCHEMA_VERSION,
+  LEGACY_CLASSROOM_BRIEF_SCHEMA_VERSION,
   PLAN_SCHEMA_VERSION,
   type AuditEvent,
   type JsonValue,
@@ -116,6 +117,7 @@ describe('FileReportService and FileSessionExporter', () => {
       'operation_log.json',
       'plan_snapshot.json',
       'process_log.md',
+      'teacher_brief.md',
     ]);
     expect(manifest).toMatchObject({
       schema_version: 1,
@@ -202,6 +204,78 @@ describe('FileReportService and FileSessionExporter', () => {
     ).toMatchObject({
       status: 'completed',
       analysis: { summary: '历史建议' },
+    });
+  });
+
+  it('keeps a persisted V1 brief readable and does not fabricate a teacher brief for it', async () => {
+    const created = await repository.create(plan(), 'workspace-export-legacy-001');
+    await repository.append(created.session_id, [event(created.session_id)]);
+    await repository.transition(created.session_id, 'collecting', 'finalizing');
+    await repository.transition(created.session_id, 'finalizing', 'completed');
+    await repository.writeArtifact(created.session_id, 'operation_log', new TextEncoder().encode('{}\n'));
+    await repository.writeArtifact(created.session_id, 'process_log', new TextEncoder().encode('# 原有日志\n'));
+    await repository.writeArtifact(
+      created.session_id,
+      'classroom_brief',
+      new TextEncoder().encode(
+        `${canonicalJson({
+          schema_version: LEGACY_CLASSROOM_BRIEF_SCHEMA_VERSION,
+          session_id: created.session_id,
+          generated_at: '2026-08-10T00:04:00.000Z',
+          session_result: { status: 'completed' },
+          effective_observation: {
+            milliseconds: 0,
+            method: 'focused_event_gaps_capped_at_30_seconds',
+          },
+          run_statistics: { total: 0, success: 0, failure: 0, unknown: 0 },
+          evidence_summary: [],
+          attention_point: null,
+        })}\n`,
+      ),
+    );
+
+    const service = new FileReportService(repository, () => new Date('2026-08-10T00:05:00.000Z'));
+    const brief = await service.materialize(created.session_id);
+
+    expect(brief.schema_version).toBe(LEGACY_CLASSROOM_BRIEF_SCHEMA_VERSION);
+    await expect(repository.readArtifact(created.session_id, 'teacher_brief')).resolves.toBeUndefined();
+
+    const exporter = new FileSessionExporter(repository, '0.1.1', () => new Date());
+    await exporter.exportSession(created.session_id, { fsPath: destinationRoot });
+    expect((await readdir(join(destinationRoot, created.session_id))).sort()).not.toContain(
+      'teacher_brief.md',
+    );
+  });
+
+  it('rejects a malformed persisted V2 teacher evaluation instead of rendering it', async () => {
+    const created = await repository.create(plan(), 'workspace-export-invalid-v2-001');
+    await repository.append(created.session_id, [event(created.session_id)]);
+    await repository.transition(created.session_id, 'collecting', 'finalizing');
+    await repository.transition(created.session_id, 'finalizing', 'completed');
+    await repository.writeArtifact(
+      created.session_id,
+      'classroom_brief',
+      new TextEncoder().encode(
+        `${canonicalJson({
+          schema_version: 2,
+          session_id: created.session_id,
+          generated_at: '2026-08-10T00:04:00.000Z',
+          session_result: { status: 'completed' },
+          effective_observation: {
+            milliseconds: 0,
+            method: 'focused_event_gaps_capped_at_30_seconds',
+          },
+          run_statistics: { total: 0, success: 0, failure: 0, unknown: 0 },
+          evidence_summary: [],
+          attention_point: null,
+          teacher_evaluation: {},
+        })}\n`,
+      ),
+    );
+
+    const service = new FileReportService(repository, () => new Date());
+    await expect(service.materialize(created.session_id)).rejects.toMatchObject({
+      code: 'storage_corrupt',
     });
   });
 });

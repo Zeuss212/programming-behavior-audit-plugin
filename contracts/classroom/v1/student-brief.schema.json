@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://classroom.local/contracts/v1/student-brief.schema.json",
+  "title": "Student classroom brief v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "brief_id",
+    "session_id",
+    "assignment_id",
+    "plan_id",
+    "plan_version",
+    "revision",
+    "status",
+    "data_completeness",
+    "submission_reason",
+    "submitted_at",
+    "evidence_cutoff_at",
+    "active_duration_ms",
+    "summary",
+    "knowledge_points",
+    "process_overview",
+    "issues",
+    "ai_analysis_status",
+    "generated_at"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "brief_id": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/uuid"},
+    "session_id": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/uuid"},
+    "assignment_id": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/uuid"},
+    "plan_id": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/uuid"},
+    "plan_version": {"type": "integer", "minimum": 1},
+    "revision": {"type": "integer", "minimum": 1},
+    "status": {"enum": ["completed", "partial"]},
+    "data_completeness": {"enum": ["complete", "partial"]},
+    "submission_reason": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/submission_reason"},
+    "submitted_at": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/timestamp"},
+    "evidence_cutoff_at": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/timestamp"},
+    "active_duration_ms": {"type": "integer", "minimum": 0},
+    "summary": {"type": "string", "minLength": 1, "maxLength": 1000},
+    "knowledge_points": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "knowledge_point_id",
+          "name",
+          "status",
+          "evidence_refs",
+          "demonstrated",
+          "gap",
+          "teacher_suggestion"
+        ],
+        "properties": {
+          "knowledge_point_id": {"type": "string", "minLength": 1, "maxLength": 128},
+          "name": {"type": "string", "minLength": 1, "maxLength": 200},
+          "status": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/mastery_status"},
+          "evidence_refs": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/evidence_ref"}
+          },
+          "demonstrated": {"type": "string", "minLength": 1, "maxLength": 1000},
+          "gap": {"type": "string", "minLength": 1, "maxLength": 1000},
+          "teacher_suggestion": {"type": "string", "minLength": 1, "maxLength": 1000}
+        }
+      }
+    },
+    "process_overview": {
+      "type": "array",
+      "maxItems": 5,
+      "items": {"type": "string", "minLength": 1, "maxLength": 500}
+    },
+    "issues": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {"type": "string", "minLength": 1, "maxLength": 500}
+    },
+    "ai_analysis_status": {"enum": ["not_requested", "pending", "ready", "unavailable"]},
+    "ai_analysis": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": [
+        "learning_overview",
+        "evidence_based_observations",
+        "teaching_suggestions"
+      ],
+      "properties": {
+        "learning_overview": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "evidence_based_observations": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "items": {"type": "string", "minLength": 1, "maxLength": 500}
+        },
+        "teaching_suggestions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "items": {"type": "string", "minLength": 1, "maxLength": 500}
+        }
+      }
+    },
+    "generated_at": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/timestamp"}
+  }
+}

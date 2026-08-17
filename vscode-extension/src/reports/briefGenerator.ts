@@ -3,12 +3,13 @@ import { AuditError } from '../domain/errors';
 import {
   CLASSROOM_BRIEF_SCHEMA_VERSION,
   type AuditEvent,
-  type ClassroomBrief,
+  type ClassroomBriefV2,
   type EvidenceSummaryItem,
   type JsonValue,
   type PublishedPlan,
   type SessionState,
 } from '../domain/types';
+import { evaluateTeacherEvidence, runOutcome } from './teacherEvaluation';
 
 const TERMINAL_STATUSES = ['completed', 'partial', 'abandoned'] as const;
 const QUALIFYING_KINDS = new Set<AuditEvent['kind']>([
@@ -86,37 +87,6 @@ export function orderReportEvents(input: ReportInput): readonly AuditEvent[] {
 function booleanPayload(event: AuditEvent, key: string): boolean | undefined {
   const value = event.payload[key];
   return typeof value === 'boolean' ? value : undefined;
-}
-
-function numberPayload(event: AuditEvent, key: string): number | null | undefined {
-  const value = event.payload[key];
-  return typeof value === 'number' || value === null ? value : undefined;
-}
-
-function stringPayload(event: AuditEvent, key: string): string | undefined {
-  const value = event.payload[key];
-  return typeof value === 'string' ? value : undefined;
-}
-
-function runOutcome(event: AuditEvent): 'success' | 'failure' | 'unknown' | undefined {
-  if (event.kind === 'python_run') {
-    if (booleanPayload(event, 'timed_out') === true || booleanPayload(event, 'launch_failed') === true) {
-      return 'failure';
-    }
-    const exitCode = numberPayload(event, 'exit_code');
-    if (exitCode === 0) {
-      return 'success';
-    }
-    if (typeof exitCode === 'number') {
-      return 'failure';
-    }
-    return 'unknown';
-  }
-  if (event.kind === 'notebook_run') {
-    const outcome = stringPayload(event, 'outcome');
-    return outcome === 'success' || outcome === 'failure' ? outcome : 'unknown';
-  }
-  return undefined;
 }
 
 function effectiveObservation(events: readonly AuditEvent[]): number {
@@ -200,7 +170,7 @@ function evidenceSummary(events: readonly AuditEvent[]): readonly EvidenceSummar
   return items;
 }
 
-export function generateClassroomBrief(input: BriefInput): ClassroomBrief {
+export function generateClassroomBrief(input: BriefInput): ClassroomBriefV2 {
   const ordered = orderReportEvents(input);
   if (!isTerminal(input.session.status)) {
     throw new AuditError(
@@ -237,5 +207,6 @@ export function generateClassroomBrief(input: BriefInput): ClassroomBrief {
       failure === 0
         ? null
         : `记录到 ${String(failure)} 次失败运行；建议查看对应时间点的运行记录。`,
+    teacher_evaluation: evaluateTeacherEvidence(ordered),
   };
 }

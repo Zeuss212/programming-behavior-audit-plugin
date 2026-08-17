@@ -3,350 +3,423 @@ info:
   title: MyExtension Pilot API
   version: 1.1.0
   description: Profile v2 adds teacher-confirmed question, knowledge-point, and structured-test authoring. Assessment-assist responses remain editable suggestions and do not create mastery conclusions.
-security: [{JupyterServerAuth: []}]
+security: [{ JupyterServerAuth: [] }]
 paths:
+  /myextension/platform/context:
+    get:
+      operationId: getPlatformContext
+      description: Server-authoritative local or classroom-student capability context. Student snapshots never expose plugin credentials.
+      security: [{ JupyterServerAuth: [] }]
+      responses:
+        '200': { $ref: '#/components/responses/PlatformContextResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/ServerError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    post:
+      operationId: refreshPlatformContext
+      description: Refreshes only a locally stored classroom session. Plugin credentials remain private to the Jupyter server process.
+      security: [{ JupyterServerAuth: [] }]
+      responses:
+        '200': { $ref: '#/components/responses/PlatformContextResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '500': { $ref: '#/components/responses/ServerError' }
+        '502': { $ref: '#/components/responses/BadGateway' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /myextension/platform/capture/bootstrap:
+    post:
+      operationId: bootstrapPlatformCapture
+      description: Creates or restores the single durable local session bound to the classroom MonitorSession. Browser state cannot choose the assignment, plan, or session ID.
+      security: [{ JupyterServerAuth: [] }]
+      responses:
+        '200':
+          { $ref: '#/components/responses/PlatformCaptureBootstrapResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/ServerError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /myextension/dimension-templates:
     get:
       operationId: listDimensionTemplates
-      security: [{JupyterServerAuth: []}]
+      security: [{ JupyterServerAuth: [] }]
       responses: &template_list
-        '200': {$ref: '#/components/responses/TemplateListResponse'}
-        '400': {$ref: '#/components/responses/BadRequest'}
-        '401': {$ref: '#/components/responses/Unauthorized'}
-        '403': {$ref: '#/components/responses/Forbidden'}
-        '404': {$ref: '#/components/responses/NotFound'}
-        '409': {$ref: '#/components/responses/Conflict'}
-        '413': {$ref: '#/components/responses/PayloadTooLarge'}
-        '422': {$ref: '#/components/responses/Unprocessable'}
-        '429': {$ref: '#/components/responses/RateLimited'}
-        '500': {$ref: '#/components/responses/ServerError'}
+        '200': { $ref: '#/components/responses/TemplateListResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/ServerError' }
   /myextension/dimension-profiles:
     get:
       operationId: listDimensionProfiles
-      security: [{JupyterServerAuth: []}]
-      parameters: [{$ref: '#/components/parameters/ProblemId'}]
+      security: [{ JupyterServerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/ProblemId' }]
       responses: &profile_list
-        '200': {$ref: '#/components/responses/ProfileListResponse'}
-        '400': {$ref: '#/components/responses/BadRequest'}
-        '401': {$ref: '#/components/responses/Unauthorized'}
-        '403': {$ref: '#/components/responses/Forbidden'}
-        '404': {$ref: '#/components/responses/NotFound'}
-        '409': {$ref: '#/components/responses/Conflict'}
-        '413': {$ref: '#/components/responses/PayloadTooLarge'}
-        '422': {$ref: '#/components/responses/Unprocessable'}
-        '429': {$ref: '#/components/responses/RateLimited'}
-        '500': {$ref: '#/components/responses/ServerError'}
+        '200': { $ref: '#/components/responses/ProfileListResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/ServerError' }
     post:
       operationId: createDimensionProfile
-      security: [{JupyterServerAuth: []}]
-      requestBody: {$ref: '#/components/requestBodies/ProfileDraft'}
+      security: [{ JupyterServerAuth: [] }]
+      requestBody: { $ref: '#/components/requestBodies/ProfileDraft' }
       responses: &profile_draft
-        '201': {$ref: '#/components/responses/ProfileDraftResponse'}
-        '400': {$ref: '#/components/responses/BadRequest'}
-        '401': {$ref: '#/components/responses/Unauthorized'}
-        '403': {$ref: '#/components/responses/Forbidden'}
-        '404': {$ref: '#/components/responses/NotFound'}
-        '409': {$ref: '#/components/responses/Conflict'}
-        '413': {$ref: '#/components/responses/PayloadTooLarge'}
-        '422': {$ref: '#/components/responses/Unprocessable'}
-        '429': {$ref: '#/components/responses/RateLimited'}
-        '500': {$ref: '#/components/responses/ServerError'}
+        '201': { $ref: '#/components/responses/ProfileDraftResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/ServerError' }
   /myextension/dimension-profiles/{profile_id}/draft:
     put:
       operationId: updateDimensionProfileDraft
-      security: [{JupyterServerAuth: []}]
-      parameters: [{$ref: '#/components/parameters/ProfileId'}]
-      requestBody: {$ref: '#/components/requestBodies/ProfileDraftUpdate'}
+      security: [{ JupyterServerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/ProfileId' }]
+      requestBody: { $ref: '#/components/requestBodies/ProfileDraftUpdate' }
       responses:
-        '200': {$ref: '#/components/responses/ProfileDraftResponse'}
-        '400': {$ref: '#/components/responses/BadRequest'}
-        '401': {$ref: '#/components/responses/Unauthorized'}
-        '403': {$ref: '#/components/responses/Forbidden'}
-        '404': {$ref: '#/components/responses/NotFound'}
-        '409': {$ref: '#/components/responses/Conflict'}
-        '413': {$ref: '#/components/responses/PayloadTooLarge'}
-        '422': {$ref: '#/components/responses/Unprocessable'}
-        '429': {$ref: '#/components/responses/RateLimited'}
-        '500': {$ref: '#/components/responses/ServerError'}
+        '200': { $ref: '#/components/responses/ProfileDraftResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/ServerError' }
   /myextension/dimension-profiles/{profile_id}/publish:
     post:
       operationId: publishDimensionProfile
-      security: [{JupyterServerAuth: []}]
-      parameters: [{$ref: '#/components/parameters/ProfileId'}]
+      security: [{ JupyterServerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/ProfileId' }]
       responses: &profile_version
-        '200': {$ref: '#/components/responses/ProfileVersionResponse'}
-        '400': {$ref: '#/components/responses/BadRequest'}
-        '401': {$ref: '#/components/responses/Unauthorized'}
-        '403': {$ref: '#/components/responses/Forbidden'}
-        '404': {$ref: '#/components/responses/NotFound'}
-        '409': {$ref: '#/components/responses/Conflict'}
-        '413': {$ref: '#/components/responses/PayloadTooLarge'}
-        '422': {$ref: '#/components/responses/Unprocessable'}
-        '429': {$ref: '#/components/responses/RateLimited'}
-        '500': {$ref: '#/components/responses/ServerError'}
+        '200': { $ref: '#/components/responses/ProfileVersionResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/ServerError' }
   /myextension/dimension-profiles/{profile_id}/versions/{version}:
     get:
       operationId: getDimensionProfileVersion
-      security: [{JupyterServerAuth: []}]
-      parameters: [{$ref: '#/components/parameters/ProfileId'}, {$ref: '#/components/parameters/Version'}]
+      security: [{ JupyterServerAuth: [] }]
+      parameters:
+        [
+          { $ref: '#/components/parameters/ProfileId' },
+          { $ref: '#/components/parameters/Version' }
+        ]
       responses: *profile_version
   /myextension/assessment-assist/knowledge-points:
     post:
       operationId: recommendAssessmentKnowledgePoints
       description: Recommends editable knowledge-point candidates from teacher-authored problem context only. The response is not persisted or confirmed automatically.
-      security: [{JupyterServerAuth: []}]
-      requestBody: {$ref: '#/components/requestBodies/AssessmentKnowledgeRequest'}
+      security: [{ JupyterServerAuth: [] }]
+      requestBody:
+        { $ref: '#/components/requestBodies/AssessmentKnowledgeRequest' }
       responses:
-        '200': {$ref: '#/components/responses/AssessmentKnowledgeResponse'}
-        '400': {$ref: '#/components/responses/BadRequest'}
-        '401': {$ref: '#/components/responses/Unauthorized'}
-        '403': {$ref: '#/components/responses/Forbidden'}
-        '409': {$ref: '#/components/responses/Conflict'}
-        '413': {$ref: '#/components/responses/PayloadTooLarge'}
-        '422': {$ref: '#/components/responses/Unprocessable'}
-        '429': {$ref: '#/components/responses/RateLimited'}
-        '500': {$ref: '#/components/responses/ServerError'}
-        '502': {$ref: '#/components/responses/BadGateway'}
+        '200': { $ref: '#/components/responses/AssessmentKnowledgeResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/ServerError' }
+        '502': { $ref: '#/components/responses/BadGateway' }
   /myextension/assessment-assist/tests:
     post:
       operationId: generateAssessmentTests
       description: Generates editable structured test candidates from teacher-authored problem context and confirmed knowledge points. The response is not persisted or confirmed automatically.
-      security: [{JupyterServerAuth: []}]
-      requestBody: {$ref: '#/components/requestBodies/AssessmentTestsRequest'}
+      security: [{ JupyterServerAuth: [] }]
+      requestBody: { $ref: '#/components/requestBodies/AssessmentTestsRequest' }
       responses:
-        '200': {$ref: '#/components/responses/AssessmentTestsResponse'}
-        '400': {$ref: '#/components/responses/BadRequest'}
-        '401': {$ref: '#/components/responses/Unauthorized'}
-        '403': {$ref: '#/components/responses/Forbidden'}
-        '409': {$ref: '#/components/responses/Conflict'}
-        '413': {$ref: '#/components/responses/PayloadTooLarge'}
-        '422': {$ref: '#/components/responses/Unprocessable'}
-        '429': {$ref: '#/components/responses/RateLimited'}
-        '500': {$ref: '#/components/responses/ServerError'}
-        '502': {$ref: '#/components/responses/BadGateway'}
+        '200': { $ref: '#/components/responses/AssessmentTestsResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/ServerError' }
+        '502': { $ref: '#/components/responses/BadGateway' }
   /myextension/log-folder/open:
     post:
       operationId: openLogFolder
       description: Opens the fixed local sessions folder on the Jupyter Server machine without returning its path.
-      security: [{JupyterServerAuth: []}]
-      requestBody: {$ref: '#/components/requestBodies/LogFolderOpen'}
+      security: [{ JupyterServerAuth: [] }]
+      requestBody: { $ref: '#/components/requestBodies/LogFolderOpen' }
       responses:
-        '200': {$ref: '#/components/responses/LogFolderOpenResponse'}
-        '401': {$ref: '#/components/responses/Unauthorized'}
-        '403': {$ref: '#/components/responses/Forbidden'}
-        '409': {$ref: '#/components/responses/Conflict'}
-        '413': {$ref: '#/components/responses/PayloadTooLarge'}
-        '422': {$ref: '#/components/responses/Unprocessable'}
-        '500': {$ref: '#/components/responses/ServerError'}
+        '200': { $ref: '#/components/responses/LogFolderOpenResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '500': { $ref: '#/components/responses/ServerError' }
   /myextension/sessions/start:
     post:
       operationId: startSession
-      security: [{JupyterServerAuth: []}]
-      requestBody: {$ref: '#/components/requestBodies/SessionStart'}
+      security: [{ JupyterServerAuth: [] }]
+      requestBody: { $ref: '#/components/requestBodies/SessionStart' }
       responses: &session_start
-        '201': {$ref: '#/components/responses/SessionStartResponse'}
-        '400': {$ref: '#/components/responses/BadRequest'}
-        '401': {$ref: '#/components/responses/Unauthorized'}
-        '403': {$ref: '#/components/responses/Forbidden'}
-        '404': {$ref: '#/components/responses/NotFound'}
-        '409': {$ref: '#/components/responses/Conflict'}
-        '413': {$ref: '#/components/responses/PayloadTooLarge'}
-        '422': {$ref: '#/components/responses/Unprocessable'}
-        '429': {$ref: '#/components/responses/RateLimited'}
-        '500': {$ref: '#/components/responses/ServerError'}
+        '201': { $ref: '#/components/responses/SessionStartResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/ServerError' }
   /myextension/sessions/{session_id}/segments:
     post:
       operationId: appendSessionSegments
-      security: [{JupyterServerAuth: []}]
-      parameters: [{$ref: '#/components/parameters/SessionId'}]
-      requestBody: {$ref: '#/components/requestBodies/SegmentBatch'}
+      security: [{ JupyterServerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/SessionId' }]
+      requestBody: { $ref: '#/components/requestBodies/SegmentBatch' }
       responses: &segment_receipt
-        '202': {$ref: '#/components/responses/SegmentReceiptResponse'}
-        '400': {$ref: '#/components/responses/BadRequest'}
-        '401': {$ref: '#/components/responses/Unauthorized'}
-        '403': {$ref: '#/components/responses/Forbidden'}
-        '404': {$ref: '#/components/responses/NotFound'}
-        '409': {$ref: '#/components/responses/Conflict'}
-        '413': {$ref: '#/components/responses/PayloadTooLarge'}
-        '422': {$ref: '#/components/responses/Unprocessable'}
-        '429': {$ref: '#/components/responses/RateLimited'}
-        '500': {$ref: '#/components/responses/ServerError'}
+        '202': { $ref: '#/components/responses/SegmentReceiptResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/ServerError' }
   /myextension/sessions/{session_id}/finalize:
     post:
       operationId: finalizeSession
-      security: [{JupyterServerAuth: []}]
-      parameters: [{$ref: '#/components/parameters/SessionId'}]
-      requestBody: {$ref: '#/components/requestBodies/SessionFinalize'}
+      security: [{ JupyterServerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/SessionId' }]
+      requestBody: { $ref: '#/components/requestBodies/SessionFinalize' }
       responses: &session_finalize
-        '202': {$ref: '#/components/responses/SessionFinalizeResponse'}
-        '400': {$ref: '#/components/responses/BadRequest'}
-        '401': {$ref: '#/components/responses/Unauthorized'}
-        '403': {$ref: '#/components/responses/Forbidden'}
-        '404': {$ref: '#/components/responses/NotFound'}
-        '409': {$ref: '#/components/responses/Conflict'}
-        '413': {$ref: '#/components/responses/PayloadTooLarge'}
-        '422': {$ref: '#/components/responses/Unprocessable'}
-        '429': {$ref: '#/components/responses/RateLimited'}
-        '500': {$ref: '#/components/responses/ServerError'}
+        '202': { $ref: '#/components/responses/SessionFinalizeResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/ServerError' }
   /myextension/sessions/{session_id}/logs:
     get:
       operationId: listSessionLogs
       description: Returns the fixed operation, process, and analysis log states for one session.
-      security: [{JupyterServerAuth: []}]
-      parameters: [{$ref: '#/components/parameters/SessionId'}]
+      security: [{ JupyterServerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/SessionId' }]
       responses:
-        '200': {$ref: '#/components/responses/SessionLogListResponse'}
-        '400': {$ref: '#/components/responses/BadRequest'}
-        '401': {$ref: '#/components/responses/Unauthorized'}
-        '403': {$ref: '#/components/responses/Forbidden'}
-        '404': {$ref: '#/components/responses/NotFound'}
-        '500': {$ref: '#/components/responses/ServerError'}
+        '200': { $ref: '#/components/responses/SessionLogListResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
   /myextension/sessions/{session_id}/brief:
     get:
       operationId: getClassroomBrief
       description: Returns the private-safe deterministic local classroom brief for a terminal session.
-      security: [{JupyterServerAuth: []}]
-      parameters: [{$ref: '#/components/parameters/SessionId'}]
+      security: [{ JupyterServerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/SessionId' }]
       responses:
-        '200': {$ref: '#/components/responses/ClassroomBriefResponse'}
-        '400': {$ref: '#/components/responses/BadRequest'}
-        '401': {$ref: '#/components/responses/Unauthorized'}
-        '403': {$ref: '#/components/responses/Forbidden'}
-        '404': {$ref: '#/components/responses/NotFound'}
-        '409': {$ref: '#/components/responses/Conflict'}
-        '500': {$ref: '#/components/responses/ServerError'}
+        '200': { $ref: '#/components/responses/ClassroomBriefResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/ServerError' }
   /myextension/sessions/{session_id}/logs/{kind}:
     get:
       operationId: viewSessionLog
       description: Returns one bounded UTF-8 log for read-only in-product viewing.
-      security: [{JupyterServerAuth: []}]
-      parameters: [{$ref: '#/components/parameters/SessionId'}, {$ref: '#/components/parameters/SessionLogKind'}]
+      security: [{ JupyterServerAuth: [] }]
+      parameters:
+        [
+          { $ref: '#/components/parameters/SessionId' },
+          { $ref: '#/components/parameters/SessionLogKind' }
+        ]
       responses:
-        '200': {description: Session log content., content: {application/json: {schema: {type: object}}, text/markdown: {schema: {type: string}}}}
-        '400': {$ref: '#/components/responses/BadRequest'}
-        '401': {$ref: '#/components/responses/Unauthorized'}
-        '403': {$ref: '#/components/responses/Forbidden'}
-        '404': {$ref: '#/components/responses/NotFound'}
-        '409': {$ref: '#/components/responses/Conflict'}
-        '413': {$ref: '#/components/responses/PayloadTooLarge'}
-        '500': {$ref: '#/components/responses/ServerError'}
+        '200':
+          {
+            description: Session log content.,
+            content:
+              {
+                application/json: { schema: { type: object } },
+                text/markdown: { schema: { type: string } }
+              }
+          }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '500': { $ref: '#/components/responses/ServerError' }
   /myextension/sessions/{session_id}/logs/{kind}/download:
     get:
       operationId: downloadSessionLog
       description: Downloads the complete allowlisted session log as an attachment.
-      security: [{JupyterServerAuth: []}]
-      parameters: [{$ref: '#/components/parameters/SessionId'}, {$ref: '#/components/parameters/SessionLogKind'}]
+      security: [{ JupyterServerAuth: [] }]
+      parameters:
+        [
+          { $ref: '#/components/parameters/SessionId' },
+          { $ref: '#/components/parameters/SessionLogKind' }
+        ]
       responses:
-        '200': {description: Complete session log file with its native media type., content: {application/json: {schema: {type: string, format: binary}}, text/markdown: {schema: {type: string, format: binary}}}}
-        '400': {$ref: '#/components/responses/BadRequest'}
-        '401': {$ref: '#/components/responses/Unauthorized'}
-        '403': {$ref: '#/components/responses/Forbidden'}
-        '404': {$ref: '#/components/responses/NotFound'}
-        '409': {$ref: '#/components/responses/Conflict'}
-        '500': {$ref: '#/components/responses/ServerError'}
+        '200':
+          {
+            description: Complete session log file with its native media type.,
+            content:
+              {
+                application/json: { schema: { type: string, format: binary } },
+                text/markdown: { schema: { type: string, format: binary } }
+              }
+          }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/ServerError' }
   /myextension/sessions/{session_id}/abandon:
     post:
       operationId: abandonSession
-      security: [{JupyterServerAuth: []}]
-      parameters: [{$ref: '#/components/parameters/SessionId'}]
-      requestBody: {$ref: '#/components/requestBodies/SessionAbandon'}
+      security: [{ JupyterServerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/SessionId' }]
+      requestBody: { $ref: '#/components/requestBodies/SessionAbandon' }
       responses: &session_state
-        '200': {$ref: '#/components/responses/SessionStateResponse'}
-        '400': {$ref: '#/components/responses/BadRequest'}
-        '401': {$ref: '#/components/responses/Unauthorized'}
-        '403': {$ref: '#/components/responses/Forbidden'}
-        '404': {$ref: '#/components/responses/NotFound'}
-        '409': {$ref: '#/components/responses/Conflict'}
-        '413': {$ref: '#/components/responses/PayloadTooLarge'}
-        '422': {$ref: '#/components/responses/Unprocessable'}
-        '429': {$ref: '#/components/responses/RateLimited'}
-        '500': {$ref: '#/components/responses/ServerError'}
+        '200': { $ref: '#/components/responses/SessionStateResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/ServerError' }
   /myextension/sessions/{session_id}/recover:
     post:
       operationId: recoverSession
-      security: [{JupyterServerAuth: []}]
-      parameters: [{$ref: '#/components/parameters/SessionId'}]
-      requestBody: {$ref: '#/components/requestBodies/SessionRecover'}
+      security: [{ JupyterServerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/SessionId' }]
+      requestBody: { $ref: '#/components/requestBodies/SessionRecover' }
       responses: *session_state
   /myextension/sessions/{session_id}:
     get:
       operationId: getSession
-      security: [{JupyterServerAuth: []}]
-      parameters: [{$ref: '#/components/parameters/SessionId'}]
+      security: [{ JupyterServerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/SessionId' }]
       responses: *session_state
     delete:
       operationId: deleteSession
-      security: [{JupyterServerAuth: []}]
-      parameters: [{$ref: '#/components/parameters/SessionId'}]
-      requestBody: {$ref: '#/components/requestBodies/SessionDelete'}
+      security: [{ JupyterServerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/SessionId' }]
+      requestBody: { $ref: '#/components/requestBodies/SessionDelete' }
       responses: &session_delete
-        '200': {$ref: '#/components/responses/DeletedSessionResponse'}
-        '400': {$ref: '#/components/responses/BadRequest'}
-        '401': {$ref: '#/components/responses/Unauthorized'}
-        '403': {$ref: '#/components/responses/Forbidden'}
-        '404': {$ref: '#/components/responses/NotFound'}
-        '409': {$ref: '#/components/responses/Conflict'}
-        '413': {$ref: '#/components/responses/PayloadTooLarge'}
-        '422': {$ref: '#/components/responses/Unprocessable'}
-        '429': {$ref: '#/components/responses/RateLimited'}
-        '500': {$ref: '#/components/responses/ServerError'}
+        '200': { $ref: '#/components/responses/DeletedSessionResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/ServerError' }
   /myextension/analysis-jobs/{job_id}:
     get:
       operationId: getAnalysisJob
-      security: [{JupyterServerAuth: []}]
-      parameters: [{$ref: '#/components/parameters/JobId'}]
+      security: [{ JupyterServerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/JobId' }]
       responses: &analysis_job
-        '200': {$ref: '#/components/responses/AnalysisJobResponse'}
-        '400': {$ref: '#/components/responses/BadRequest'}
-        '401': {$ref: '#/components/responses/Unauthorized'}
-        '403': {$ref: '#/components/responses/Forbidden'}
-        '404': {$ref: '#/components/responses/NotFound'}
-        '409': {$ref: '#/components/responses/Conflict'}
-        '413': {$ref: '#/components/responses/PayloadTooLarge'}
-        '422': {$ref: '#/components/responses/Unprocessable'}
-        '429': {$ref: '#/components/responses/RateLimited'}
-        '500': {$ref: '#/components/responses/ServerError'}
+        '200': { $ref: '#/components/responses/AnalysisJobResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/ServerError' }
   /myextension/analysis-jobs/{job_id}/retry:
     post:
       operationId: retryAnalysisJob
-      security: [{JupyterServerAuth: []}]
-      parameters: [{$ref: '#/components/parameters/JobId'}]
-      requestBody: {$ref: '#/components/requestBodies/AnalysisRetry'}
+      security: [{ JupyterServerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/JobId' }]
+      requestBody: { $ref: '#/components/requestBodies/AnalysisRetry' }
       responses: *analysis_job
   /myextension/sessions/{session_id}/analysis:
     get:
       operationId: getSessionAnalysis
-      security: [{JupyterServerAuth: []}]
-      parameters: [{$ref: '#/components/parameters/SessionId'}]
+      security: [{ JupyterServerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/SessionId' }]
       responses:
-        '200': {$ref: '#/components/responses/SessionAnalysisResponse'}
-        '202': {$ref: '#/components/responses/AnalysisJobResponse'}
-        '400': {$ref: '#/components/responses/BadRequest'}
-        '401': {$ref: '#/components/responses/Unauthorized'}
-        '403': {$ref: '#/components/responses/Forbidden'}
-        '404': {$ref: '#/components/responses/NotFound'}
-        '409': {$ref: '#/components/responses/Conflict'}
-        '413': {$ref: '#/components/responses/PayloadTooLarge'}
-        '422': {$ref: '#/components/responses/Unprocessable'}
-        '429': {$ref: '#/components/responses/RateLimited'}
-        '500': {$ref: '#/components/responses/ServerError'}
+        '200': { $ref: '#/components/responses/SessionAnalysisResponse' }
+        '202': { $ref: '#/components/responses/AnalysisJobResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/ServerError' }
   /myextension/sessions/{session_id}/analysis/{dimension_code}/review:
     patch:
       operationId: reviewSessionDimensionAnalysis
-      security: [{JupyterServerAuth: []}]
-      parameters: [{$ref: '#/components/parameters/SessionId'}, {$ref: '#/components/parameters/DimensionCode'}]
-      requestBody: {$ref: '#/components/requestBodies/DimensionReview'}
+      security: [{ JupyterServerAuth: [] }]
+      parameters:
+        [
+          { $ref: '#/components/parameters/SessionId' },
+          { $ref: '#/components/parameters/DimensionCode' }
+        ]
+      requestBody: { $ref: '#/components/requestBodies/DimensionReview' }
       responses: &dimension_result
-        '200': {$ref: '#/components/responses/DimensionResultResponse'}
-        '400': {$ref: '#/components/responses/BadRequest'}
-        '401': {$ref: '#/components/responses/Unauthorized'}
-        '403': {$ref: '#/components/responses/Forbidden'}
-        '404': {$ref: '#/components/responses/NotFound'}
-        '409': {$ref: '#/components/responses/Conflict'}
-        '413': {$ref: '#/components/responses/PayloadTooLarge'}
-        '422': {$ref: '#/components/responses/Unprocessable'}
-        '429': {$ref: '#/components/responses/RateLimited'}
-        '500': {$ref: '#/components/responses/ServerError'}
+        '200': { $ref: '#/components/responses/DimensionResultResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/ServerError' }
 components:
   securitySchemes:
     JupyterServerAuth:
@@ -355,275 +428,1134 @@ components:
       name: Authorization
       description: Use Jupyter token <value> in Authorization; same-origin login cookies are server-managed.
   parameters:
-    ProblemId: {name: problem_id, in: query, required: false, schema: {type: string, minLength: 1, maxLength: 200}}
-    ProfileId: {name: profile_id, in: path, required: true, schema: {$ref: '#/components/schemas/Uuid'}}
-    Version: {name: version, in: path, required: true, schema: {type: integer, minimum: 1}}
-    SessionId: {name: session_id, in: path, required: true, schema: {$ref: '#/components/schemas/CanonicalUuid'}}
-    SessionLogKind: {name: kind, in: path, required: true, schema: {enum: [operation, process, analysis]}}
-    JobId: {name: job_id, in: path, required: true, schema: {$ref: '#/components/schemas/Uuid'}}
-    DimensionCode: {name: dimension_code, in: path, required: true, schema: {type: string, minLength: 1}}
+    ProblemId:
+      {
+        name: problem_id,
+        in: query,
+        required: false,
+        schema: { type: string, minLength: 1, maxLength: 200 }
+      }
+    ProfileId:
+      {
+        name: profile_id,
+        in: path,
+        required: true,
+        schema: { $ref: '#/components/schemas/Uuid' }
+      }
+    Version:
+      {
+        name: version,
+        in: path,
+        required: true,
+        schema: { type: integer, minimum: 1 }
+      }
+    SessionId:
+      {
+        name: session_id,
+        in: path,
+        required: true,
+        schema: { $ref: '#/components/schemas/CanonicalUuid' }
+      }
+    SessionLogKind:
+      {
+        name: kind,
+        in: path,
+        required: true,
+        schema: { enum: [operation, process, analysis] }
+      }
+    JobId:
+      {
+        name: job_id,
+        in: path,
+        required: true,
+        schema: { $ref: '#/components/schemas/Uuid' }
+      }
+    DimensionCode:
+      {
+        name: dimension_code,
+        in: path,
+        required: true,
+        schema: { type: string, minLength: 1 }
+      }
   schemas:
-    Error: {$ref: '../../myextension/api_schemas/error-v1.json'}
-    ProfileDraftV1: {$ref: '../../myextension/api_schemas/profile-draft-v1.json'}
-    ProfileDraftV2: {$ref: '../../myextension/api_schemas/profile-draft-v2.json'}
+    Error: { $ref: '../../myextension/api_schemas/error-v1.json' }
+    ProfileDraftV1:
+      { $ref: '../../myextension/api_schemas/profile-draft-v1.json' }
+    ProfileDraftV2:
+      { $ref: '../../myextension/api_schemas/profile-draft-v2.json' }
     ProfileDraft:
       oneOf:
-        - {$ref: '#/components/schemas/ProfileDraftV1'}
-        - {$ref: '#/components/schemas/ProfileDraftV2'}
-    ProfileVersionV1: {$ref: '../../myextension/api_schemas/profile-version-v1.json'}
-    ProfileVersionV2: {$ref: '../../myextension/api_schemas/profile-version-v2.json'}
+        - { $ref: '#/components/schemas/ProfileDraftV1' }
+        - { $ref: '#/components/schemas/ProfileDraftV2' }
+    ProfileVersionV1:
+      { $ref: '../../myextension/api_schemas/profile-version-v1.json' }
+    ProfileVersionV2:
+      { $ref: '../../myextension/api_schemas/profile-version-v2.json' }
     ProfileVersion:
       oneOf:
-        - {$ref: '#/components/schemas/ProfileVersionV1'}
-        - {$ref: '#/components/schemas/ProfileVersionV2'}
-    AssessmentKnowledgeRequest: {$ref: '../../myextension/api_schemas/assessment-knowledge-request-v1.json'}
+        - { $ref: '#/components/schemas/ProfileVersionV1' }
+        - { $ref: '#/components/schemas/ProfileVersionV2' }
+    AssessmentKnowledgeRequest:
+      {
+        $ref: '../../myextension/api_schemas/assessment-knowledge-request-v1.json'
+      }
     AssessmentKnowledgeResponse:
       type: object
       additionalProperties: false
       required: [schema_version, request_id, knowledge_points]
       properties:
-        schema_version: {const: 1}
-        request_id: {$ref: '#/components/schemas/Uuid'}
-        knowledge_points: {$ref: '../../myextension/api_schemas/assessment-knowledge-response-v1.json#/properties/knowledge_points'}
-    AssessmentTestsRequest: {$ref: '../../myextension/api_schemas/assessment-tests-request-v1.json'}
+        schema_version: { const: 1 }
+        request_id: { $ref: '#/components/schemas/Uuid' }
+        knowledge_points:
+          {
+            $ref: '../../myextension/api_schemas/assessment-knowledge-response-v1.json#/properties/knowledge_points'
+          }
+    AssessmentTestsRequest:
+      { $ref: '../../myextension/api_schemas/assessment-tests-request-v1.json' }
     AssessmentTestsResponse:
       type: object
       additionalProperties: false
       required: [schema_version, request_id, assessment_tests]
       properties:
-        schema_version: {const: 1}
-        request_id: {$ref: '#/components/schemas/Uuid'}
-        assessment_tests: {$ref: '../../myextension/api_schemas/assessment-tests-response-v1.json#/properties/assessment_tests'}
-    LogFolderOpenResponse: {$ref: '../../myextension/api_schemas/log-folder-open-response-v1.json'}
-    SessionLogListResponse: {$ref: '../../myextension/api_schemas/session-log-list-response-v1.json'}
-    ClassroomBriefResponse: {$ref: '../../myextension/api_schemas/classroom-brief-response-v1.json'}
-    SessionStart: {$ref: '../../myextension/api_schemas/session-start-v1.json'}
-    SegmentBatch: {$ref: '../../myextension/api_schemas/segment-batch-v1.json'}
-    DimensionResult: {$ref: '../../myextension/api_schemas/dimension-result-v1.json'}
-    CanonicalUuid: {type: string, pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'}
-    Uuid: {type: string, pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'}
-    Hash: {type: string, pattern: '^[0-9a-fA-F]{64}$'}
-    Dimension: {$ref: '../../myextension/api_schemas/profile-draft-v1.json#/$defs/dimension'}
-    PublishedDimension: {$ref: '../../myextension/api_schemas/profile-version-v1.json#/$defs/dimension'}
-    Decision: {$ref: '../../myextension/api_schemas/dimension-result-v1.json#/$defs/decision'}
-    EvidenceClaim: {$ref: '../../myextension/api_schemas/dimension-result-v1.json#/$defs/evidence_claim'}
+        schema_version: { const: 1 }
+        request_id: { $ref: '#/components/schemas/Uuid' }
+        assessment_tests:
+          {
+            $ref: '../../myextension/api_schemas/assessment-tests-response-v1.json#/properties/assessment_tests'
+          }
+    LogFolderOpenResponse:
+      { $ref: '../../myextension/api_schemas/log-folder-open-response-v1.json' }
+    SessionLogListResponse:
+      {
+        $ref: '../../myextension/api_schemas/session-log-list-response-v1.json'
+      }
+    ClassroomBriefResponse:
+      { $ref: '../../myextension/api_schemas/classroom-brief-response-v1.json' }
+    PlatformContextResponse:
+      {
+        $ref: '../../myextension/api_schemas/platform-context-response-v1.json'
+      }
+    PlatformCaptureBootstrapResponse:
+      {
+        $ref: '../../myextension/api_schemas/platform-capture-bootstrap-response-v1.json'
+      }
+    SessionStart:
+      { $ref: '../../myextension/api_schemas/session-start-v1.json' }
+    SegmentBatch:
+      { $ref: '../../myextension/api_schemas/segment-batch-v1.json' }
+    DimensionResult:
+      { $ref: '../../myextension/api_schemas/dimension-result-v1.json' }
+    CanonicalUuid:
+      {
+        type: string,
+        pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+      }
+    Uuid:
+      {
+        type: string,
+        pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      }
+    Hash: { type: string, pattern: '^[0-9a-fA-F]{64}$' }
+    Dimension:
+      {
+        $ref: '../../myextension/api_schemas/profile-draft-v1.json#/$defs/dimension'
+      }
+    PublishedDimension:
+      {
+        $ref: '../../myextension/api_schemas/profile-version-v1.json#/$defs/dimension'
+      }
+    Decision:
+      {
+        $ref: '../../myextension/api_schemas/dimension-result-v1.json#/$defs/decision'
+      }
+    EvidenceClaim:
+      {
+        $ref: '../../myextension/api_schemas/dimension-result-v1.json#/$defs/evidence_claim'
+      }
     Template:
       type: object
       additionalProperties: false
-      required: [template_id, version, deployment_status, code, name, question, evidence_criteria, levels, teaching_actions, analysis_config, examples]
+      required:
+        [
+          template_id,
+          version,
+          deployment_status,
+          code,
+          name,
+          question,
+          evidence_criteria,
+          levels,
+          teaching_actions,
+          analysis_config,
+          examples
+        ]
       properties:
-        template_id: {type: string, pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$'}
-        version: {const: 1}
-        deployment_status: {const: pilot}
-        code: {type: string, minLength: 1}
-        name: {type: string, minLength: 1, maxLength: 50}
-        question: {type: string, minLength: 1, maxLength: 200}
-        evidence_criteria: {type: array, minItems: 1, items: {$ref: '../../myextension/api_schemas/profile-draft-v1.json#/$defs/evidence_criterion'}}
-        levels: {type: array, minItems: 2, maxItems: 2, items: {$ref: '../../myextension/api_schemas/profile-draft-v1.json#/$defs/level'}}
-        teaching_actions: {$ref: '../../myextension/api_schemas/profile-draft-v1.json#/$defs/teaching_actions'}
-        analysis_config: {$ref: '../../myextension/api_schemas/profile-draft-v1.json#/$defs/analysis_config'}
-        examples: {type: array, minItems: 2, maxItems: 2, items: {type: object, additionalProperties: false, required: [kind, summary], properties: {kind: {enum: [positive, negative]}, summary: {type: string, minLength: 1}}}}
+        template_id: { type: string, pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$' }
+        version: { const: 1 }
+        deployment_status: { const: pilot }
+        code: { type: string, minLength: 1 }
+        name: { type: string, minLength: 1, maxLength: 50 }
+        question: { type: string, minLength: 1, maxLength: 200 }
+        evidence_criteria:
+          {
+            type: array,
+            minItems: 1,
+            items:
+              {
+                $ref: '../../myextension/api_schemas/profile-draft-v1.json#/$defs/evidence_criterion'
+              }
+          }
+        levels:
+          {
+            type: array,
+            minItems: 2,
+            maxItems: 2,
+            items:
+              {
+                $ref: '../../myextension/api_schemas/profile-draft-v1.json#/$defs/level'
+              }
+          }
+        teaching_actions:
+          {
+            $ref: '../../myextension/api_schemas/profile-draft-v1.json#/$defs/teaching_actions'
+          }
+        analysis_config:
+          {
+            $ref: '../../myextension/api_schemas/profile-draft-v1.json#/$defs/analysis_config'
+          }
+        examples:
+          {
+            type: array,
+            minItems: 2,
+            maxItems: 2,
+            items:
+              {
+                type: object,
+                additionalProperties: false,
+                required: [kind, summary],
+                properties:
+                  {
+                    kind: { enum: [positive, negative] },
+                    summary: { type: string, minLength: 1 }
+                  }
+              }
+          }
     TemplateListResponse:
       type: object
       additionalProperties: false
       required: [schema_version, request_id, templates]
-      properties: {schema_version: {const: 1}, request_id: {type: string, minLength: 1}, templates: {type: array, items: {$ref: '#/components/schemas/Template'}}}
+      properties:
+        {
+          schema_version: { const: 1 },
+          request_id: { type: string, minLength: 1 },
+          templates:
+            { type: array, items: { $ref: '#/components/schemas/Template' } }
+        }
     ProfileListResponse:
       type: object
       additionalProperties: false
       required: [schema_version, request_id, profiles]
-      properties: {schema_version: {const: 1}, request_id: {type: string, minLength: 1}, profiles: {type: array, items: {$ref: '#/components/schemas/ProfileVersion'}}}
+      properties:
+        {
+          schema_version: { const: 1 },
+          request_id: { type: string, minLength: 1 },
+          profiles:
+            {
+              type: array,
+              items: { $ref: '#/components/schemas/ProfileVersion' }
+            }
+        }
     ProfileDraftResponseV1:
       type: object
       additionalProperties: false
-      required: [schema_version, request_id, profile_id, problem_id, title, revision, dimensions]
-      properties: {schema_version: {const: 1}, request_id: {type: string, minLength: 1}, profile_id: {$ref: '#/components/schemas/Uuid'}, problem_id: {type: string, minLength: 1}, title: {type: string, minLength: 1}, revision: {type: integer, minimum: 1}, dimensions: {type: array, minItems: 1, maxItems: 10, items: {$ref: '#/components/schemas/Dimension'}}}
+      required:
+        [
+          schema_version,
+          request_id,
+          profile_id,
+          problem_id,
+          title,
+          revision,
+          dimensions
+        ]
+      properties:
+        {
+          schema_version: { const: 1 },
+          request_id: { type: string, minLength: 1 },
+          profile_id: { $ref: '#/components/schemas/Uuid' },
+          problem_id: { type: string, minLength: 1 },
+          title: { type: string, minLength: 1 },
+          revision: { type: integer, minimum: 1 },
+          dimensions:
+            {
+              type: array,
+              minItems: 1,
+              maxItems: 10,
+              items: { $ref: '#/components/schemas/Dimension' }
+            }
+        }
     ProfileDraftResponseV2:
       type: object
       additionalProperties: false
-      required: [schema_version, request_id, profile_id, problem_id, title, revision, problem_context, knowledge_points, assessment_tests, confirmations, dimensions]
+      required:
+        [
+          schema_version,
+          request_id,
+          profile_id,
+          problem_id,
+          title,
+          revision,
+          problem_context,
+          knowledge_points,
+          assessment_tests,
+          confirmations,
+          dimensions
+        ]
       properties:
-        schema_version: {const: 2}
-        request_id: {type: string, minLength: 1}
-        profile_id: {$ref: '#/components/schemas/Uuid'}
-        problem_id: {$ref: '../../myextension/api_schemas/profile-draft-v2.json#/properties/problem_id'}
-        title: {$ref: '../../myextension/api_schemas/profile-draft-v2.json#/properties/title'}
-        revision: {type: integer, minimum: 1}
-        problem_context: {$ref: '../../myextension/api_schemas/profile-draft-v2.json#/properties/problem_context'}
-        knowledge_points: {$ref: '../../myextension/api_schemas/profile-draft-v2.json#/properties/knowledge_points'}
-        assessment_tests: {$ref: '../../myextension/api_schemas/profile-draft-v2.json#/properties/assessment_tests'}
-        confirmations: {$ref: '../../myextension/api_schemas/profile-draft-v2.json#/properties/confirmations'}
-        dimensions: {$ref: '../../myextension/api_schemas/profile-draft-v2.json#/properties/dimensions'}
+        schema_version: { const: 2 }
+        request_id: { type: string, minLength: 1 }
+        profile_id: { $ref: '#/components/schemas/Uuid' }
+        problem_id:
+          {
+            $ref: '../../myextension/api_schemas/profile-draft-v2.json#/properties/problem_id'
+          }
+        title:
+          {
+            $ref: '../../myextension/api_schemas/profile-draft-v2.json#/properties/title'
+          }
+        revision: { type: integer, minimum: 1 }
+        problem_context:
+          {
+            $ref: '../../myextension/api_schemas/profile-draft-v2.json#/properties/problem_context'
+          }
+        knowledge_points:
+          {
+            $ref: '../../myextension/api_schemas/profile-draft-v2.json#/properties/knowledge_points'
+          }
+        assessment_tests:
+          {
+            $ref: '../../myextension/api_schemas/profile-draft-v2.json#/properties/assessment_tests'
+          }
+        confirmations:
+          {
+            $ref: '../../myextension/api_schemas/profile-draft-v2.json#/properties/confirmations'
+          }
+        dimensions:
+          {
+            $ref: '../../myextension/api_schemas/profile-draft-v2.json#/properties/dimensions'
+          }
     ProfileDraftResponse:
       oneOf:
-        - {$ref: '#/components/schemas/ProfileDraftResponseV1'}
-        - {$ref: '#/components/schemas/ProfileDraftResponseV2'}
+        - { $ref: '#/components/schemas/ProfileDraftResponseV1' }
+        - { $ref: '#/components/schemas/ProfileDraftResponseV2' }
     ProfileVersionResponseV1:
       type: object
       additionalProperties: false
-      required: [schema_version, request_id, profile_id, problem_id, title, version, dimensions, content_hash, deployment_status, preview_status]
-      properties: {schema_version: {const: 1}, request_id: {type: string, minLength: 1}, profile_id: {$ref: '#/components/schemas/Uuid'}, problem_id: {type: string, minLength: 1}, title: {type: string, minLength: 1}, version: {type: integer, minimum: 1}, dimensions: {type: array, minItems: 1, maxItems: 10, items: {$ref: '#/components/schemas/PublishedDimension'}}, content_hash: {$ref: '#/components/schemas/Hash'}, deployment_status: {const: pilot}, preview_status: {enum: [pending_real_samples, completed]}}
+      required:
+        [
+          schema_version,
+          request_id,
+          profile_id,
+          problem_id,
+          title,
+          version,
+          dimensions,
+          content_hash,
+          deployment_status,
+          preview_status
+        ]
+      properties:
+        {
+          schema_version: { const: 1 },
+          request_id: { type: string, minLength: 1 },
+          profile_id: { $ref: '#/components/schemas/Uuid' },
+          problem_id: { type: string, minLength: 1 },
+          title: { type: string, minLength: 1 },
+          version: { type: integer, minimum: 1 },
+          dimensions:
+            {
+              type: array,
+              minItems: 1,
+              maxItems: 10,
+              items: { $ref: '#/components/schemas/PublishedDimension' }
+            },
+          content_hash: { $ref: '#/components/schemas/Hash' },
+          deployment_status: { const: pilot },
+          preview_status: { enum: [pending_real_samples, completed] }
+        }
     ProfileVersionResponseV2:
       type: object
       additionalProperties: false
-      required: [schema_version, request_id, profile_id, problem_id, title, version, problem_context, knowledge_points, assessment_tests, confirmations, dimensions, content_hash, deployment_status, preview_status]
+      required:
+        [
+          schema_version,
+          request_id,
+          profile_id,
+          problem_id,
+          title,
+          version,
+          problem_context,
+          knowledge_points,
+          assessment_tests,
+          confirmations,
+          dimensions,
+          content_hash,
+          deployment_status,
+          preview_status
+        ]
       properties:
-        schema_version: {const: 2}
-        request_id: {type: string, minLength: 1}
-        profile_id: {$ref: '#/components/schemas/Uuid'}
-        problem_id: {$ref: '../../myextension/api_schemas/profile-draft-v2.json#/properties/problem_id'}
-        title: {$ref: '../../myextension/api_schemas/profile-draft-v2.json#/properties/title'}
-        version: {type: integer, minimum: 1}
-        problem_context: {$ref: '../../myextension/api_schemas/profile-draft-v2.json#/properties/problem_context'}
+        schema_version: { const: 2 }
+        request_id: { type: string, minLength: 1 }
+        profile_id: { $ref: '#/components/schemas/Uuid' }
+        problem_id:
+          {
+            $ref: '../../myextension/api_schemas/profile-draft-v2.json#/properties/problem_id'
+          }
+        title:
+          {
+            $ref: '../../myextension/api_schemas/profile-draft-v2.json#/properties/title'
+          }
+        version: { type: integer, minimum: 1 }
+        problem_context:
+          {
+            $ref: '../../myextension/api_schemas/profile-draft-v2.json#/properties/problem_context'
+          }
         knowledge_points:
           $ref: '../../myextension/api_schemas/profile-draft-v2.json#/properties/knowledge_points'
           minItems: 1
         assessment_tests:
           $ref: '../../myextension/api_schemas/profile-draft-v2.json#/properties/assessment_tests'
           minItems: 1
-        confirmations: {$ref: '../../myextension/api_schemas/profile-draft-v2.json#/properties/confirmations'}
+        confirmations:
+          {
+            $ref: '../../myextension/api_schemas/profile-draft-v2.json#/properties/confirmations'
+          }
         dimensions:
           $ref: '../../myextension/api_schemas/profile-draft-v2.json#/properties/dimensions'
           minItems: 1
-        content_hash: {$ref: '#/components/schemas/Hash'}
-        deployment_status: {const: pilot}
-        preview_status: {enum: [pending_real_samples, completed]}
+        content_hash: { $ref: '#/components/schemas/Hash' }
+        deployment_status: { const: pilot }
+        preview_status: { enum: [pending_real_samples, completed] }
     ProfileVersionResponse:
       oneOf:
-        - {$ref: '#/components/schemas/ProfileVersionResponseV1'}
-        - {$ref: '#/components/schemas/ProfileVersionResponseV2'}
+        - { $ref: '#/components/schemas/ProfileVersionResponseV1' }
+        - { $ref: '#/components/schemas/ProfileVersionResponseV2' }
     SessionStartResponse:
       type: object
       additionalProperties: false
-      required: [schema_version, request_id, session_id, problem_id, profile_id, profile_version, profile_content_hash, signal_dictionary_version, signal_dictionary_hash, status, last_contiguous_sequence]
-      properties: {schema_version: {const: 1}, request_id: {type: string, minLength: 1}, session_id: {$ref: '#/components/schemas/Uuid'}, problem_id: {type: string, minLength: 1}, profile_id: {$ref: '#/components/schemas/Uuid'}, profile_version: {type: integer, minimum: 1}, profile_content_hash: {$ref: '#/components/schemas/Hash'}, signal_dictionary_version: {const: pilot-v1}, signal_dictionary_hash: {$ref: '#/components/schemas/Hash'}, status: {const: collecting}, last_contiguous_sequence: {const: 0}}
+      required:
+        [
+          schema_version,
+          request_id,
+          session_id,
+          problem_id,
+          profile_id,
+          profile_version,
+          profile_content_hash,
+          signal_dictionary_version,
+          signal_dictionary_hash,
+          status,
+          last_contiguous_sequence
+        ]
+      properties:
+        {
+          schema_version: { const: 1 },
+          request_id: { type: string, minLength: 1 },
+          session_id: { $ref: '#/components/schemas/Uuid' },
+          problem_id: { type: string, minLength: 1 },
+          profile_id: { $ref: '#/components/schemas/Uuid' },
+          profile_version: { type: integer, minimum: 1 },
+          profile_content_hash: { $ref: '#/components/schemas/Hash' },
+          signal_dictionary_version: { const: pilot-v1 },
+          signal_dictionary_hash: { $ref: '#/components/schemas/Hash' },
+          status: { const: collecting },
+          last_contiguous_sequence: { const: 0 }
+        }
     SegmentReceiptResponse:
       type: object
       additionalProperties: false
-      required: [schema_version, request_id, session_id, segment_id, accepted_count, last_contiguous_sequence]
-      properties: {schema_version: {const: 1}, request_id: {type: string, minLength: 1}, session_id: {$ref: '#/components/schemas/Uuid'}, segment_id: {$ref: '#/components/schemas/Uuid'}, accepted_count: {type: integer, minimum: 0}, last_contiguous_sequence: {type: integer, minimum: 0}}
+      required:
+        [
+          schema_version,
+          request_id,
+          session_id,
+          segment_id,
+          accepted_count,
+          last_contiguous_sequence
+        ]
+      properties:
+        {
+          schema_version: { const: 1 },
+          request_id: { type: string, minLength: 1 },
+          session_id: { $ref: '#/components/schemas/Uuid' },
+          segment_id: { $ref: '#/components/schemas/Uuid' },
+          accepted_count: { type: integer, minimum: 0 },
+          last_contiguous_sequence: { type: integer, minimum: 0 }
+        }
     SessionStateResponse:
       type: object
       additionalProperties: false
-      required: [schema_version, request_id, session_id, problem_id, profile_id, profile_version, profile_content_hash, status, last_contiguous_sequence, received_event_count, analysis_job_id]
-      properties: {schema_version: {const: 1}, request_id: {type: string, minLength: 1}, session_id: {$ref: '#/components/schemas/Uuid'}, problem_id: {type: string, minLength: 1}, profile_id: {$ref: '#/components/schemas/Uuid'}, profile_version: {type: integer, minimum: 1}, profile_content_hash: {$ref: '#/components/schemas/Hash'}, status: {enum: [collecting, finalizing, finalized, abandoned]}, last_contiguous_sequence: {type: integer, minimum: 0}, received_event_count: {type: integer, minimum: 0}, analysis_job_id: {type: [string, 'null'], pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'}}
+      required:
+        [
+          schema_version,
+          request_id,
+          session_id,
+          problem_id,
+          profile_id,
+          profile_version,
+          profile_content_hash,
+          status,
+          last_contiguous_sequence,
+          received_event_count,
+          analysis_job_id
+        ]
+      properties:
+        {
+          schema_version: { const: 1 },
+          request_id: { type: string, minLength: 1 },
+          session_id: { $ref: '#/components/schemas/Uuid' },
+          problem_id: { type: string, minLength: 1 },
+          profile_id: { $ref: '#/components/schemas/Uuid' },
+          profile_version: { type: integer, minimum: 1 },
+          profile_content_hash: { $ref: '#/components/schemas/Hash' },
+          status: { enum: [collecting, finalizing, finalized, abandoned] },
+          last_contiguous_sequence: { type: integer, minimum: 0 },
+          received_event_count: { type: integer, minimum: 0 },
+          analysis_job_id:
+            {
+              type: [string, 'null'],
+              pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+            }
+        }
     SessionFinalizeResponse:
       type: object
       additionalProperties: false
-      required: [schema_version, request_id, session_id, status, last_contiguous_sequence, analysis_job_id]
-      properties: {schema_version: {const: 1}, request_id: {type: string, minLength: 1}, session_id: {$ref: '#/components/schemas/Uuid'}, status: {const: finalized}, last_contiguous_sequence: {type: integer, minimum: 0}, analysis_job_id: {$ref: '#/components/schemas/Uuid'}}
+      required:
+        [
+          schema_version,
+          request_id,
+          session_id,
+          status,
+          last_contiguous_sequence,
+          analysis_job_id
+        ]
+      properties:
+        {
+          schema_version: { const: 1 },
+          request_id: { type: string, minLength: 1 },
+          session_id: { $ref: '#/components/schemas/Uuid' },
+          status: { const: finalized },
+          last_contiguous_sequence: { type: integer, minimum: 0 },
+          analysis_job_id: { $ref: '#/components/schemas/Uuid' }
+        }
     DeletedSessionResponse:
       type: object
       additionalProperties: false
       required: [schema_version, request_id, deleted_session_id]
-      properties: {schema_version: {const: 1}, request_id: {type: string, minLength: 1}, deleted_session_id: {$ref: '#/components/schemas/Uuid'}}
+      properties:
+        {
+          schema_version: { const: 1 },
+          request_id: { type: string, minLength: 1 },
+          deleted_session_id: { $ref: '#/components/schemas/Uuid' }
+        }
     AnalysisJobResponse:
       type: object
       additionalProperties: false
-      required: [schema_version, request_id, job_id, session_id, status, active_attempt_id, attempt_ids, analysis_id, error_code]
-      properties: {schema_version: {const: 1}, request_id: {type: string, minLength: 1}, job_id: {$ref: '#/components/schemas/Uuid'}, session_id: {$ref: '#/components/schemas/Uuid'}, status: {enum: [queued, running, ready, partial, error]}, active_attempt_id: {type: [string, 'null'], pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'}, attempt_ids: {type: array, items: {$ref: '#/components/schemas/Uuid'}}, analysis_id: {type: [string, 'null'], pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'}, error_code: {type: [string, 'null'], minLength: 1}}
+      required:
+        [
+          schema_version,
+          request_id,
+          job_id,
+          session_id,
+          status,
+          active_attempt_id,
+          attempt_ids,
+          analysis_id,
+          error_code
+        ]
+      properties:
+        {
+          schema_version: { const: 1 },
+          request_id: { type: string, minLength: 1 },
+          job_id: { $ref: '#/components/schemas/Uuid' },
+          session_id: { $ref: '#/components/schemas/Uuid' },
+          status: { enum: [queued, running, ready, partial, error] },
+          active_attempt_id:
+            {
+              type: [string, 'null'],
+              pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+            },
+          attempt_ids:
+            { type: array, items: { $ref: '#/components/schemas/Uuid' } },
+          analysis_id:
+            {
+              type: [string, 'null'],
+              pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+            },
+          error_code: { type: [string, 'null'], minLength: 1 }
+        }
     SessionAnalysisResponse:
       type: object
       additionalProperties: false
-      required: [schema_version, request_id, analysis_id, job_id, attempt_id, session_id, profile_id, profile_version, profile_content_hash, status, error_code, dimension_results, provenance]
-      properties: {schema_version: {const: 1}, request_id: {type: string, minLength: 1}, analysis_id: {$ref: '#/components/schemas/Uuid'}, job_id: {$ref: '#/components/schemas/Uuid'}, attempt_id: {$ref: '#/components/schemas/Uuid'}, session_id: {$ref: '#/components/schemas/Uuid'}, profile_id: {$ref: '#/components/schemas/Uuid'}, profile_version: {type: integer, minimum: 1}, profile_content_hash: {$ref: '#/components/schemas/Hash'}, status: {enum: [ready, partial]}, error_code: {type: [string, 'null'], enum: [ai_not_configured, ai_analysis_failed, invalid_profile, null]}, dimension_results: {type: array, minItems: 1, maxItems: 10, items: {$ref: '#/components/schemas/DimensionResult'}}, provenance: {$ref: '#/components/schemas/Provenance'}}
+      required:
+        [
+          schema_version,
+          request_id,
+          analysis_id,
+          job_id,
+          attempt_id,
+          session_id,
+          profile_id,
+          profile_version,
+          profile_content_hash,
+          status,
+          error_code,
+          dimension_results,
+          provenance
+        ]
+      properties:
+        {
+          schema_version: { const: 1 },
+          request_id: { type: string, minLength: 1 },
+          analysis_id: { $ref: '#/components/schemas/Uuid' },
+          job_id: { $ref: '#/components/schemas/Uuid' },
+          attempt_id: { $ref: '#/components/schemas/Uuid' },
+          session_id: { $ref: '#/components/schemas/Uuid' },
+          profile_id: { $ref: '#/components/schemas/Uuid' },
+          profile_version: { type: integer, minimum: 1 },
+          profile_content_hash: { $ref: '#/components/schemas/Hash' },
+          status: { enum: [ready, partial] },
+          error_code:
+            {
+              type: [string, 'null'],
+              enum:
+                [ai_not_configured, ai_analysis_failed, invalid_profile, null]
+            },
+          dimension_results:
+            {
+              type: array,
+              minItems: 1,
+              maxItems: 10,
+              items: { $ref: '#/components/schemas/DimensionResult' }
+            },
+          provenance: { $ref: '#/components/schemas/Provenance' }
+        }
     DimensionResultResponse:
       type: object
       additionalProperties: false
       required: [schema_version, request_id, dimension_code, decision]
-      properties: {schema_version: {const: 1}, request_id: {type: string, minLength: 1}, dimension_code: {type: string, minLength: 1}, decision: {$ref: '#/components/schemas/Decision'}, data_quality: {$ref: '../../myextension/api_schemas/dimension-result-v1.json#/$defs/data_quality'}, ai_result: {$ref: '../../myextension/api_schemas/dimension-result-v1.json#/$defs/ai_result'}, review: {$ref: '../../myextension/api_schemas/dimension-result-v1.json#/$defs/review'}}
-      allOf: [{if: {properties: {decision: {properties: {final_evidence_status: {const: observed}}, required: [final_evidence_status]}}, required: [decision]}, then: {required: [ai_result], properties: {ai_result: {type: object, properties: {evidence_claims: {minItems: 1}}, required: [evidence_claims]}}}}]
+      properties:
+        {
+          schema_version: { const: 1 },
+          request_id: { type: string, minLength: 1 },
+          dimension_code: { type: string, minLength: 1 },
+          decision: { $ref: '#/components/schemas/Decision' },
+          data_quality:
+            {
+              $ref: '../../myextension/api_schemas/dimension-result-v1.json#/$defs/data_quality'
+            },
+          ai_result:
+            {
+              $ref: '../../myextension/api_schemas/dimension-result-v1.json#/$defs/ai_result'
+            },
+          review:
+            {
+              $ref: '../../myextension/api_schemas/dimension-result-v1.json#/$defs/review'
+            }
+        }
+      allOf:
+        [
+          {
+            if:
+              {
+                properties:
+                  {
+                    decision:
+                      {
+                        properties:
+                          { final_evidence_status: { const: observed } },
+                        required: [final_evidence_status]
+                      }
+                  },
+                required: [decision]
+              },
+            then:
+              {
+                required: [ai_result],
+                properties:
+                  {
+                    ai_result:
+                      {
+                        type: object,
+                        properties: { evidence_claims: { minItems: 1 } },
+                        required: [evidence_claims]
+                      }
+                  }
+              }
+          }
+        ]
     Provenance:
       type: object
       additionalProperties: false
-      required: [analysis_pipeline_version, feature_extractor_version, signal_dictionary_version, signal_dictionary_hash, model_name, model_version, model_parameters, prompt_version, prompt_content_hash, provider_request_id, raw_response_hash, input_snapshot_hash]
-      properties: {analysis_pipeline_version: {type: string, minLength: 1}, feature_extractor_version: {type: string, minLength: 1}, signal_dictionary_version: {type: string, minLength: 1}, signal_dictionary_hash: {$ref: '#/components/schemas/Hash'}, model_name: {type: string, minLength: 1}, model_version: {type: [string, 'null'], minLength: 1}, model_parameters: {type: object, additionalProperties: false, required: [temperature], properties: {temperature: {type: number}}}, prompt_version: {type: string, minLength: 1}, prompt_content_hash: {$ref: '#/components/schemas/Hash'}, provider_request_id: {type: [string, 'null'], minLength: 1}, raw_response_hash: {$ref: '#/components/schemas/Hash'}, input_snapshot_hash: {$ref: '#/components/schemas/Hash'}}
+      required:
+        [
+          analysis_pipeline_version,
+          feature_extractor_version,
+          signal_dictionary_version,
+          signal_dictionary_hash,
+          model_name,
+          model_version,
+          model_parameters,
+          prompt_version,
+          prompt_content_hash,
+          provider_request_id,
+          raw_response_hash,
+          input_snapshot_hash
+        ]
+      properties:
+        {
+          analysis_pipeline_version: { type: string, minLength: 1 },
+          feature_extractor_version: { type: string, minLength: 1 },
+          signal_dictionary_version: { type: string, minLength: 1 },
+          signal_dictionary_hash: { $ref: '#/components/schemas/Hash' },
+          model_name: { type: string, minLength: 1 },
+          model_version: { type: [string, 'null'], minLength: 1 },
+          model_parameters:
+            {
+              type: object,
+              additionalProperties: false,
+              required: [temperature],
+              properties: { temperature: { type: number } }
+            },
+          prompt_version: { type: string, minLength: 1 },
+          prompt_content_hash: { $ref: '#/components/schemas/Hash' },
+          provider_request_id: { type: [string, 'null'], minLength: 1 },
+          raw_response_hash: { $ref: '#/components/schemas/Hash' },
+          input_snapshot_hash: { $ref: '#/components/schemas/Hash' }
+        }
     ProfileDraftUpdate:
       type: object
       additionalProperties: false
       required: [revision, draft]
-      properties: {revision: {type: integer, minimum: 1}, draft: {$ref: '#/components/schemas/ProfileDraft'}}
+      properties:
+        {
+          revision: { type: integer, minimum: 1 },
+          draft: { $ref: '#/components/schemas/ProfileDraft' }
+        }
     SessionFinalize:
       type: object
       additionalProperties: false
       required: [schema_version, last_sequence]
-      properties: {schema_version: {const: 1}, last_sequence: {type: integer, minimum: 0}}
+      properties:
+        {
+          schema_version: { const: 1 },
+          last_sequence: { type: integer, minimum: 0 }
+        }
     SessionAbandon:
       type: object
       additionalProperties: false
       required: [reason]
-      properties: {reason: {type: string, minLength: 1}}
+      properties: { reason: { type: string, minLength: 1 } }
     SessionRecover:
       type: object
       additionalProperties: false
       required: [actor, reason]
-      properties: {actor: {type: string, minLength: 1}, reason: {type: string, minLength: 1}}
+      properties:
+        {
+          actor: { type: string, minLength: 1 },
+          reason: { type: string, minLength: 1 }
+        }
     SessionDelete:
       type: object
       additionalProperties: false
       required: [actor, reason, confirm_session_id]
-      properties: {actor: {type: string, minLength: 1}, reason: {type: string, minLength: 1}, confirm_session_id: {$ref: '#/components/schemas/Uuid'}}
+      properties:
+        {
+          actor: { type: string, minLength: 1 },
+          reason: { type: string, minLength: 1 },
+          confirm_session_id: { $ref: '#/components/schemas/Uuid' }
+        }
     AnalysisRetry:
       type: object
       additionalProperties: false
       required: [reason]
-      properties: {reason: {type: string, minLength: 1}}
+      properties: { reason: { type: string, minLength: 1 } }
     DimensionReview:
       type: object
       additionalProperties: false
-      required: [revision, decision_status, evidence_status, level_code, evidence_event_ids, reason_code, comment]
-      properties: {revision: {type: integer, minimum: 0}, decision_status: {enum: [resolved, needs_review]}, evidence_status: {enum: [observed, not_observed, insufficient_evidence, not_computable, null]}, level_code: {enum: [possible, clear, null]}, evidence_event_ids: {type: array, items: {type: string, minLength: 1}}, reason_code: {enum: [teacher_confirmed, teacher_correction, uncertain]}, comment: {type: string, minLength: 1}}
+      required:
+        [
+          revision,
+          decision_status,
+          evidence_status,
+          level_code,
+          evidence_event_ids,
+          reason_code,
+          comment
+        ]
+      properties:
+        {
+          revision: { type: integer, minimum: 0 },
+          decision_status: { enum: [resolved, needs_review] },
+          evidence_status:
+            {
+              enum:
+                [
+                  observed,
+                  not_observed,
+                  insufficient_evidence,
+                  not_computable,
+                  null
+                ]
+            },
+          level_code: { enum: [possible, clear, null] },
+          evidence_event_ids:
+            { type: array, items: { type: string, minLength: 1 } },
+          reason_code:
+            { enum: [teacher_confirmed, teacher_correction, uncertain] },
+          comment: { type: string, minLength: 1 }
+        }
   requestBodies:
-    ProfileDraft: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ProfileDraft'}}}}
-    ProfileDraftUpdate: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ProfileDraftUpdate'}}}}
+    ProfileDraft:
+      {
+        required: true,
+        content:
+          {
+            application/json:
+              { schema: { $ref: '#/components/schemas/ProfileDraft' } }
+          }
+      }
+    ProfileDraftUpdate:
+      {
+        required: true,
+        content:
+          {
+            application/json:
+              { schema: { $ref: '#/components/schemas/ProfileDraftUpdate' } }
+          }
+      }
     AssessmentKnowledgeRequest:
       required: true
       description: Teacher-authored problem context and optional focus only; student events, paths, identities, logs, and credentials are not accepted.
       content:
         application/json:
-          schema: {$ref: '#/components/schemas/AssessmentKnowledgeRequest'}
+          schema: { $ref: '#/components/schemas/AssessmentKnowledgeRequest' }
     AssessmentTestsRequest:
       required: true
       description: Teacher-authored problem context and confirmed knowledge-point identifiers, names, and descriptions only; student data is not accepted.
       content:
         application/json:
-          schema: {$ref: '#/components/schemas/AssessmentTestsRequest'}
-    SessionStart: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SessionStart'}}}}
-    SegmentBatch: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SegmentBatch'}}}}
-    SessionFinalize: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SessionFinalize'}}}}
-    SessionAbandon: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SessionAbandon'}}}}
-    SessionRecover: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SessionRecover'}}}}
-    SessionDelete: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SessionDelete'}}}}
-    LogFolderOpen: {required: true, content: {application/json: {schema: {type: object, additionalProperties: false, maxProperties: 0}}}}
-    AnalysisRetry: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/AnalysisRetry'}}}}
-    DimensionReview: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/DimensionReview'}}}}
+          schema: { $ref: '#/components/schemas/AssessmentTestsRequest' }
+    SessionStart:
+      {
+        required: true,
+        content:
+          {
+            application/json:
+              { schema: { $ref: '#/components/schemas/SessionStart' } }
+          }
+      }
+    SegmentBatch:
+      {
+        required: true,
+        content:
+          {
+            application/json:
+              { schema: { $ref: '#/components/schemas/SegmentBatch' } }
+          }
+      }
+    SessionFinalize:
+      {
+        required: true,
+        content:
+          {
+            application/json:
+              { schema: { $ref: '#/components/schemas/SessionFinalize' } }
+          }
+      }
+    SessionAbandon:
+      {
+        required: true,
+        content:
+          {
+            application/json:
+              { schema: { $ref: '#/components/schemas/SessionAbandon' } }
+          }
+      }
+    SessionRecover:
+      {
+        required: true,
+        content:
+          {
+            application/json:
+              { schema: { $ref: '#/components/schemas/SessionRecover' } }
+          }
+      }
+    SessionDelete:
+      {
+        required: true,
+        content:
+          {
+            application/json:
+              { schema: { $ref: '#/components/schemas/SessionDelete' } }
+          }
+      }
+    LogFolderOpen:
+      {
+        required: true,
+        content:
+          {
+            application/json:
+              {
+                schema:
+                  {
+                    type: object,
+                    additionalProperties: false,
+                    maxProperties: 0
+                  }
+              }
+          }
+      }
+    AnalysisRetry:
+      {
+        required: true,
+        content:
+          {
+            application/json:
+              { schema: { $ref: '#/components/schemas/AnalysisRetry' } }
+          }
+      }
+    DimensionReview:
+      {
+        required: true,
+        content:
+          {
+            application/json:
+              { schema: { $ref: '#/components/schemas/DimensionReview' } }
+          }
+      }
   responses:
-    TemplateListResponse: {description: Template list., content: {application/json: {schema: {$ref: '#/components/schemas/TemplateListResponse'}}}}
-    ProfileListResponse: {description: Profile list., content: {application/json: {schema: {$ref: '#/components/schemas/ProfileListResponse'}}}}
-    ProfileDraftResponse: {description: Profile draft., content: {application/json: {schema: {$ref: '#/components/schemas/ProfileDraftResponse'}}}}
-    ProfileVersionResponse: {description: Profile version., content: {application/json: {schema: {$ref: '#/components/schemas/ProfileVersionResponse'}}}}
-    AssessmentKnowledgeResponse: {description: Editable, unconfirmed knowledge-point candidates., content: {application/json: {schema: {$ref: '#/components/schemas/AssessmentKnowledgeResponse'}}}}
-    AssessmentTestsResponse: {description: Editable, unconfirmed structured test candidates., content: {application/json: {schema: {$ref: '#/components/schemas/AssessmentTestsResponse'}}}}
-    LogFolderOpenResponse: {description: Fixed local sessions folder opened without returning its path., content: {application/json: {schema: {$ref: '#/components/schemas/LogFolderOpenResponse'}}}}
-    SessionLogListResponse: {description: Fixed current-session log list., content: {application/json: {schema: {$ref: '#/components/schemas/SessionLogListResponse'}}}}
-    ClassroomBriefResponse: {description: Private-safe deterministic local classroom brief., content: {application/json: {schema: {$ref: '#/components/schemas/ClassroomBriefResponse'}}}}
-    SessionStartResponse: {description: Session started., content: {application/json: {schema: {$ref: '#/components/schemas/SessionStartResponse'}}}}
-    SegmentReceiptResponse: {description: Segments received., content: {application/json: {schema: {$ref: '#/components/schemas/SegmentReceiptResponse'}}}}
-    SessionStateResponse: {description: Session state., content: {application/json: {schema: {$ref: '#/components/schemas/SessionStateResponse'}}}}
-    SessionFinalizeResponse: {description: Session finalized., content: {application/json: {schema: {$ref: '#/components/schemas/SessionFinalizeResponse'}}}}
-    DeletedSessionResponse: {description: Session deleted., content: {application/json: {schema: {$ref: '#/components/schemas/DeletedSessionResponse'}}}}
-    AnalysisJobResponse: {description: Analysis job., content: {application/json: {schema: {$ref: '#/components/schemas/AnalysisJobResponse'}}}}
-    SessionAnalysisResponse: {description: Session analysis., content: {application/json: {schema: {$ref: '#/components/schemas/SessionAnalysisResponse'}}}}
-    DimensionResultResponse: {description: Dimension result., content: {application/json: {schema: {$ref: '#/components/schemas/DimensionResultResponse'}}}}
-    BadRequest: {$ref: '#/components/responses/ErrorResponse'}
-    Unauthorized: {$ref: '#/components/responses/ErrorResponse'}
-    Forbidden: {$ref: '#/components/responses/ErrorResponse'}
-    NotFound: {$ref: '#/components/responses/ErrorResponse'}
-    Conflict: {$ref: '#/components/responses/ErrorResponse'}
-    PayloadTooLarge: {$ref: '#/components/responses/ErrorResponse'}
-    Unprocessable: {$ref: '#/components/responses/ErrorResponse'}
-    RateLimited: {$ref: '#/components/responses/ErrorResponse'}
-    ServerError: {$ref: '#/components/responses/ErrorResponse'}
-    ServiceUnavailable: {$ref: '#/components/responses/ErrorResponse'}
-    BadGateway: {$ref: '#/components/responses/ErrorResponse'}
-    ErrorResponse: {description: Error response., content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+    TemplateListResponse:
+      {
+        description: Template list.,
+        content:
+          {
+            application/json:
+              { schema: { $ref: '#/components/schemas/TemplateListResponse' } }
+          }
+      }
+    ProfileListResponse:
+      {
+        description: Profile list.,
+        content:
+          {
+            application/json:
+              { schema: { $ref: '#/components/schemas/ProfileListResponse' } }
+          }
+      }
+    ProfileDraftResponse:
+      {
+        description: Profile draft.,
+        content:
+          {
+            application/json:
+              { schema: { $ref: '#/components/schemas/ProfileDraftResponse' } }
+          }
+      }
+    ProfileVersionResponse:
+      {
+        description: Profile version.,
+        content:
+          {
+            application/json:
+              {
+                schema: { $ref: '#/components/schemas/ProfileVersionResponse' }
+              }
+          }
+      }
+    AssessmentKnowledgeResponse:
+      {
+        description: Editable,
+        unconfirmed knowledge-point candidates.,
+        content:
+          {
+            application/json:
+              {
+                schema:
+                  { $ref: '#/components/schemas/AssessmentKnowledgeResponse' }
+              }
+          }
+      }
+    AssessmentTestsResponse:
+      {
+        description: Editable,
+        unconfirmed structured test candidates.,
+        content:
+          {
+            application/json:
+              {
+                schema: { $ref: '#/components/schemas/AssessmentTestsResponse' }
+              }
+          }
+      }
+    LogFolderOpenResponse:
+      {
+        description: Fixed local sessions folder opened without returning its path.,
+        content:
+          {
+            application/json:
+              { schema: { $ref: '#/components/schemas/LogFolderOpenResponse' } }
+          }
+      }
+    SessionLogListResponse:
+      {
+        description: Fixed current-session log list.,
+        content:
+          {
+            application/json:
+              {
+                schema: { $ref: '#/components/schemas/SessionLogListResponse' }
+              }
+          }
+      }
+    ClassroomBriefResponse:
+      {
+        description: Private-safe deterministic local classroom brief.,
+        content:
+          {
+            application/json:
+              {
+                schema: { $ref: '#/components/schemas/ClassroomBriefResponse' }
+              }
+          }
+      }
+    PlatformContextResponse:
+      {
+        description: Server-authoritative platform mode,
+        capabilities,
+        and optional classroom snapshot without plugin credentials.,
+        content:
+          {
+            application/json:
+              {
+                schema: { $ref: '#/components/schemas/PlatformContextResponse' }
+              }
+          }
+      }
+    PlatformCaptureBootstrapResponse:
+      {
+        description: Classroom capture session created,
+        resumed,
+        or terminal at evidence cutoff.,
+        content:
+          {
+            application/json:
+              {
+                schema:
+                  {
+                    $ref: '#/components/schemas/PlatformCaptureBootstrapResponse'
+                  }
+              }
+          }
+      }
+    SessionStartResponse:
+      {
+        description: Session started.,
+        content:
+          {
+            application/json:
+              { schema: { $ref: '#/components/schemas/SessionStartResponse' } }
+          }
+      }
+    SegmentReceiptResponse:
+      {
+        description: Segments received.,
+        content:
+          {
+            application/json:
+              {
+                schema: { $ref: '#/components/schemas/SegmentReceiptResponse' }
+              }
+          }
+      }
+    SessionStateResponse:
+      {
+        description: Session state.,
+        content:
+          {
+            application/json:
+              { schema: { $ref: '#/components/schemas/SessionStateResponse' } }
+          }
+      }
+    SessionFinalizeResponse:
+      {
+        description: Session finalized.,
+        content:
+          {
+            application/json:
+              {
+                schema: { $ref: '#/components/schemas/SessionFinalizeResponse' }
+              }
+          }
+      }
+    DeletedSessionResponse:
+      {
+        description: Session deleted.,
+        content:
+          {
+            application/json:
+              {
+                schema: { $ref: '#/components/schemas/DeletedSessionResponse' }
+              }
+          }
+      }
+    AnalysisJobResponse:
+      {
+        description: Analysis job.,
+        content:
+          {
+            application/json:
+              { schema: { $ref: '#/components/schemas/AnalysisJobResponse' } }
+          }
+      }
+    SessionAnalysisResponse:
+      {
+        description: Session analysis.,
+        content:
+          {
+            application/json:
+              {
+                schema: { $ref: '#/components/schemas/SessionAnalysisResponse' }
+              }
+          }
+      }
+    DimensionResultResponse:
+      {
+        description: Dimension result.,
+        content:
+          {
+            application/json:
+              {
+                schema: { $ref: '#/components/schemas/DimensionResultResponse' }
+              }
+          }
+      }
+    BadRequest: { $ref: '#/components/responses/ErrorResponse' }
+    Unauthorized: { $ref: '#/components/responses/ErrorResponse' }
+    Forbidden: { $ref: '#/components/responses/ErrorResponse' }
+    NotFound: { $ref: '#/components/responses/ErrorResponse' }
+    Conflict: { $ref: '#/components/responses/ErrorResponse' }
+    PayloadTooLarge: { $ref: '#/components/responses/ErrorResponse' }
+    Unprocessable: { $ref: '#/components/responses/ErrorResponse' }
+    RateLimited: { $ref: '#/components/responses/ErrorResponse' }
+    ServerError: { $ref: '#/components/responses/ErrorResponse' }
+    ServiceUnavailable: { $ref: '#/components/responses/ErrorResponse' }
+    BadGateway: { $ref: '#/components/responses/ErrorResponse' }
+    ErrorResponse:
+      {
+        description: Error response.,
+        content:
+          {
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+          }
+      }

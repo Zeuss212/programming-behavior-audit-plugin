@@ -1,0 +1,1 @@
+"""Shared classroom domain contracts."""

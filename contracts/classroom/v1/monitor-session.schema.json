@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://classroom.local/contracts/v1/monitor-session.schema.json",
+  "title": "Classroom monitoring session v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "session_id",
+    "assignment_id",
+    "plan_id",
+    "plan_version",
+    "status",
+    "scheduled_end_at",
+    "actual_end_at",
+    "evidence_cutoff_at",
+    "last_activity_at",
+    "last_heartbeat_at",
+    "last_contiguous_sequence"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "session_id": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/uuid"},
+    "assignment_id": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/uuid"},
+    "plan_id": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/uuid"},
+    "plan_version": {"type": "integer", "minimum": 1},
+    "status": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/session_status"},
+    "scheduled_end_at": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/timestamp"},
+    "actual_end_at": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/timestamp"},
+    "evidence_cutoff_at": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/timestamp"},
+    "last_activity_at": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/timestamp"},
+    "last_heartbeat_at": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/timestamp"},
+    "last_contiguous_sequence": {"type": "integer", "minimum": 0},
+    "missing_ranges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["first", "last"],
+        "properties": {
+          "first": {"type": "integer", "minimum": 1},
+          "last": {"type": "integer", "minimum": 1}
+        }
+      }
+    }
+  }
+}

@@ -321,6 +321,7 @@ function dependencies(
     retryAnalysisJob: jest.fn(),
     getStoredActiveSession: jest.fn(async () => null),
     getClassroomBrief: jest.fn(async () => classroomBrief),
+    submitClassroomBrief: jest.fn(),
     abandonSession: jest.fn(),
     deleteSession: jest.fn(
       async (_settings, sessionId) =>

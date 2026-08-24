@@ -37,7 +37,7 @@ _COMMENT_OPAQUE_LITERAL = re.compile(
     r"(?m)(?P<prefix>^\s*#\s*)(?P<secret>[A-Za-z0-9_-]{32,})(?=\s*$)"
 )
 _OPAQUE_TOKEN = re.compile(
-    r"(?<![A-Za-z0-9_-])(?P<secret>[A-Za-z0-9_-]{32,})(?![A-Za-z0-9_-])"
+    r"(?<![A-Za-z0-9._-])(?P<secret>[A-Za-z0-9._-]{32,})(?![A-Za-z0-9._-])"
 )
 
 
@@ -88,15 +88,21 @@ def _safe_source(value: str) -> str:
 def _is_opaque_secret(value: str) -> bool:
     """Conservatively recognise random-looking values only in literals/comments."""
 
+    hexadecimal = (
+        len(value) >= 48
+        and re.fullmatch(r"[0-9A-Fa-f]+", value) is not None
+        and any(char.isalpha() for char in value)
+        and any(char.isdigit() for char in value)
+    )
     categories = sum(
         (
             any(char.islower() for char in value),
             any(char.isupper() for char in value),
             any(char.isdigit() for char in value),
-            any(char in "_-" for char in value),
+            any(char in "._-" for char in value),
         )
     )
-    return categories >= 3 and len(set(value)) >= 12
+    return (hexadecimal or categories >= 3) and len(set(value)) >= 12
 
 
 def _redact_quoted_opaque_literal(match: re.Match[str]) -> str:

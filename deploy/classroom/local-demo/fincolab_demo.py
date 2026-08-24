@@ -7,6 +7,7 @@ demo.  All identities, passwords and tokens are disposable local fixtures.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -63,6 +64,30 @@ USERS = {
         NEGATIVE_COURSE_ID,
     ),
 }
+
+
+def _local_student_count() -> int:
+    """Keep the local-only concurrency fixture bounded and deterministic."""
+
+    try:
+        requested = int(os.environ.get("CLASSROOM_MOCK_STUDENT_COUNT", "1"))
+    except ValueError:
+        return 1
+    return min(100, max(1, requested))
+
+
+for _index in range(3, _local_student_count() + 2):
+    _student_id = f"student{_index:03d}"
+    USERS[_student_id] = DemoUser(
+        _student_id,
+        _student_id,
+        f"local-demo-{_student_id}",
+        f"{_student_id}-token",
+        "student",
+        LOCAL_ORGANIZATION_ID,
+        COURSE_ID,
+    )
+
 TOKEN_ALIASES = {"student-token": USERS["student001"]}
 
 
@@ -135,14 +160,28 @@ def _parent_project() -> dict[str, object]:
     }
 
 
-def _student_project() -> dict[str, object]:
+def _child_algorithm_id(student_id: str) -> str:
+    return CHILD_ALGORITHM_ID if student_id == "student001" else f"child-experiment-{student_id}"
+
+
+def _workbench_id(student_id: str) -> str:
+    return WORKBENCH_ID if student_id == "student001" else f"workbench-{student_id}"
+
+
+def _course_students() -> list[DemoUser]:
+    return [user for user in USERS.values() if user.role_name == "student" and user.space_id == COURSE_ID]
+
+
+def _student_project(student_id: str = "student001") -> dict[str, object]:
+    child_algorithm_id = _child_algorithm_id(student_id)
+    workbench_id = _workbench_id(student_id)
     return {
-        "id": CHILD_ALGORITHM_ID,
-        "name": "exp-student001-a1b2",
-        "username": "student001",
+        "id": child_algorithm_id,
+        "name": f"exp-{student_id}-a1b2",
+        "username": student_id,
         "description": f"[FINCOLAB_PARENT_PROJECT_ID:{PARENT_ALGORITHM_ID}] 本地课堂学生任务",
         "project_type": "notebook",
-        "workbench_id": WORKBENCH_ID,
+        "workbench_id": workbench_id,
         "workbench_status": "RUNNING",
         "jupyter_url": "http://127.0.0.1:8888/lab",
     }
@@ -259,25 +298,30 @@ class DemoFincolabHandler(BaseHTTPRequestHandler):
             # The student UI matches its private child against the teacher's
             # parent metadata.  Listing the parent permits that local
             # association; its detail endpoint remains teacher-only below.
-            rows = [_parent_project(), _student_project()]
+            rows = [_parent_project(), *[_student_project(student.username) for student in _course_students()]]
             self._reply(HTTPStatus.OK, _pagination(rows))
             return
         algorithm_id = tail[0]
         if algorithm_id == PARENT_ALGORITHM_ID and user.role_name == "teacher" and len(tail) == 1:
             self._reply(HTTPStatus.OK, _parent_project())
             return
-        if algorithm_id != CHILD_ALGORITHM_ID or user.username != "student001":
+        student = next(
+            (candidate for candidate in _course_students() if _child_algorithm_id(candidate.username) == algorithm_id),
+            None,
+        )
+        if student is None or user.username != student.username:
             self._reply(HTTPStatus.FORBIDDEN, {"detail": "demo_resource_access_denied"})
             return
         if len(tail) == 1:
-            self._reply(HTTPStatus.OK, _student_project())
+            self._reply(HTTPStatus.OK, _student_project(student.username))
             return
-        if tail == [CHILD_ALGORITHM_ID, "workbench", WORKBENCH_ID]:
+        workbench_id = _workbench_id(student.username)
+        if tail == [algorithm_id, "workbench", workbench_id]:
             self._reply(
                 HTTPStatus.OK,
                 {
-                    "id": WORKBENCH_ID,
-                    "username": "student001",
+                    "id": workbench_id,
+                    "username": student.username,
                     "workbench_status": "RUNNING",
                     "jupyter_url": "http://127.0.0.1:8888/lab",
                     "container_resource_json": {"cpu": 2, "memory": 4, "gpu": 0},

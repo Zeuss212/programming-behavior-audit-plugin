@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import cast
 from uuid import uuid4
 
+from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -19,10 +20,12 @@ from classroom_sync.models import (
     ClassroomBriefAnalysisJob,
     EvidenceChunk,
     MonitorSession,
+    PlanVersion,
     StudentAssignment,
     StudentBrief,
     TeacherReview,
 )
+from classroom_sync.services.brief_analysis import BriefAnalysisInput
 
 EVIDENCE_REF_PATTERN = re.compile(r"^chunk-(\d+)#event-(\d+)$")
 
@@ -62,6 +65,8 @@ class BriefService:
         *,
         reason: str,
         request_ai_analysis: bool = False,
+        analysis_input: Mapping[str, object] | None = None,
+        analysis_available: bool = True,
     ) -> StudentBrief:
         """Persist a new revision while retaining the logical brief and first submit time."""
 
@@ -73,6 +78,25 @@ class BriefService:
             assignment = session.get(StudentAssignment, monitor_session.assignment_id)
             if assignment is None:
                 raise NotFoundError("student_assignment_not_found")
+            plan_version = session.scalar(
+                select(PlanVersion).where(
+                    PlanVersion.plan_id == monitor_session.plan_id,
+                    PlanVersion.version == monitor_session.plan_version,
+                )
+            )
+            if plan_version is None:
+                raise NotFoundError("plan_version_not_found")
+            if request_ai_analysis != (analysis_input is not None):
+                raise ValidationError("brief_analysis_consent_input_mismatch")
+            try:
+                private_analysis_input = (
+                    BriefAnalysisInput.model_validate(analysis_input).model_dump(mode="json")
+                    if analysis_input is not None
+                    else None
+                )
+            except PydanticValidationError as error:
+                raise ValidationError("brief_analysis_input_invalid") from error
+            analysis_permitted = request_ai_analysis and plan_version.ai_policy == "allowed"
             previous = session.scalar(
                 select(StudentBrief)
                 .where(StudentBrief.session_id == session_id)
@@ -106,7 +130,13 @@ class BriefService:
                 "knowledge_points": list(content.knowledge_points),
                 "process_overview": list(content.process_overview),
                 "issues": list(content.issues),
-                "ai_analysis_status": "pending" if request_ai_analysis else "not_requested",
+                "ai_analysis_status": (
+                    "pending"
+                    if analysis_permitted and analysis_available
+                    else "unavailable"
+                    if analysis_permitted
+                    else "not_requested"
+                ),
                 "ai_analysis": None,
                 "generated_at": now.isoformat(),
             }
@@ -123,12 +153,15 @@ class BriefService:
                 generated_at=now,
             )
             session.add(brief)
-            if request_ai_analysis:
+            if analysis_permitted and analysis_available:
+                if private_analysis_input is None:
+                    raise ValidationError("brief_analysis_input_required")
                 session.flush()
                 session.add(
                     ClassroomBriefAnalysisJob(
                         id=str(uuid4()),
                         source_brief_id=brief.id,
+                        analysis_input=private_analysis_input,
                         run_at=now,
                         status="pending",
                         lease_owner=None,

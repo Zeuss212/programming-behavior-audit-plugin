@@ -103,11 +103,76 @@ def test_local_smoke_rejects_unsafe_or_unknown_ai_monitoring_fields() -> None:
         smoke._require_safe_monitoring_briefs(
             {"students": [{"brief": {"ai_analysis_status": "forged_ready"}}]}
         )
+
+
+def test_full_ai_loop_requires_a_plan_suggestion_and_ready_student_analysis(tmp_path: Path):
+    smoke = _load_module(SMOKE_PATH, "local_classroom_demo_smoke_full_ai_loop")
+    calls: list[object] = []
+
+    def fake_contract_runner(_client, *, state_file: Path, now, repeat_existing: bool, ai_policy: str):
+        calls.append((repeat_existing, ai_policy))
+        assert state_file == tmp_path / "state.json"
+        return {
+            "phase": "submitted" if repeat_existing else "collecting",
+            "session_id": "session-local",
+            "plan_version_id": "plan-version-local",
+        }
+
+    def fake_suggestion_runner(base_url: str, teacher_token: str) -> None:
+        calls.append((base_url, teacher_token))
+
+    with demo_facade_url() as facade_url:
+        result = smoke.run_local_demo_smoke(
+            facade_base_url=facade_url,
+            sync_base_url="http://127.0.0.1:18080",
+            state_file=tmp_path / "state.json",
+            contract_runner=fake_contract_runner,
+            monitoring_reader=lambda _plan_version_id: {
+                "students": [{"brief": {"ai_analysis_status": "ready"}}]
+            },
+            require_ai=True,
+            ai_suggestion_runner=fake_suggestion_runner,
+            brief_reader=lambda _session_id: {
+                "ai_analysis_status": "ready",
+                "ai_analysis": {
+                    "knowledge_point_analyses": [
+                        {
+                            "knowledge_point_id": "KP_SCORE",
+                            "status": "partial",
+                            "evidence_event_ids": ["chunk-1#event-1"],
+                            "teaching_suggestion": "请追问学生如何验证边界输入。",
+                        }
+                    ],
+                    "teacher_note": "根据运行证据组织下一步追问。",
+                },
+            },
+        )
+
+    assert result["phase"] == "submitted"
+    assert calls == [
+        ("http://127.0.0.1:18080", "teacher-token"),
+        (False, "allowed"),
+        (True, "allowed"),
+    ]
     with pytest.raises(smoke.LocalDemoSmokeFailure, match="sensitive"):
         smoke._require_safe_monitoring_briefs(
             {
                 "students": [
                     {"brief": {"ai_analysis_status": "not_requested", "object_key": "private"}}
                 ]
+            }
+        )
+    with pytest.raises(smoke.LocalDemoSmokeFailure, match="evidence-backed"):
+        smoke._require_usable_ai_analysis(
+            {
+                "knowledge_point_analyses": [
+                    {
+                        "knowledge_point_id": "KP_SCORE",
+                        "status": "observed",
+                        "evidence_event_ids": [],
+                        "teaching_suggestion": "请追问学生如何验证边界输入。",
+                    }
+                ],
+                "teacher_note": "根据运行证据组织下一步追问。",
             }
         )

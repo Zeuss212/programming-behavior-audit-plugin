@@ -50,6 +50,7 @@ def test_jupyter_launcher_starts_only_loopback_student_mode(tmp_path: Path):
 
     assert completed.returncode == 0, completed.stderr
     invocation = trace.read_text(encoding="utf-8")
+    assert "--refresh --no-project --with " in invocation
     assert "--with " + str(ROOT / "dist" / "myextension-0.4.0-py3-none-any.whl") in invocation
     assert "jupyter lab --ServerApp.ip=127.0.0.1 --ServerApp.port=8888" in invocation
     assert "--ServerApp.open_browser=False --ServerApp.token= --ServerApp.password=" in invocation

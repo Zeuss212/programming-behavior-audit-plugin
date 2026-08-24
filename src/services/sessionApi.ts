@@ -48,7 +48,8 @@ export function uploadSegmentBatch(
 export function finalizeSession(
   settings: ServerConnection.ISettings,
   sessionId: string,
-  lastSequence: number
+  lastSequence: number,
+  requestAiAnalysis = true
 ): Promise<ISessionFinalizeResponse> {
   return requestAPI<ISessionFinalizeResponse>(
     `sessions/${encodeURIComponent(sessionId)}/finalize`,
@@ -57,7 +58,8 @@ export function finalizeSession(
       method: 'POST',
       body: JSON.stringify({
         schema_version: 1,
-        last_sequence: lastSequence
+        last_sequence: lastSequence,
+        request_ai_analysis: requestAiAnalysis
       }),
       headers: JSON_HEADERS
     }

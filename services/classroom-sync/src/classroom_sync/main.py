@@ -5,6 +5,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from .application import ClassroomServices
@@ -41,6 +42,23 @@ def create_app(
                     "retryable": error.retryable,
                     "request_id": _request.headers.get("X-Request-ID") or str(uuid4()),
                 }
+            },
+        )
+
+    @app.exception_handler(RequestValidationError)
+    def request_validation_error(
+        _request: Request, _error: RequestValidationError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "schema_version": 1,
+                "error": {
+                    "code": "classroom_request_validation_failed",
+                    "message": "课堂服务请求未能完成。",
+                    "retryable": False,
+                    "request_id": _request.headers.get("X-Request-ID") or str(uuid4()),
+                },
             },
         )
 

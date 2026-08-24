@@ -85,11 +85,15 @@ describe('session API closed requests', () => {
   });
 
   it('encodes session IDs and sends the closed finalize body', async () => {
-    await finalizeSession(SETTINGS, RESOURCE_ID, 7);
+    await finalizeSession(SETTINGS, RESOURCE_ID, 7, false);
     expect(mockedRequest).toHaveBeenCalledWith(
       `sessions/${ENCODED_ID}/finalize`,
       SETTINGS,
-      jsonInit('POST', { schema_version: 1, last_sequence: 7 })
+      jsonInit('POST', {
+        schema_version: 1,
+        last_sequence: 7,
+        request_ai_analysis: false
+      })
     );
   });
 

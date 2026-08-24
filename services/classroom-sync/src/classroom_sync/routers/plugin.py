@@ -5,10 +5,11 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Header, Request, status
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from classroom_sync.errors import AuthenticationError
 from classroom_sync.routers.plans import get_services
+from classroom_sync.services.brief_analysis import BriefAnalysisInput
 from classroom_sync.services.briefs import BriefContent
 from classroom_sync.services.sessions import SessionCredentials
 
@@ -29,8 +30,15 @@ class SubmitBriefRequest(BaseModel):
     knowledge_points: list[dict[str, object]]
     process_overview: list[str]
     issues: list[str]
-    ai_analysis_status: str | None = None
     reason: str
+    request_ai_analysis: bool = False
+    analysis_input: BriefAnalysisInput | None = None
+
+    @model_validator(mode="after")
+    def validate_analysis_consent(self) -> SubmitBriefRequest:
+        if self.request_ai_analysis != (self.analysis_input is not None):
+            raise ValueError("analysis_input must exactly match AI consent")
+        return self
 
 
 def get_plugin_bearer(authorization: str | None) -> str:
@@ -156,7 +164,13 @@ def submit_brief(
             issues=tuple(payload.issues),
         ),
         reason=payload.reason,
-        request_ai_analysis=services.brief_analysis_service is not None,
+        request_ai_analysis=payload.request_ai_analysis,
+        analysis_input=(
+            payload.analysis_input.model_dump(mode="json")
+            if payload.analysis_input is not None
+            else None
+        ),
+        analysis_available=services.brief_analysis_service is not None,
     )
     return {
         "brief_id": brief.payload["brief_id"],

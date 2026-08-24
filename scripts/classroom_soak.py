@@ -207,7 +207,7 @@ def _run_student(client: SoakClient, assignment: dict[str, str]) -> dict[str, ob
         "POST",
         f"/v1/classroom/plugin/sessions/{session_id}/submit",
         token=plugin_token,
-        payload=_brief_payload(),
+        payload=_brief_payload(request_ai_analysis=False),
     )
     status = submission.get("status")
     if status not in {"completed", "partial"}:

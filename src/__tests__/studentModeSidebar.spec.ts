@@ -155,13 +155,75 @@ it('ends active monitoring and shows the submitted brief result after a student 
   submit!.click();
   for (let index = 0; index < 10; index += 1) await Promise.resolve();
 
-  expect(stop).toHaveBeenCalledTimes(1);
+  expect(stop).toHaveBeenCalledWith(false);
   expect(submitClassroomBrief).toHaveBeenCalledWith(
     settings,
-    studentContext.classroom_session!.session_id
+    studentContext.classroom_session!.session_id,
+    false
   );
   expect(sidebar.node.textContent).toContain(
     '本节简报已提交，老师可查看课堂结果。'
+  );
+  sidebar.dispose();
+});
+
+it('sends AI analysis authorization only after the student selects the consent checkbox', async () => {
+  const stop = jest.fn(async () => ({
+    schema_version: 1 as const,
+    request_id: 'authorized-finalize-request',
+    session_id: studentContext.classroom_session!.session_id,
+    status: 'finalized' as const,
+    last_contiguous_sequence: 12,
+    analysis_job_id: 'e046c012-bff4-4e3e-9764-f7cdf7782dd1'
+  }));
+  const activeCapture = {
+    ...capture,
+    isEnabled: jest.fn(() => true),
+    stop
+  } as unknown as IBehaviorCaptureController;
+  const submitClassroomBrief = jest.fn(async () => ({
+    session_id: studentContext.classroom_session!.session_id,
+    status: 'submitted' as const,
+    reason: 'student_manual' as const,
+    brief_id: '84521d4e-b27d-42b7-a8dd-4beabc0ab3f5',
+    revision: 1,
+    remote_status: 'completed'
+  }));
+  const dependencies = Object.assign(
+    sidebarDependencies(
+      settings,
+      activeCapture,
+      {
+        openProfileEditor: jest.fn(),
+        openDataFile: jest.fn(),
+        confirmClearAIKey: jest.fn(),
+        getStoredActiveSession: jest.fn(),
+        openLogFolder: jest.fn(),
+        openSessionLog: jest.fn(),
+        downloadSessionLog: jest.fn()
+      },
+      studentContext
+    ),
+    { submitClassroomBrief }
+  );
+  const sidebar = new BehaviorAnalysisSidebar(dependencies);
+  const consent = sidebar.node.querySelector<HTMLInputElement>(
+    '#classroom-ai-analysis-consent'
+  );
+  const submit = Array.from(
+    sidebar.node.querySelectorAll<HTMLButtonElement>('button')
+  ).find(value => value.textContent === '提交本节简报');
+
+  expect(consent?.checked).toBe(false);
+  consent!.click();
+  expect(consent?.checked).toBe(true);
+  submit!.click();
+  for (let index = 0; index < 10; index += 1) await Promise.resolve();
+
+  expect(submitClassroomBrief).toHaveBeenCalledWith(
+    settings,
+    studentContext.classroom_session!.session_id,
+    true
   );
   sidebar.dispose();
 });

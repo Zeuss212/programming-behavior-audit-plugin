@@ -3,16 +3,38 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
 from dataclasses import dataclass, field
 from typing import Literal
 from urllib.parse import urlsplit
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic import ValidationError as PydanticValidationError
 
 from classroom_sync.config import Settings
 from classroom_sync.errors import AiSuggestionUnavailableError, UpstreamUnavailableError
+
+logger = logging.getLogger(__name__)
+
+
+def _validate_safe_plan_display_text(value: str) -> str:
+    """Prevent provider output from becoming a transport for secrets or raw artifacts."""
+
+    lowered = value.lower()
+    if any(marker in lowered for marker in ("```", "http://", "https://", "s3://")):
+        raise ValueError("plan suggestion contains a forbidden address or code fence")
+    if re.search(r"(?:/Users/|/home/|[A-Za-z]:[\\/])", value):
+        raise ValueError("plan suggestion contains an absolute path")
+    if re.search(
+        r"(?:api[_ -]?key|authorization\s*:|原始输出|模型原始响应|"
+        r"\braw\s+(?:model\s+)?(?:output|response)\b|\bprovider\b)",
+        value,
+        re.IGNORECASE,
+    ):
+        raise ValueError("plan suggestion contains provider-sensitive text")
+    return value
 
 
 @dataclass(frozen=True)
@@ -42,7 +64,10 @@ class AiProviderSettings:
             raise AiSuggestionUnavailableError("ai_suggestion_not_configured")
         if not isinstance(timeout_seconds, int) or isinstance(timeout_seconds, bool):
             raise AiSuggestionUnavailableError("ai_suggestion_not_configured")
-        if not 1 <= timeout_seconds <= 30:
+        # Calls run only in the durable background workers, never in the
+        # teacher's browser request.  Allow a bounded longer window for a
+        # slower provider while still preventing unbounded work.
+        if not 1 <= timeout_seconds <= 180:
             raise AiSuggestionUnavailableError("ai_suggestion_not_configured")
 
         return cls(
@@ -189,6 +214,37 @@ class PlanSuggestionInput(BaseModel):
     statement: str = Field(min_length=1, max_length=10_000)
 
 
+class AutomaticEvaluationRequirement(BaseModel):
+    """One non-executable local evidence requirement selected by the provider."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    kind: Literal[
+        "successful_execution",
+        "dict_literal_assignment",
+        "dict_key_value_pairs",
+        "dict_subscript_access",
+        "dict_get_with_default",
+        "print_call",
+        "input_call",
+    ]
+
+
+class AutomaticEvaluation(BaseModel):
+    """A bounded all-of rule that the local plugin can evaluate without AI."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    mode: Literal["all"]
+    summary: str = Field(min_length=1, max_length=500)
+    requirements: list[AutomaticEvaluationRequirement] = Field(min_length=1, max_length=7)
+
+    @field_validator("summary")
+    @classmethod
+    def validate_safe_summary(cls, value: str) -> str:
+        return _validate_safe_plan_display_text(value)
+
+
 class SuggestedKnowledgePoint(BaseModel):
     """A single editable observation point returned by the provider."""
 
@@ -196,13 +252,26 @@ class SuggestedKnowledgePoint(BaseModel):
 
     name: str = Field(min_length=1, max_length=50)
     description: str = Field(min_length=1, max_length=500)
+    automatic_evaluation: AutomaticEvaluation | None = None
+
+    @field_validator("name", "description")
+    @classmethod
+    def validate_safe_display_text(cls, value: str) -> str:
+        return _validate_safe_plan_display_text(value)
 
 
-class _ProviderSuggestion(BaseModel):
+class PlanSuggestionPayload(BaseModel):
+    """Strict persisted and API-safe representation of a plan suggestion."""
+
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     title: str = Field(min_length=1, max_length=200)
     knowledge_points: list[SuggestedKnowledgePoint] = Field(min_length=1, max_length=10)
+
+    @field_validator("title")
+    @classmethod
+    def validate_safe_title(cls, value: str) -> str:
+        return _validate_safe_plan_display_text(value)
 
 
 @dataclass(frozen=True)
@@ -244,41 +313,106 @@ class OpenAiPlanSuggestionService:
                     json_mode=True,
                 )
         except UpstreamUnavailableError as error:
-            raise UpstreamUnavailableError("ai_suggestion_upstream_unavailable") from error
+            logger.warning(
+                "AI plan suggestion provider failure: code=%s retryable=%s",
+                error.code,
+                error.retryable,
+            )
+            raise UpstreamUnavailableError(
+                "ai_suggestion_upstream_unavailable", retryable=error.retryable
+            ) from error
 
         try:
-            suggestion = _ProviderSuggestion.model_validate_json(
-                self._strip_optional_json_fence(completion.content)
-            )
+            suggestion = self._parse_provider_suggestion(completion.content)
         except (json.JSONDecodeError, KeyError, TypeError, PydanticValidationError, ValueError) as error:
-            raise UpstreamUnavailableError("ai_suggestion_upstream_unavailable") from error
+            logger.warning(
+                "AI plan suggestion response rejected: error_type=%s",
+                type(error).__name__,
+            )
+            raise UpstreamUnavailableError(
+                "ai_suggestion_response_invalid", retryable=False
+            ) from error
 
         return PlanSuggestion(
             title=suggestion.title,
             knowledge_points=tuple(suggestion.knowledge_points),
         )
 
+    @classmethod
+    def _parse_provider_suggestion(cls, content: str) -> PlanSuggestionPayload:
+        """Keep a usable plan when only an optional local rule is unsupported.
+
+        Automatic evaluation is never executed and must pass the strict local
+        allowlist.  A malformed optional rule therefore cannot weaken the
+        boundary or discard the independently valid teaching suggestions.
+        """
+        payload = json.loads(cls._strip_optional_json_fence(content))
+        if not isinstance(payload, dict):
+            raise TypeError("provider suggestion is not an object")
+
+        knowledge_points = payload.get("knowledge_points")
+        if not isinstance(knowledge_points, list):
+            return PlanSuggestionPayload.model_validate(
+                {
+                    "title": payload.get("title"),
+                    "knowledge_points": knowledge_points,
+                }
+            )
+
+        sanitized_points: list[object] = []
+        for knowledge_point in knowledge_points:
+            if not isinstance(knowledge_point, dict):
+                sanitized_points.append(knowledge_point)
+                continue
+
+            sanitized_point: dict[str, object] = {
+                "name": knowledge_point.get("name"),
+                "description": knowledge_point.get("description"),
+            }
+            automatic_evaluation = knowledge_point.get("automatic_evaluation")
+            if automatic_evaluation is not None:
+                try:
+                    AutomaticEvaluation.model_validate(automatic_evaluation)
+                except PydanticValidationError:
+                    pass
+                else:
+                    sanitized_point["automatic_evaluation"] = automatic_evaluation
+            sanitized_points.append(sanitized_point)
+
+        return PlanSuggestionPayload.model_validate(
+            {
+                "title": payload.get("title"),
+                "knowledge_points": sanitized_points,
+            }
+        )
+
     @staticmethod
     def _messages(suggestion_input: PlanSuggestionInput) -> list[dict[str, str]]:
         return [
-                {
-                    "role": "system",
-                    "content": (
-                        "你是课堂教学设计助手。只返回一个 JSON 对象，不要 Markdown。"
-                        "对象必须含 title 和 knowledge_points；knowledge_points 是 1 到 10 项，"
-                        "每项含 name、description。内容必须是教师可继续编辑的中文课堂方案草稿。"
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": json.dumps(
-                        {
-                            "title": suggestion_input.title,
-                            "statement": suggestion_input.statement,
-                        },
-                        ensure_ascii=False,
-                    ),
-                },
+            {
+                "role": "system",
+                "content": (
+                    "你是课堂教学设计助手。只返回一个 JSON 对象，不要 Markdown。"
+                    "对象必须含 title 和 knowledge_points；knowledge_points 是 1 到 10 项，"
+                    "每项含 name、description，并且可以含 automatic_evaluation。"
+                    "automatic_evaluation 只能含 mode=all、summary 和 requirements；"
+                    "requirements 每项只能含 kind，kind 只能是 successful_execution、"
+                    "dict_literal_assignment、dict_key_value_pairs、dict_subscript_access、"
+                    "dict_get_with_default、print_call 或 input_call。"
+                    "仅在能用这些本地、非执行性证据可靠判定时提供 automatic_evaluation，"
+                    "否则省略该字段。内容必须是教师可继续编辑的中文课堂方案草稿。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "title": suggestion_input.title,
+                        "statement": suggestion_input.statement,
+                    },
+                    ensure_ascii=False,
+                ),
+            },
         ]
 
     @staticmethod

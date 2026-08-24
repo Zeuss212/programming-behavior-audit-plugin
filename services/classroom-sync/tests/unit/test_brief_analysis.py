@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 
 import httpx
 import pytest
@@ -11,108 +12,215 @@ from classroom_sync.services.brief_analysis import BriefAnalysisInput, OpenAiBri
 from classroom_sync.services.plan_suggestions import AiProviderSettings, OpenAiCompletionClient
 
 
-def test_brief_analysis_messages_omit_evidence_addresses_and_credentials() -> None:
-    source = BriefAnalysisInput.from_brief_payload(
+def valid_source() -> BriefAnalysisInput:
+    return BriefAnalysisInput.model_validate(
         {
-            "summary": "完成一次字典读取。",
+            "lesson": {"title": "Python 字典课堂练习"},
             "knowledge_points": [
                 {
-                    "name": "字典读取",
-                    "status": "partial",
-                    "demonstrated": "完成读取",
-                    "gap": "未测空键",
-                    "teacher_suggestion": "补充测试",
-                    "evidence_refs": ["chunk-1#event-1"],
-                    "object_key": "private/evidence.jsonl",
+                    "knowledge_point_id": "KP_DICT0001",
+                    "name": "字典查询",
+                    "description": "使用 get 处理键不存在。",
+                    "question": "学生是否选择了恰当的查询方式？",
+                    "evidence_criteria": [
+                        {
+                            "id": "uses-get",
+                            "direction": "support",
+                            "statement": "使用 get 并明确默认值。",
+                        }
+                    ],
                 }
             ],
-            "process_overview": ["运行两次"],
-            "issues": ["缺少空键测试"],
-            "access_token": "must-not-leave-server",
+            "evidence_events": [
+                {
+                    "event_id": "chunk-1#event-1",
+                    "sequence": 1,
+                    "kind": "edit",
+                    "description": "编辑了代码。",
+                },
+                {
+                    "event_id": "chunk-1#event-2",
+                    "sequence": 2,
+                    "kind": "run_success",
+                    "description": "完成一次无异常运行；这不代表答案一定正确。",
+                },
+            ],
+            "code_snapshots": [
+                {
+                    "event_id": "chunk-1#event-1",
+                    "source": 'records = {"A": 1}\nprint(records.get("B", 0))',
+                }
+            ],
         }
     )
 
-    messages = OpenAiBriefAnalysisService.messages_for(source)
-    encoded = json.dumps(messages, ensure_ascii=False)
 
-    assert "完成一次字典读取" in encoded
-    assert "chunk-1#event-1" not in encoded
-    assert "object_key" not in encoded
-    assert "access_token" not in encoded
-    assert "must-not-leave-server" not in encoded
+def valid_result() -> dict[str, object]:
+    return {
+        "knowledge_point_analyses": [
+            {
+                "knowledge_point_id": "KP_DICT0001",
+                "status": "observed",
+                "evidence_event_ids": ["chunk-1#event-1", "chunk-1#event-2"],
+                "teaching_suggestion": "请追问学生为什么要设置默认值。",
+            }
+        ],
+        "teacher_note": "仅反映本次过程证据，仍需教师结合作品复核。",
+    }
 
 
-def test_brief_analysis_adapter_sends_only_allowlisted_text_and_validates_glm_json() -> None:
-    """Removing input filtering or result bounds would expose this provider boundary."""
-    recorded: list[httpx.Request] = []
-
-    def responder(request: httpx.Request) -> httpx.Response:
-        recorded.append(request)
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "message": {
-                            "content": json.dumps(
-                                {
-                                    "learning_overview": "已完成字典读取并进行了运行验证。",
-                                    "evidence_based_observations": ["简报显示完成两次运行。"],
-                                    "teaching_suggestions": ["追问缺失键的处理方式。"],
-                                }
-                            )
-                        }
-                    }
-                ]
-            },
-        )
-
+def service_for_response(payload: object, recorded: list[httpx.Request] | None = None):
     provider = AiProviderSettings.from_settings(
         Settings(
             database_url="sqlite://",
-            ai_base_url="https://open.bigmodel.cn/api/coding/paas/v4",
-            ai_model="glm-5.2",
+            ai_base_url="https://ai.example/v1",
+            ai_model="classroom-model",
             ai_api_key="server-only-secret",
             ai_timeout_seconds=30,
         )
     )
     assert provider is not None
-    service = OpenAiBriefAnalysisService(
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        if recorded is not None:
+            recorded.append(request)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": json.dumps(payload, ensure_ascii=False)}}]},
+        )
+
+    return OpenAiBriefAnalysisService(
         OpenAiCompletionClient(provider, httpx.Client(transport=httpx.MockTransport(responder)))
     )
-    source = BriefAnalysisInput.from_brief_payload(
-        {
-            "summary": "完成一次字典读取。",
-            "knowledge_points": [{"name": "字典读取", "evidence_refs": ["chunk-1#event-1"]}],
-            "process_overview": ["运行两次"],
-            "issues": ["缺少空键测试"],
-            "access_token": "must-not-leave-server",
-        }
-    )
 
-    result = service.generate(source)
 
-    assert result.learning_overview == "已完成字典读取并进行了运行验证。"
-    assert recorded[0].url == "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions"
-    assert recorded[0].headers["authorization"] == "Bearer server-only-secret"
-    encoded = recorded[0].content.decode("utf-8")
-    assert "chunk-1#event-1" not in encoded
-    assert "must-not-leave-server" not in encoded
+def test_brief_analysis_sends_only_private_bounded_evidence_and_validates_result() -> None:
+    recorded: list[httpx.Request] = []
+
+    result = service_for_response(valid_result(), recorded).generate(valid_source())
+
+    assert result.knowledge_point_analyses[0].status == "observed"
+    body = json.loads(recorded[0].content.decode("utf-8"))
+    encoded = json.dumps(body, ensure_ascii=False)
+    assert body["temperature"] == 0
+    assert body["thinking"] == {"type": "disabled"}
+    assert body["response_format"] == {"type": "json_object"}
+    assert "chunk-1#event-1" in encoded
+    assert "records.get" in encoded
     assert "server-only-secret" not in encoded
-    body = json.loads(encoded)
-    assert "thinking" not in body
-    assert "response_format" not in body
+    assert "/Users/" not in encoded
+    assert "不得评分" in body["messages"][0]["content"]
+    assert "不得判定答案正确" in body["messages"][0]["content"]
+    assert "不得出现 score、grade、points、correct、incorrect" in body["messages"][0]["content"]
+    assert "teaching_suggestion 字段" in body["messages"][0]["content"]
 
 
-def test_brief_analysis_adapter_maps_malformed_glm_json_to_safe_retryable_error() -> None:
-    """Malformed provider output must never be saved as a student brief revision."""
+def test_brief_analysis_normalizes_the_strict_observation_alias_to_teaching_suggestion() -> None:
+    payload = valid_result()
+    row = payload["knowledge_point_analyses"][0]
+    row["observation"] = row.pop("teaching_suggestion")
+
+    result = service_for_response(payload).generate(valid_source())
+
+    assert result.knowledge_point_analyses[0].teaching_suggestion == "请追问学生为什么要设置默认值。"
+
+
+def test_brief_analysis_normalizes_safe_common_provider_aliases() -> None:
+    payload = {
+        "analysis": {
+            "knowledge_points": [
+                {
+                    "knowledge_point_id": "KP_DICT0001",
+                    "status": "已掌握",
+                    "evidence_ids": ["chunk-1#event-1"],
+                    "suggestion": "请追问学生如何处理不存在的键。",
+                }
+            ],
+            "summary": "仅依据本次过程证据安排后续追问。",
+        }
+    }
+
+    result = service_for_response(payload).generate(valid_source())
+
+    row = result.knowledge_point_analyses[0]
+    assert row.status == "observed"
+    assert row.evidence_event_ids == ["chunk-1#event-1"]
+    assert row.teaching_suggestion == "请追问学生如何处理不存在的键。"
+    assert result.teacher_note == "仅依据本次过程证据安排后续追问。"
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda value: value["knowledge_point_analyses"][0]["evidence_event_ids"].append(
+            "chunk-9#event-9"
+        ),
+        lambda value: value["knowledge_point_analyses"][0].update(
+            {"evidence_event_ids": []}
+        ),
+        lambda value: value["knowledge_point_analyses"][0].update(
+            {"status": "not_observed"}
+        ),
+        lambda value: value["knowledge_point_analyses"][0].update(
+            {"knowledge_point_id": "KP_UNKNOWN"}
+        ),
+        lambda value: value["knowledge_point_analyses"][0].update(
+            {"teaching_suggestion": "查看 /Users/student/private.py"}
+        ),
+        lambda value: value["knowledge_point_analyses"][0].update(
+            {"teaching_suggestion": "查看 https://storage.example/private"}
+        ),
+    ],
+)
+def test_brief_analysis_rejects_unbound_or_unsafe_provider_results(mutate) -> None:
+    payload = deepcopy(valid_result())
+    mutate(payload)
+
+    with pytest.raises(UpstreamUnavailableError) as error:
+        service_for_response(payload).generate(valid_source())
+
+    assert error.value.code == "ai_brief_analysis_response_invalid"
+    assert error.value.retryable is True
+
+
+@pytest.mark.parametrize(
+    "unsafe_text",
+    [
+        "本次评分为 90 分。",
+        "The score is 90 points.",
+        "答案正确，可以提交。",
+        "The answer is correct.",
+        "请查看源码中的实现。",
+        "Review the source code before class.",
+        "这是模型的原始输出。",
+        "Here is the raw model output.",
+    ],
+)
+@pytest.mark.parametrize("field", ["teacher_note", "teaching_suggestion"])
+def test_brief_analysis_rejects_grading_correctness_source_and_raw_output(
+    unsafe_text: str,
+    field: str,
+) -> None:
+    payload = deepcopy(valid_result())
+    if field == "teacher_note":
+        payload["teacher_note"] = unsafe_text
+    else:
+        payload["knowledge_point_analyses"][0]["teaching_suggestion"] = unsafe_text
+
+    with pytest.raises(UpstreamUnavailableError) as error:
+        service_for_response(payload).generate(valid_source())
+
+    assert error.value.code == "ai_brief_analysis_response_invalid"
+    assert error.value.retryable is True
+
+
+def test_brief_analysis_maps_malformed_json_to_safe_terminal_error() -> None:
     provider = AiProviderSettings.from_settings(
         Settings(
             database_url="sqlite://",
-            ai_base_url="https://open.bigmodel.cn/api/coding/paas/v4",
-            ai_model="glm-5.2",
+            ai_base_url="https://ai.example/v1",
+            ai_model="classroom-model",
             ai_api_key="server-only-secret",
-            ai_timeout_seconds=30,
         )
     )
     assert provider is not None
@@ -130,38 +238,7 @@ def test_brief_analysis_adapter_maps_malformed_glm_json_to_safe_retryable_error(
     )
 
     with pytest.raises(UpstreamUnavailableError) as error:
-        service.generate(BriefAnalysisInput("摘要", (), (), ()))
+        service.generate(valid_source())
 
     assert error.value.code == "ai_brief_analysis_response_invalid"
-    assert error.value.retryable is False
-
-
-def test_brief_analysis_adapter_maps_coding_plan_authorization_to_safe_terminal_error() -> None:
-    """A provider denial must be diagnosable without retaining its response body."""
-    provider = AiProviderSettings.from_settings(
-        Settings(
-            database_url="sqlite://",
-            ai_base_url="https://open.bigmodel.cn/api/coding/paas/v4",
-            ai_model="glm-5.2",
-            ai_api_key="server-only-secret",
-            ai_timeout_seconds=30,
-        )
-    )
-    assert provider is not None
-    service = OpenAiBriefAnalysisService(
-        OpenAiCompletionClient(
-            provider,
-            httpx.Client(
-                transport=httpx.MockTransport(
-                    lambda _request: httpx.Response(403, text="provider-private-detail")
-                )
-            ),
-        )
-    )
-
-    with pytest.raises(UpstreamUnavailableError) as error:
-        service.generate(BriefAnalysisInput("摘要", (), (), ()))
-
-    assert error.value.code == "ai_provider_authorization_or_policy_rejected"
-    assert error.value.retryable is False
-    assert "provider-private-detail" not in str(error.value)
+    assert error.value.retryable is True

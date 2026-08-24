@@ -376,6 +376,7 @@ export class BehaviorAnalysisSidebar extends Widget {
   } | null = null;
   private studentCaptureFinalizedSessionId: string | null = null;
   private studentSubmissionCompletedSessionId: string | null = null;
+  private studentAiAnalysisRequested = false;
   private currentSessionId: string | null = null;
   private pollTimer: TimerHandle | null = null;
   private observationTimer: TimerHandle | null = null;
@@ -607,6 +608,9 @@ export class BehaviorAnalysisSidebar extends Widget {
           'Finalized session does not match the current session.'
         );
       }
+      if (finalized.analysis_job_id === null) {
+        throw new Error('Finalized analysis session is missing its job.');
+      }
       this.currentSessionId = finalized.session_id;
       this.job = {
         schema_version: 1,
@@ -734,7 +738,7 @@ export class BehaviorAnalysisSidebar extends Widget {
         this.upload.uploadState === 'finalized');
     const promise = (async (): Promise<IClassroomSubmission> => {
       if (!captureIsFinalized) {
-        const finalized = await this.deps.capture.stop();
+        const finalized = await this.deps.capture.stop(false);
         if (
           finalized.session_id !== sessionId ||
           finalized.status !== 'finalized'
@@ -743,7 +747,11 @@ export class BehaviorAnalysisSidebar extends Widget {
         }
         this.studentCaptureFinalizedSessionId = sessionId;
       }
-      return this.deps.submitClassroomBrief(this.deps.settings, sessionId);
+      return this.deps.submitClassroomBrief(
+        this.deps.settings,
+        sessionId,
+        this.studentAiAnalysisRequested
+      );
     })();
     const operation = { promise, sessionId };
     this.studentSubmissionInFlight = operation;
@@ -760,6 +768,7 @@ export class BehaviorAnalysisSidebar extends Widget {
         return;
       if (result.status === 'submitted') {
         this.studentSubmissionCompletedSessionId = sessionId;
+        this.studentAiAnalysisRequested = false;
         this.notice = '本节简报已提交，老师可查看课堂结果。';
       } else {
         this.notice = '简报已保存，证据正在后台补传；无需保持本页开启。';
@@ -1245,6 +1254,25 @@ export class BehaviorAnalysisSidebar extends Widget {
     const submitted =
       this.studentSubmissionCompletedSessionId === session.session_id;
     const canSubmit = this.canSubmitStudentClassroom(session.session_id);
+    const aiConsentLabel = node(
+      'label',
+      'jp-BehaviorAudit-checkboxField'
+    );
+    const aiConsent = node('input') as HTMLInputElement;
+    aiConsent.id = 'classroom-ai-analysis-consent';
+    aiConsent.type = 'checkbox';
+    aiConsent.checked = this.studentAiAnalysisRequested;
+    aiConsent.disabled = submitting || submitted;
+    aiConsent.addEventListener('click', () => {
+      this.studentAiAnalysisRequested = aiConsent.checked;
+    });
+    aiConsentLabel.append(
+      aiConsent,
+      document.createTextNode('生成 AI 教学建议（仅发送本次课堂的脱敏代码片段和过程证据）')
+    );
+    const aiConsentHint = node('p', 'jp-BehaviorAudit-notice');
+    aiConsentHint.textContent =
+      '不勾选时只提交固定课堂简报；勾选后才会请求 AI 分析。';
     const submit = button(
       submitting
         ? '正在提交本节简报…'
@@ -1273,6 +1301,8 @@ export class BehaviorAnalysisSidebar extends Widget {
       lastSync,
       deadline,
       recovery,
+      aiConsentLabel,
+      aiConsentHint,
       submit
     );
     return section;

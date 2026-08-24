@@ -13,7 +13,10 @@ from classroom_sync.config import Settings
 from classroom_sync.errors import AuthorizationError
 from classroom_sync.main import create_app
 from classroom_sync.services.assignments import AssignmentService
+from classroom_sync.services.plan_suggestion_jobs import PlanSuggestionJobSnapshot
 from classroom_sync.services.plan_suggestions import (
+    AutomaticEvaluation,
+    AutomaticEvaluationRequirement,
     PlanSuggestion,
     PlanSuggestionInput,
     SuggestedKnowledgePoint,
@@ -46,16 +49,60 @@ class FakeIdentityGateway:
         raise AssertionError("Roster lookup is not expected")
 
 
-class RecordingSuggestionService:
+class RecordingSuggestionJobService:
     def __init__(self) -> None:
-        self.calls: list[PlanSuggestionInput] = []
+        self.submit_calls: list[tuple[str, str, str, PlanSuggestionInput]] = []
+        self.read_calls: list[tuple[str, str]] = []
+        self.snapshot = PlanSuggestionJobSnapshot(
+            job_id="suggestion-job-1",
+            status="pending",
+            failure_code=None,
+            suggestion=None,
+        )
 
-    def generate(self, suggestion_input: PlanSuggestionInput) -> PlanSuggestion:
-        self.calls.append(suggestion_input)
-        return PlanSuggestion(
-            title="字典课堂练习",
-            knowledge_points=(
-                SuggestedKnowledgePoint(name="字典读取", description="按键读取并验证结果。"),
+    def submit(
+        self,
+        *,
+        teacher_id: str,
+        space_id: str,
+        parent_algorithm_id: str,
+        suggestion_input: PlanSuggestionInput,
+    ) -> PlanSuggestionJobSnapshot:
+        self.submit_calls.append(
+            (teacher_id, space_id, parent_algorithm_id, suggestion_input)
+        )
+        return self.snapshot
+
+    def get_for_teacher(self, job_id: str, *, teacher_id: str) -> PlanSuggestionJobSnapshot:
+        self.read_calls.append((job_id, teacher_id))
+        return self.snapshot
+
+    @staticmethod
+    def ready_snapshot() -> PlanSuggestionJobSnapshot:
+        return PlanSuggestionJobSnapshot(
+            job_id="suggestion-job-1",
+            status="ready",
+            failure_code=None,
+            suggestion=PlanSuggestion(
+                title="字典课堂练习",
+                knowledge_points=(
+                    SuggestedKnowledgePoint(
+                        name="字典读取",
+                        description="按键读取并验证结果。",
+                        automatic_evaluation=AutomaticEvaluation(
+                            mode="all",
+                            summary="创建字典并成功运行后可以自动确认。",
+                            requirements=[
+                                AutomaticEvaluationRequirement(
+                                    kind="successful_execution"
+                                ),
+                                AutomaticEvaluationRequirement(
+                                    kind="dict_literal_assignment"
+                                ),
+                            ],
+                        ),
+                    ),
+                ),
             ),
         )
 
@@ -71,7 +118,7 @@ def request(app, method: str, path: str, **kwargs: object) -> httpx.Response:
 
 def create_suggestion_app(
     identity_gateway: FakeIdentityGateway,
-    suggestion_service: RecordingSuggestionService | None,
+    suggestion_job_service: RecordingSuggestionJobService | None,
 ):
     return create_app(
         Settings(database_url="sqlite://"),
@@ -79,7 +126,7 @@ def create_suggestion_app(
             identity_gateway=identity_gateway,
             plan_service=cast(PlanService, object()),
             assignment_service=cast(AssignmentService, object()),
-            plan_suggestion_service=suggestion_service,
+            plan_suggestion_job_service=suggestion_job_service,
         ),
     )
 
@@ -93,32 +140,74 @@ def suggestion_payload() -> dict[str, str]:
     }
 
 
-def test_teacher_owner_can_generate_a_transient_plan_suggestion() -> None:
+def test_teacher_owner_starts_a_durable_plan_suggestion_job() -> None:
     identity_gateway = FakeIdentityGateway()
-    suggestion_service = RecordingSuggestionService()
+    suggestion_job_service = RecordingSuggestionJobService()
     response = request(
-        create_suggestion_app(identity_gateway, suggestion_service),
+        create_suggestion_app(identity_gateway, suggestion_job_service),
         "POST",
         "/v1/classroom/plan-suggestions",
         headers={"Authorization": "Bearer teacher-token"},
         json=suggestion_payload(),
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 202
     assert response.json() == {
-        "title": "字典课堂练习",
-        "knowledge_points": [{"name": "字典读取", "description": "按键读取并验证结果。"}],
+        "job_id": "suggestion-job-1",
+        "status": "pending",
     }
     assert identity_gateway.teacher_checks == [("teacher-1", "space-1", "parent-1")]
-    assert suggestion_service.calls == [
-        PlanSuggestionInput(title="", statement="实现字典查询")
+    assert suggestion_job_service.submit_calls == [
+        (
+            "teacher-1",
+            "space-1",
+            "parent-1",
+            PlanSuggestionInput(title="", statement="实现字典查询"),
+        )
     ]
 
 
-def test_missing_bearer_is_rejected_before_ai_service_is_called() -> None:
-    suggestion_service = RecordingSuggestionService()
+def test_teacher_owner_can_poll_only_its_safe_ready_suggestion() -> None:
+    identity_gateway = FakeIdentityGateway()
+    suggestion_job_service = RecordingSuggestionJobService()
+    suggestion_job_service.snapshot = suggestion_job_service.ready_snapshot()
+
     response = request(
-        create_suggestion_app(FakeIdentityGateway(), suggestion_service),
+        create_suggestion_app(identity_gateway, suggestion_job_service),
+        "GET",
+        "/v1/classroom/plan-suggestions/suggestion-job-1",
+        headers={"Authorization": "Bearer teacher-token"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "job_id": "suggestion-job-1",
+        "status": "ready",
+        "suggestion": {
+            "title": "字典课堂练习",
+            "knowledge_points": [
+                {
+                    "name": "字典读取",
+                    "description": "按键读取并验证结果。",
+                    "automatic_evaluation": {
+                        "mode": "all",
+                        "summary": "创建字典并成功运行后可以自动确认。",
+                        "requirements": [
+                            {"kind": "successful_execution"},
+                            {"kind": "dict_literal_assignment"},
+                        ],
+                    },
+                }
+            ],
+        },
+    }
+    assert suggestion_job_service.read_calls == [("suggestion-job-1", "teacher-1")]
+
+
+def test_missing_bearer_is_rejected_before_ai_service_is_called() -> None:
+    suggestion_job_service = RecordingSuggestionJobService()
+    response = request(
+        create_suggestion_app(FakeIdentityGateway(), suggestion_job_service),
         "POST",
         "/v1/classroom/plan-suggestions",
         json=suggestion_payload(),
@@ -126,13 +215,15 @@ def test_missing_bearer_is_rejected_before_ai_service_is_called() -> None:
 
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "missing_bearer_token"
-    assert suggestion_service.calls == []
+    assert suggestion_job_service.submit_calls == []
 
 
 def test_unowned_experiment_is_rejected_before_ai_service_is_called() -> None:
-    suggestion_service = RecordingSuggestionService()
+    suggestion_job_service = RecordingSuggestionJobService()
     response = request(
-        create_suggestion_app(FakeIdentityGateway(owns_experiment=False), suggestion_service),
+        create_suggestion_app(
+            FakeIdentityGateway(owns_experiment=False), suggestion_job_service
+        ),
         "POST",
         "/v1/classroom/plan-suggestions",
         headers={"Authorization": "Bearer teacher-token"},
@@ -141,7 +232,7 @@ def test_unowned_experiment_is_rejected_before_ai_service_is_called() -> None:
 
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "teacher_not_experiment_owner"
-    assert suggestion_service.calls == []
+    assert suggestion_job_service.submit_calls == []
 
 
 def test_unconfigured_ai_service_returns_a_stable_error_without_persistence() -> None:
@@ -165,7 +256,7 @@ def test_unconfigured_ai_service_returns_a_stable_error_without_persistence() ->
 def test_request_rejects_empty_statement_and_extra_fields() -> None:
     payload = {**suggestion_payload(), "statement": "", "unexpected": "nope"}
     response = request(
-        create_suggestion_app(FakeIdentityGateway(), RecordingSuggestionService()),
+        create_suggestion_app(FakeIdentityGateway(), RecordingSuggestionJobService()),
         "POST",
         "/v1/classroom/plan-suggestions",
         headers={"Authorization": "Bearer teacher-token"},

@@ -116,8 +116,10 @@ _SYNTHETIC_KEY_MARKER = re.compile(
     r"(?i)\btest-key-[A-Za-z0-9._-]+\b"
 )
 _PROMPT_INSTRUCTION = re.compile(
-    r"(?i)\b(?:ignore|disregard|forget)\s+(?:all\s+)?"
-    r"(?:previous|prior|above)\s+(?:instructions?|prompts?|rules?)\b"
+    r"(?i)(?:\b(?:ignore|disregard|forget)\s+(?:all\s+)?"
+    r"(?:previous|prior|above)\s+(?:instructions?|prompts?|rules?)\b|"
+    r"(?:忽略|无视|忘记).{0,20}(?:以上|之前|前述|所有)?"
+    r"(?:指令|要求|规则|提示词?))"
 )
 
 _OUTPUT_SCHEMA = {

@@ -349,9 +349,11 @@ def test_legacy_evidence_without_trusted_manifest_keeps_base_brief_available():
         assert chunk is not None
         chunk.analysis_manifest = None
 
+    content = valid_content()
+    content.knowledge_points[0]["evidence_refs"] = ["session#missing-evidence"]
     brief = service.submit(
         IDS["session"],
-        valid_content(),
+        content,
         reason="student_manual",
         request_ai_analysis=True,
         analysis_input=valid_analysis_input(),
@@ -508,6 +510,58 @@ def test_analysis_worker_appends_a_ready_revision_without_overwriting_base_brief
     assert job.analysis_input == {}
 
 
+def test_stale_analysis_completion_does_not_replace_a_newer_student_brief():
+    now = datetime(2026, 8, 12, 8, 30, tzinfo=UTC)
+    brief_service, factory, _registry = seeded_brief_service(now)
+    first = brief_service.submit(
+        IDS["session"], valid_content("first submission"), reason="student_manual",
+        request_ai_analysis=True, analysis_input=valid_analysis_input()
+    )
+    second = brief_service.submit(
+        IDS["session"], valid_content("newer submission"), reason="student_manual",
+        request_ai_analysis=True, analysis_input=valid_analysis_input()
+    )
+    with factory.begin() as session:
+        stale_job = session.scalar(
+            select(ClassroomBriefAnalysisJob).where(
+                ClassroomBriefAnalysisJob.source_brief_id == first.id
+            )
+        )
+        assert stale_job is not None
+        stale_job.status = "leased"
+        stale_job.lease_owner = "worker-a"
+        stale_job.lease_expires_at = now + timedelta(minutes=25)
+        stale_job.attempts = 1
+
+    returned = brief_service.complete_analysis_job(
+        stale_job.id,
+        worker_id="worker-a",
+        analysis={
+            "knowledge_point_analyses": [{
+                "knowledge_point_id": "KP_DICT0001",
+                "status": "observed",
+                "evidence_event_ids": ["chunk-1#event-1"],
+                "teaching_suggestion": "追问不存在键时的默认值处理。",
+            }],
+            "teacher_note": "仅反映旧的过程证据。",
+        },
+    )
+
+    latest = brief_service.get_latest_brief(IDS["session"])
+    assert returned.id == second.id
+    assert latest.id == second.id
+    assert latest.revision == 2
+    assert latest.payload["summary"] == "newer submission"
+    assert latest.payload["ai_analysis_status"] == "pending"
+    with factory() as session:
+        rows = list(session.scalars(select(StudentBrief)))
+        completed = session.get(ClassroomBriefAnalysisJob, stale_job.id)
+    assert len(rows) == 2
+    assert completed is not None
+    assert completed.status == "completed"
+    assert completed.analysis_input == {}
+
+
 def test_analysis_worker_retries_from_the_actual_failure_time_then_marks_unavailable():
     """A slow or retried provider must not shorten its next retry delay."""
     start = datetime(2026, 8, 12, 8, 30, tzinfo=UTC)
@@ -642,6 +696,53 @@ def test_analysis_worker_claims_one_job_and_keeps_lease_for_provider_budget():
     )
     assert len(claimed_by_second_worker) == 1
     assert claimed_by_second_worker[0].id != claimed[0].id
+
+
+def test_expired_analysis_lease_at_attempt_limit_becomes_unavailable_without_provider():
+    now = datetime(2026, 8, 12, 8, 30, tzinfo=UTC)
+    brief_service, factory, _registry = seeded_brief_service(now)
+    brief_service.submit(
+        IDS["session"], valid_content(), reason="student_manual",
+        request_ai_analysis=True, analysis_input=valid_analysis_input()
+    )
+
+    class RecordingAnalysisService:
+        def __init__(self):
+            self.calls = 0
+
+        def generate(self, _source):
+            self.calls += 1
+            raise AssertionError("exhausted recovery must not call the Provider")
+
+    analysis_service = RecordingAnalysisService()
+    worker = BriefAnalysisJobService(
+        factory,
+        brief_service,
+        analysis_service,
+        clock=lambda: now,
+        max_attempts=1,
+    )
+    claimed = worker.claim_due_jobs("crashed-worker")
+    assert len(claimed) == 1
+    with factory() as session:
+        job = session.get(ClassroomBriefAnalysisJob, claimed[0].id)
+        assert job is not None
+        lease_expires_at = job.lease_expires_at
+    assert lease_expires_at is not None
+
+    assert worker.claim_due_jobs("recovery-worker", lease_expires_at) == ()
+
+    latest = brief_service.get_latest_brief(IDS["session"])
+    assert latest.payload["ai_analysis_status"] == "unavailable"
+    assert latest.payload["ai_analysis"] is None
+    assert analysis_service.calls == 0
+    with factory() as session:
+        completed = session.get(ClassroomBriefAnalysisJob, claimed[0].id)
+    assert completed is not None
+    assert completed.status == "completed"
+    assert completed.attempts == 1
+    assert completed.failure_code == "ai_brief_analysis_attempts_exhausted"
+    assert completed.analysis_input == {}
 
 
 def test_analysis_worker_tick_survives_a_lease_lost_after_provider_completion(
@@ -785,6 +886,16 @@ def test_brief_rejects_evidence_references_not_owned_by_its_session():
     invalid = valid_content()
     invalid_point = invalid.knowledge_points[0]
     invalid_point["evidence_refs"] = ["chunk-2#event-1"]
+
+    with pytest.raises(ValidationError, match="brief_evidence_reference_invalid"):
+        service.submit(IDS["session"], invalid, reason="student_manual")
+
+
+def test_brief_rejects_in_range_reference_missing_from_uploaded_manifest():
+    now = datetime(2026, 8, 12, 8, 30, tzinfo=UTC)
+    service, _, _ = seeded_brief_service(now)
+    invalid = valid_content()
+    invalid.knowledge_points[0]["evidence_refs"] = ["chunk-1#event-3"]
 
     with pytest.raises(ValidationError, match="brief_evidence_reference_invalid"):
         service.submit(IDS["session"], invalid, reason="student_manual")

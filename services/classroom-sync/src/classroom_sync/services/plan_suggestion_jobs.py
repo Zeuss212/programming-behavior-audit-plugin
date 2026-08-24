@@ -151,12 +151,39 @@ class PlanSuggestionJobService:
     ) -> tuple[ClassroomPlanSuggestionJob, ...]:
         claim_time = self._utc_now() if now is None else self._as_utc(now)
         with self._session_factory.begin() as session:
+            exhausted_jobs = list(
+                session.scalars(
+                    select(ClassroomPlanSuggestionJob)
+                    .where(
+                        ClassroomPlanSuggestionJob.run_at <= claim_time,
+                        ClassroomPlanSuggestionJob.status.in_(("pending", "leased")),
+                        ClassroomPlanSuggestionJob.attempts >= self._max_attempts,
+                        or_(
+                            ClassroomPlanSuggestionJob.lease_expires_at.is_(None),
+                            ClassroomPlanSuggestionJob.lease_expires_at <= claim_time,
+                        ),
+                    )
+                    .with_for_update(skip_locked=True)
+                )
+            )
+            for job in exhausted_jobs:
+                job.suggestion_input = {}
+                job.result = None
+                job.status = "failed"
+                job.active_slot = None
+                job.lease_owner = None
+                job.lease_expires_at = None
+                job.failure_code = "ai_suggestion_attempts_exhausted"
+                job.completed_at = claim_time
+                job.updated_at = claim_time
+
             jobs = list(
                 session.scalars(
                     select(ClassroomPlanSuggestionJob)
                     .where(
                         ClassroomPlanSuggestionJob.run_at <= claim_time,
                         ClassroomPlanSuggestionJob.status.in_(("pending", "leased")),
+                        ClassroomPlanSuggestionJob.attempts < self._max_attempts,
                         or_(
                             ClassroomPlanSuggestionJob.lease_expires_at.is_(None),
                             ClassroomPlanSuggestionJob.lease_expires_at <= claim_time,

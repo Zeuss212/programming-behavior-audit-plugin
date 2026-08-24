@@ -83,7 +83,7 @@ class SubmissionCoordinator:
         *,
         reason: str,
         cutoff_at: datetime,
-        request_ai_analysis: bool = False,
+        request_ai_analysis: bool | None = None,
     ) -> SubmissionResult:
         canonical_session_id = _canonical_session_id(session_id)
         if reason not in _REASONS:
@@ -96,9 +96,12 @@ class SubmissionCoordinator:
 
             context = self._registered_context(canonical_session_id)
             if existing is None:
+                durable_ai_consent = (
+                    False if request_ai_analysis is None else request_ai_analysis
+                )
                 payload = self._prepare_payload(
                     canonical_session_id,
-                    request_ai_analysis=request_ai_analysis,
+                    request_ai_analysis=durable_ai_consent,
                 )
                 state = {
                     "schema_version": _STATE_SCHEMA_VERSION,
@@ -115,7 +118,10 @@ class SubmissionCoordinator:
                 payload = state["payload"]
                 if not isinstance(payload, dict):
                     raise SubmissionCoordinatorError("Stored submission payload is invalid.")
-                if payload.get("request_ai_analysis") is not request_ai_analysis:
+                if (
+                    request_ai_analysis is not None
+                    and payload.get("request_ai_analysis") is not request_ai_analysis
+                ):
                     raise SubmissionCoordinatorError(
                         "AI analysis consent does not match the durable submission."
                     )
@@ -232,14 +238,13 @@ class SubmissionCoordinator:
                     raise SubmissionCoordinatorError("Automatic mastery result is invalid.")
                 rows.append(dict(row))
         else:
-            bounded_evidence_refs = evidence_refs[:10]
             for point_id, name in points:
                 rows.append(
                     {
                         "knowledge_point_id": point_id,
                         "name": name,
                         "status": "not_demonstrated",
-                        "evidence_refs": bounded_evidence_refs,
+                        "evidence_refs": ["session#missing-evidence"],
                         "demonstrated": "基础简报未进行逐项自动判定。",
                         "gap": "需要结合过程证据确认该知识点的掌握情况。",
                         "teacher_suggestion": "查看关联过程证据，并就关键步骤追问学生。",

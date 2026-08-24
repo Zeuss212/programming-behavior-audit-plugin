@@ -43,7 +43,7 @@ def test_equivalent_dictionary_code_with_different_names_is_mastered() -> None:
     )
 
     assert rows[0]["status"] == "mastered"
-    assert rows[0]["evidence_refs"] == ["chunk-1#event-1"]
+    assert rows[0]["evidence_refs"] == ["session#missing-evidence"]
     assert "records" not in str(rows[0])
 
 
@@ -100,6 +100,7 @@ def test_missing_automatic_rule_requires_teacher_review() -> None:
     )
 
     assert rows[0]["status"] == "review_required"
+    assert rows[0]["evidence_refs"] == ["session#missing-evidence"]
 
 
 def test_mastery_cites_only_events_that_support_the_selected_rule() -> None:

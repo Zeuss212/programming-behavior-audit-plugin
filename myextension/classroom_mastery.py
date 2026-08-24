@@ -190,7 +190,7 @@ def _supporting_references(
     references: list[str],
 ) -> list[str]:
     if rule is None or not features.evidence_complete or not features.has_sequence_data:
-        return references[:_MAX_EVIDENCE_REFS]
+        return ["session#missing-evidence"]
     supported_sequences = {
         sequence
         for requirement in rule[1]

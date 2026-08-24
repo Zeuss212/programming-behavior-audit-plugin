@@ -31,13 +31,14 @@ _COMMON_SECRET = re.compile(
     r"AIza[A-Za-z0-9_-]{20,}|ya29\.[A-Za-z0-9._-]{20,})\b"
 )
 _QUOTED_OPAQUE_LITERAL = re.compile(
-    r"(?P<quote>['\"])(?P<secret>[A-Za-z0-9_-]{32,})(?P=quote)"
+    r"(?P<quote>['\"])(?P<secret>[A-Za-z0-9._+/=-]{32,})(?P=quote)"
 )
 _COMMENT_OPAQUE_LITERAL = re.compile(
-    r"(?m)(?P<prefix>^\s*#\s*)(?P<secret>[A-Za-z0-9_-]{32,})(?=\s*$)"
+    r"(?m)(?P<prefix>^\s*#\s*)(?P<secret>[A-Za-z0-9._+/=-]{32,})(?=\s*$)"
 )
 _OPAQUE_TOKEN = re.compile(
-    r"(?<![A-Za-z0-9._-])(?P<secret>[A-Za-z0-9._-]{32,})(?![A-Za-z0-9._-])"
+    r"(?<![A-Za-z0-9._+/=-])(?P<secret>[A-Za-z0-9._+/=-]{32,})"
+    r"(?![A-Za-z0-9._+/=-])"
 )
 
 
@@ -99,7 +100,7 @@ def _is_opaque_secret(value: str) -> bool:
             any(char.islower() for char in value),
             any(char.isupper() for char in value),
             any(char.isdigit() for char in value),
-            any(char in "._-" for char in value),
+            any(char in "._-/+=" for char in value),
         )
     )
     return (hexadecimal or categories >= 3) and len(set(value)) >= 12

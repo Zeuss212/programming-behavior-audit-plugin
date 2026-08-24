@@ -7,7 +7,7 @@ from uuid import UUID
 from myextension.analysis_job_store import AnalysisJobStore
 from myextension.canonical_json import sha256_json
 from myextension.dimension_profile_store import DimensionProfileStore
-from myextension.platform_client import BriefSubmissionReceipt
+from myextension.platform_client import BriefSubmissionReceipt, PlatformClientError
 from myextension.platform_context_store import PlatformContextStore
 from myextension.platform_deadline_worker import PlatformDeadlineWorker
 from myextension.review_store import ReviewStore
@@ -243,6 +243,79 @@ def test_authorized_submission_includes_one_private_bounded_analysis_input(
     assert analysis_input["code_snapshots"]
     assert analysis_input["evidence_events"][0]["event_id"] == "chunk-1#event-1"
     assert "records" in analysis_input["code_snapshots"][0]["source"]
+
+
+def test_deadline_retry_reuses_durable_ai_consent_after_manual_upload_failure(
+    tmp_path: Path,
+) -> None:
+    class Outbox:
+        def flush_once(self):
+            return None
+
+        def list_entries(self, _session_id):
+            return []
+
+    class Client:
+        def __init__(self) -> None:
+            self.payloads: list[dict[str, object]] = []
+
+        def submit_brief(self, stored_context, payload):
+            self.payloads.append(dict(payload))
+            if len(self.payloads) == 1:
+                raise PlatformClientError("platform_submission_unavailable")
+            return BriefSubmissionReceipt(
+                brief_id="8a15f505-5d7e-46fe-a0e0-75dd5c336493",
+                session_id=stored_context.session_id,
+                revision=1,
+                status="completed",
+            )
+
+    profiles = DimensionProfileStore(tmp_path)
+    draft = profiles.create_draft(make_assessment_profile())
+    profile = profiles.publish(str(draft["profile_id"]))
+    session_store = SessionStore(tmp_path)
+    session_store.start(
+        problem_id=str(profile["problem_id"]),
+        profile=profile,
+        session_id=context().session_id,
+    )
+    context_store = PlatformContextStore(tmp_path)
+    context_store.save_registered_context(context())
+    service = SessionLogService(
+        root=tmp_path,
+        session_store=session_store,
+        job_store=AnalysisJobStore(tmp_path),
+        review_store=ReviewStore(tmp_path),
+    )
+    client = Client()
+    coordinator = SubmissionCoordinator(
+        tmp_path,
+        session_store=session_store,
+        session_log_service=service,
+        outbox=Outbox(),
+        client=client,
+        context_store=context_store,
+    )
+    cutoff = datetime(2026, 8, 13, 10, 15, tzinfo=timezone.utc)
+
+    pending = coordinator.submit(
+        context().session_id,
+        reason="student_manual",
+        cutoff_at=cutoff,
+        request_ai_analysis=True,
+    )
+    recovered = PlatformDeadlineWorker(
+        context_store,
+        coordinator,
+        now=lambda: cutoff,
+    ).run_once()
+
+    assert pending.status == "pending_upload"
+    assert recovered[0].status == "submitted"
+    assert len(client.payloads) == 2
+    assert client.payloads[0]["submission_id"] == client.payloads[1]["submission_id"]
+    assert client.payloads[1]["request_ai_analysis"] is True
+    assert "analysis_input" in client.payloads[1]
 
 
 def test_submission_requires_review_when_supporting_events_were_not_delivered(

@@ -250,6 +250,37 @@ def test_worker_claims_one_job_and_keeps_lease_for_full_provider_budget() -> Non
     assert claimed_by_second_worker[0].id != claimed[0].id
 
 
+def test_expired_lease_at_attempt_limit_fails_without_another_provider_call() -> None:
+    now = datetime(2026, 8, 19, 10, 0, tzinfo=UTC)
+    service, generator, session_factory = build_service(now)
+    submitted = service.submit(
+        teacher_id="teacher-1",
+        space_id="space-1",
+        parent_algorithm_id="parent-1",
+        suggestion_input=PlanSuggestionInput(title="", statement="实现字典查询"),
+    )
+    claimed = service.claim_due_jobs("crashed-worker")
+    assert len(claimed) == 1
+    with session_factory.begin() as session:
+        job = session.get(ClassroomPlanSuggestionJob, submitted.job_id)
+        assert job is not None
+        job.attempts = 2
+        lease_expires_at = job.lease_expires_at
+    assert lease_expires_at is not None
+
+    assert service.claim_due_jobs("recovery-worker", lease_expires_at) == ()
+
+    failed = service.get_for_teacher(submitted.job_id, teacher_id="teacher-1")
+    assert failed.status == "failed"
+    assert failed.failure_code == "ai_suggestion_attempts_exhausted"
+    assert generator.calls == []
+    with session_factory() as session:
+        job = session.get(ClassroomPlanSuggestionJob, submitted.job_id)
+    assert job is not None
+    assert job.attempts == 2
+    assert job.suggestion_input == {}
+
+
 def test_worker_tick_survives_a_lease_lost_after_provider_completion(monkeypatch) -> None:
     now = datetime(2026, 8, 19, 10, 0, tzinfo=UTC)
     service, _generator, _session_factory = build_service(now)

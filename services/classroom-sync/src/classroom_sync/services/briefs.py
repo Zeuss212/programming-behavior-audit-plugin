@@ -292,7 +292,7 @@ class BriefService:
             source = session.get(StudentBrief, job.source_brief_id)
             if source is None:
                 raise NotFoundError("analysis_source_brief_not_found")
-            brief = self._append_analysis_revision(
+            brief, appended = self._append_analysis_revision(
                 session,
                 source,
                 ai_analysis_status="ready",
@@ -306,7 +306,15 @@ class BriefService:
             job.failure_code = None
             job.completed_at = now
             job.updated_at = now
-            self._audit(session, "classroom-ai-worker", "student_brief_ai_analysis_ready", brief.id, now)
+            self._audit(
+                session,
+                "classroom-ai-worker",
+                "student_brief_ai_analysis_ready"
+                if appended
+                else "student_brief_ai_analysis_superseded",
+                brief.id,
+                now,
+            )
         return brief
 
     def record_analysis_failure(
@@ -335,7 +343,7 @@ class BriefService:
             source = session.get(StudentBrief, job.source_brief_id)
             if source is None:
                 raise NotFoundError("analysis_source_brief_not_found")
-            brief = self._append_analysis_revision(
+            brief, appended = self._append_analysis_revision(
                 session,
                 source,
                 ai_analysis_status="unavailable",
@@ -348,7 +356,9 @@ class BriefService:
             self._audit(
                 session,
                 "classroom-ai-worker",
-                "student_brief_ai_analysis_unavailable",
+                "student_brief_ai_analysis_unavailable"
+                if appended
+                else "student_brief_ai_analysis_superseded",
                 brief.id,
                 now,
             )
@@ -398,7 +408,14 @@ class BriefService:
         ai_analysis_status: str,
         ai_analysis: dict[str, object] | None,
         generated_at: datetime,
-    ) -> StudentBrief:
+    ) -> tuple[StudentBrief, bool]:
+        monitor_session = session.scalar(
+            select(MonitorSession)
+            .where(MonitorSession.id == source.session_id)
+            .with_for_update()
+        )
+        if monitor_session is None:
+            raise NotFoundError("monitor_session_not_found")
         latest = session.scalar(
             select(StudentBrief)
             .where(StudentBrief.session_id == source.session_id)
@@ -407,6 +424,8 @@ class BriefService:
         )
         if latest is None:
             raise NotFoundError("student_brief_not_found")
+        if latest.id != source.id:
+            return latest, False
         payload = dict(source.payload)
         payload["revision"] = latest.revision + 1
         payload["ai_analysis_status"] = ai_analysis_status
@@ -427,7 +446,7 @@ class BriefService:
             generated_at=generated_at,
         )
         session.add(brief)
-        return brief
+        return brief, True
 
     @staticmethod
     def _locked_analysis_job(
@@ -474,6 +493,15 @@ class BriefService:
                     chunk.first_event_sequence
                     <= event_sequence
                     <= chunk.last_event_sequence
+                ):
+                    raise ValidationError("brief_evidence_reference_invalid")
+                manifest = chunk.analysis_manifest
+                manifest_events = (
+                    manifest.get("events") if isinstance(manifest, Mapping) else None
+                )
+                if (
+                    not isinstance(manifest_events, Mapping)
+                    or str(event_sequence) not in manifest_events
                 ):
                     raise ValidationError("brief_evidence_reference_invalid")
 

@@ -37,7 +37,11 @@ it('sends the one-time ticket only to the authenticated local Jupyter route', as
 });
 
 it('submits a classroom brief through the authenticated local Jupyter route', async () => {
-  await submitClassroomBrief(settings, '23d7d803-524a-4d9f-b8bd-152a540dba12');
+  await submitClassroomBrief(
+    settings,
+    '23d7d803-524a-4d9f-b8bd-152a540dba12',
+    true
+  );
 
   expect(mockedRequest).toHaveBeenCalledWith(
     'platform/sessions/23d7d803-524a-4d9f-b8bd-152a540dba12/submit',
@@ -46,9 +50,13 @@ it('submits a classroom brief through the authenticated local Jupyter route', as
       method: 'POST',
       body: JSON.stringify({
         schema_version: 1,
-        reason: 'student_manual'
+        reason: 'student_manual',
+        request_ai_analysis: true
       }),
       headers: { 'Content-Type': 'application/json' }
     }
+  );
+  expect(mockedRequest.mock.calls[0]?.[2]?.body).not.toContain(
+    'code_snapshots'
   );
 });

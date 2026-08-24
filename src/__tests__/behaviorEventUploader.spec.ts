@@ -679,6 +679,7 @@ describe('BehaviorEventUploader bounded retry and lifecycle', () => {
     await expect(uploader.finalize()).resolves.toEqual(FINALIZE_RESPONSE);
     expect(order).toEqual(['upload', 'finalize:1']);
     expect(finalize).toHaveBeenCalledTimes(1);
+    expect(finalize).toHaveBeenCalledWith(SETTINGS, SESSION_ID, 1, false);
     expect(uploader.snapshot()).toEqual(
       expect.objectContaining({
         uploadState: 'finalized',

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gzip
+import json
 import secrets
 from collections.abc import Callable
 from copy import deepcopy
@@ -335,6 +336,7 @@ class PluginSessionService:
                 first_event_sequence=first_event_sequence,
                 last_event_sequence=last_event_sequence,
                 object_key=object_key,
+                analysis_manifest=self._analysis_manifest(body),
                 created_at=now,
             )
             monitor_session.last_activity_at = now
@@ -428,6 +430,58 @@ class PluginSessionService:
         if size < 1:
             raise ValidationError("evidence_uncompressed_empty")
         return size
+
+    @staticmethod
+    def _analysis_manifest(body: bytes) -> dict[str, object]:
+        """Persist only trusted event classifications, never source or diagnostics."""
+
+        try:
+            payload = json.loads(gzip.decompress(body))
+        except (OSError, EOFError, UnicodeDecodeError, json.JSONDecodeError):
+            return {"events": {}}
+        raw_events = payload.get("events") if isinstance(payload, dict) else None
+        events: dict[str, dict[str, str]] = {}
+        if not isinstance(raw_events, list):
+            return {"events": events}
+        for event in raw_events:
+            if not isinstance(event, dict):
+                continue
+            sequence = event.get("session_seq", event.get("sequence"))
+            classification = PluginSessionService._analysis_event_classification(event)
+            if (
+                isinstance(sequence, int)
+                and not isinstance(sequence, bool)
+                and classification is not None
+            ):
+                kind, description = classification
+                events[str(sequence)] = {"kind": kind, "description": description}
+                source = event.get("cell_source")
+                if isinstance(source, str) and source:
+                    events[str(sequence)]["source_sha256"] = sha256(
+                        source.encode("utf-8")
+                    ).hexdigest()
+        return {"events": events}
+
+    @staticmethod
+    def _analysis_event_classification(
+        event: dict[str, object],
+    ) -> tuple[str, str] | None:
+        event_type = event.get("segment_type")
+        if event_type == "code_execution":
+            if event.get("execution_result") == "failure":
+                return (
+                    "run_failure",
+                    "运行出现异常，之后可结合后续编辑与重运行判断修正过程。",
+                )
+            if event.get("execution_result") == "success":
+                return "run_success", "完成一次无异常运行；这不代表答案一定正确。"
+            return "run", "执行了一次代码。"
+        labels = {
+            "code_writing": ("edit", "编辑了代码。"),
+            "code_deletion": ("edit", "删除或替换了代码。"),
+            "code_paste": ("edit", "粘贴并编辑了代码。"),
+        }
+        return labels.get(str(event_type))
 
     def _utc_now(self) -> datetime:
         now = self._clock()

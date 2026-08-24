@@ -23,9 +23,14 @@ def run_due_classroom_jobs(services: ClassroomServices, worker_id: str) -> int:
         if services.deadline_service is not None
         else 0
     )
+    suggestion_count = (
+        services.plan_suggestion_job_service.run_due_jobs(worker_id)
+        if services.plan_suggestion_job_service is not None
+        else 0
+    )
     analysis_count = (
         services.brief_analysis_service.run_due_jobs(worker_id)
         if services.brief_analysis_service is not None
         else 0
     )
-    return deadline_count + analysis_count
+    return deadline_count + suggestion_count + analysis_count

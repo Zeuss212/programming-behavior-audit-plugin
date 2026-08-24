@@ -20,7 +20,7 @@ export JUPYTERLAB_BEHAVIOR_AUDIT_SYNC_BASE_URL=http://127.0.0.1:18081/classroom-
 export JUPYTERLAB_BEHAVIOR_AUDIT_ALLOW_INSECURE_LOOPBACK=true
 export JUPYTERLAB_BEHAVIOR_AUDIT_LOG_DIR="$demo_root/behavior-audit"
 
-exec uv run --no-project --with "$wheel" --with 'jupyterlab>=4,<5' jupyter lab \
+exec uv run --refresh --no-project --with "$wheel" --with 'jupyterlab>=4,<5' jupyter lab \
   --ServerApp.ip=127.0.0.1 \
   --ServerApp.port=8888 \
   --ServerApp.open_browser=False \

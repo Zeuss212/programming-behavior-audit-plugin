@@ -348,7 +348,13 @@ async def start_pilot_session(jp_fetch, profile):
     return response_json(response)
 
 
-async def finalize_empty_session(jp_fetch, jp_web_app, monkeypatch):
+async def finalize_empty_session(
+    jp_fetch,
+    jp_web_app,
+    monkeypatch,
+    *,
+    request_ai_analysis=False,
+):
     worker = install_synchronous_worker(jp_web_app, monkeypatch)
     profile = await create_published_profile(jp_fetch)
     started = await start_pilot_session(jp_fetch, profile)
@@ -358,7 +364,13 @@ async def finalize_empty_session(jp_fetch, jp_web_app, monkeypatch):
         started["session_id"],
         "finalize",
         method="POST",
-        body=json.dumps({"schema_version": 1, "last_sequence": 0}),
+        body=json.dumps(
+            {
+                "schema_version": 1,
+                "last_sequence": 0,
+                "request_ai_analysis": request_ai_analysis,
+            }
+        ),
         headers={"Content-Type": "application/json"},
         raise_error=False,
     )
@@ -455,6 +467,7 @@ async def test_session_logs_list_is_fixed_order_and_local_logs_are_immediate(
         jp_fetch,
         jp_web_app,
         monkeypatch,
+        request_ai_analysis=True,
     )
 
     response = await jp_fetch(
@@ -898,7 +911,13 @@ async def prepare_reviewable_analysis(jp_fetch, worker):
         started["session_id"],
         "finalize",
         method="POST",
-        body=json.dumps({"schema_version": 1, "last_sequence": 1}),
+        body=json.dumps(
+            {
+                "schema_version": 1,
+                "last_sequence": 1,
+                "request_ai_analysis": True,
+            }
+        ),
         headers={"Content-Type": "application/json"},
         raise_error=False,
     )
@@ -1970,6 +1989,40 @@ async def test_segment_api_maps_normalized_sequence_gap(
     }
 
 
+async def test_session_finalize_can_skip_local_ai_for_classroom_consent(
+    jp_fetch,
+    jp_web_app,
+    monkeypatch,
+):
+    worker = install_synchronous_worker(jp_web_app, monkeypatch)
+    profile = await create_published_profile(jp_fetch)
+    started = await start_pilot_session(jp_fetch, profile)
+
+    response = await jp_fetch(
+        "myextension",
+        "sessions",
+        started["session_id"],
+        "finalize",
+        method="POST",
+        body=json.dumps(
+            {
+                "schema_version": 1,
+                "last_sequence": 0,
+                "request_ai_analysis": False,
+            }
+        ),
+        headers={"Content-Type": "application/json"},
+        raise_error=False,
+    )
+
+    assert response.code == 202
+    payload = response_json(response)
+    openapi_validator("SessionFinalizeResponse").validate(payload)
+    assert payload["analysis_job_id"] is None
+    assert worker.session_store.read(started["session_id"])["analysis_job_id"] is None
+    assert worker.enqueued == []
+
+
 async def test_session_start_finalize_replay_and_public_job_use_live_services(
     jp_fetch,
     jp_web_app,
@@ -2015,7 +2068,13 @@ async def test_session_start_finalize_replay_and_public_job_use_live_services(
         started["session_id"],
         "finalize",
         method="POST",
-        body=json.dumps({"schema_version": 1, "last_sequence": 0}),
+        body=json.dumps(
+            {
+                "schema_version": 1,
+                "last_sequence": 0,
+                "request_ai_analysis": True,
+            }
+        ),
         headers={"Content-Type": "application/json"},
         raise_error=False,
     )
@@ -2034,7 +2093,13 @@ async def test_session_start_finalize_replay_and_public_job_use_live_services(
         started["session_id"],
         "finalize",
         method="POST",
-        body=json.dumps({"schema_version": 1, "last_sequence": 0}),
+        body=json.dumps(
+            {
+                "schema_version": 1,
+                "last_sequence": 0,
+                "request_ai_analysis": True,
+            }
+        ),
         headers={"Content-Type": "application/json"},
         raise_error=False,
     )
@@ -2121,7 +2186,13 @@ async def test_session_start_finalize_replay_and_public_job_use_live_services(
         refresh_failure_session["session_id"],
         "finalize",
         method="POST",
-        body=json.dumps({"schema_version": 1, "last_sequence": 1}),
+        body=json.dumps(
+            {
+                "schema_version": 1,
+                "last_sequence": 1,
+                "request_ai_analysis": True,
+            }
+        ),
         headers={"Content-Type": "application/json"},
         raise_error=False,
     )
@@ -2177,7 +2248,13 @@ async def test_session_start_finalize_replay_and_public_job_use_live_services(
         lifecycle_failure_session["session_id"],
         "finalize",
         method="POST",
-        body=json.dumps({"schema_version": 1, "last_sequence": 1}),
+        body=json.dumps(
+            {
+                "schema_version": 1,
+                "last_sequence": 1,
+                "request_ai_analysis": True,
+            }
+        ),
         headers={"Content-Type": "application/json"},
         raise_error=False,
     )
@@ -2423,7 +2500,13 @@ async def test_complete_three_dimension_pilot_flow_is_exact_and_review_is_additi
             session_id,
             "finalize",
             method="POST",
-            body=json.dumps({"schema_version": 1, "last_sequence": 4}),
+            body=json.dumps(
+                {
+                    "schema_version": 1,
+                    "last_sequence": 4,
+                    "request_ai_analysis": True,
+                }
+            ),
             headers={"Content-Type": "application/json"},
             raise_error=False,
         )
@@ -2621,6 +2704,7 @@ async def test_finalize_replays_each_post_finalize_failure_window(
     request = {
         "schema_version": 1,
         "last_sequence": 0,
+        "request_ai_analysis": True,
     }
     first = await jp_fetch(
         "myextension",
@@ -2744,7 +2828,13 @@ async def test_retry_and_active_job_delete_boundary(
         started["session_id"],
         "finalize",
         method="POST",
-        body=json.dumps({"schema_version": 1, "last_sequence": 0}),
+        body=json.dumps(
+            {
+                "schema_version": 1,
+                "last_sequence": 0,
+                "request_ai_analysis": True,
+            }
+        ),
         headers={"Content-Type": "application/json"},
         raise_error=False,
     )
@@ -2815,7 +2905,13 @@ async def test_retry_queue_full_is_resumable_only_for_the_exact_reason(
         started["session_id"],
         "finalize",
         method="POST",
-        body=json.dumps({"schema_version": 1, "last_sequence": 0}),
+        body=json.dumps(
+            {
+                "schema_version": 1,
+                "last_sequence": 0,
+                "request_ai_analysis": True,
+            }
+        ),
         headers={"Content-Type": "application/json"},
         raise_error=False,
     )
@@ -2895,7 +2991,13 @@ async def test_terminal_session_delete_returns_closed_projection_and_safe_audit(
         started["session_id"],
         "finalize",
         method="POST",
-        body=json.dumps({"schema_version": 1, "last_sequence": 0}),
+        body=json.dumps(
+            {
+                "schema_version": 1,
+                "last_sequence": 0,
+                "request_ai_analysis": True,
+            }
+        ),
         headers={"Content-Type": "application/json"},
         raise_error=False,
     )
@@ -2985,7 +3087,13 @@ async def test_review_overlays_latest_append_without_mutating_result(
         started["session_id"],
         "finalize",
         method="POST",
-        body=json.dumps({"schema_version": 1, "last_sequence": 1}),
+        body=json.dumps(
+            {
+                "schema_version": 1,
+                "last_sequence": 1,
+                "request_ai_analysis": True,
+            }
+        ),
         headers={"Content-Type": "application/json"},
         raise_error=False,
     )
@@ -3291,7 +3399,13 @@ async def test_session_analysis_maps_partial_and_error_states(
         partial_session["session_id"],
         "finalize",
         method="POST",
-        body=json.dumps({"schema_version": 1, "last_sequence": 0}),
+        body=json.dumps(
+            {
+                "schema_version": 1,
+                "last_sequence": 0,
+                "request_ai_analysis": True,
+            }
+        ),
         headers={"Content-Type": "application/json"},
         raise_error=False,
     )
@@ -3334,7 +3448,13 @@ async def test_session_analysis_maps_partial_and_error_states(
         error_session["session_id"],
         "finalize",
         method="POST",
-        body=json.dumps({"schema_version": 1, "last_sequence": 0}),
+        body=json.dumps(
+            {
+                "schema_version": 1,
+                "last_sequence": 0,
+                "request_ai_analysis": True,
+            }
+        ),
         headers={"Content-Type": "application/json"},
         raise_error=False,
     )
@@ -3377,7 +3497,13 @@ async def test_session_analysis_rejects_cross_session_result_identity(
         started["session_id"],
         "finalize",
         method="POST",
-        body=json.dumps({"schema_version": 1, "last_sequence": 0}),
+        body=json.dumps(
+            {
+                "schema_version": 1,
+                "last_sequence": 0,
+                "request_ai_analysis": True,
+            }
+        ),
         headers={"Content-Type": "application/json"},
         raise_error=False,
     )
@@ -3494,7 +3620,13 @@ async def test_present_session_or_job_with_missing_dependency_is_safe_500(
         second["session_id"],
         "finalize",
         method="POST",
-        body=json.dumps({"schema_version": 1, "last_sequence": 0}),
+        body=json.dumps(
+            {
+                "schema_version": 1,
+                "last_sequence": 0,
+                "request_ai_analysis": True,
+            }
+        ),
         headers={"Content-Type": "application/json"},
         raise_error=False,
     )
@@ -3542,7 +3674,13 @@ async def test_terminal_job_with_missing_result_dependency_is_safe_500(
         started["session_id"],
         "finalize",
         method="POST",
-        body=json.dumps({"schema_version": 1, "last_sequence": 0}),
+        body=json.dumps(
+            {
+                "schema_version": 1,
+                "last_sequence": 0,
+                "request_ai_analysis": True,
+            }
+        ),
         headers={"Content-Type": "application/json"},
         raise_error=False,
     )

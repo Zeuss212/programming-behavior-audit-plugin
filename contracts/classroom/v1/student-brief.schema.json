@@ -62,6 +62,7 @@
           "evidence_refs": {
             "type": "array",
             "minItems": 1,
+            "maxItems": 10,
             "items": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/evidence_ref"}
           },
           "demonstrated": {"type": "string", "minLength": 1, "maxLength": 1000},
@@ -85,24 +86,49 @@
       "type": ["object", "null"],
       "additionalProperties": false,
       "required": [
-        "learning_overview",
-        "evidence_based_observations",
-        "teaching_suggestions"
+        "knowledge_point_analyses",
+        "teacher_note"
       ],
       "properties": {
-        "learning_overview": {"type": "string", "minLength": 1, "maxLength": 1000},
-        "evidence_based_observations": {
+        "knowledge_point_analyses": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 5,
-          "items": {"type": "string", "minLength": 1, "maxLength": 500}
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "knowledge_point_id",
+              "status",
+              "evidence_event_ids",
+              "teaching_suggestion"
+            ],
+            "properties": {
+              "knowledge_point_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "status": {
+                "enum": ["observed", "partial", "not_observed", "teacher_review_required"]
+              },
+              "evidence_event_ids": {
+                "type": "array",
+                "maxItems": 3,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "pattern": "^chunk-[1-9][0-9]*#event-[1-9][0-9]*$"
+                }
+              },
+              "teaching_suggestion": {"type": "string", "minLength": 1, "maxLength": 500}
+            },
+            "allOf": [
+              {
+                "if": {"properties": {"status": {"const": "not_observed"}}},
+                "then": {"properties": {"evidence_event_ids": {"maxItems": 0}}},
+                "else": {"properties": {"evidence_event_ids": {"minItems": 1}}}
+              }
+            ]
+          }
         },
-        "teaching_suggestions": {
-          "type": "array",
-          "minItems": 1,
-          "maxItems": 5,
-          "items": {"type": "string", "minLength": 1, "maxLength": 500}
-        }
+        "teacher_note": {"type": "string", "minLength": 1, "maxLength": 500}
       }
     },
     "generated_at": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/timestamp"}

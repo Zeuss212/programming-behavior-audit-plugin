@@ -16,11 +16,15 @@ def test_classroom_nginx_proxies_only_api_and_keeps_sse_unbuffered():
     assert "client_max_body_size 2m;" in config
     assert "proxy_set_header Authorization $http_authorization;" in config
     assert "proxy_read_timeout 60s;" in config
+    assert "location = /classroom-api/v1/classroom/plan-suggestions" in config
+    assert "proxy_read_timeout 75s;" in config
     assert "location ~ ^/classroom-api/v1/classroom/classrooms/[^/]+/events$" in config
     assert "proxy_buffering off;" in config
     assert "proxy_cache off;" in config
     assert "proxy_read_timeout 3600s;" in config
     assert config.index("location ~ ^/classroom-api/v1/classroom/classrooms/") < config.index(
+        "location = /classroom-api/v1/classroom/plan-suggestions"
+    ) < config.index(
         "location /classroom-api/"
     )
     assert "proxy_pass http://classroom_sync;" in config

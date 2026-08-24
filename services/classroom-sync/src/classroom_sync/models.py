@@ -165,12 +165,20 @@ class EvidenceChunk(Base):
     first_event_sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     last_event_sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     object_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    analysis_manifest: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class StudentBrief(Base):
     __tablename__ = "student_briefs"
-    __table_args__ = (UniqueConstraint("session_id", "revision", name="uq_student_briefs_revision"),)
+    __table_args__ = (
+        UniqueConstraint("session_id", "revision", name="uq_student_briefs_revision"),
+        UniqueConstraint(
+            "session_id",
+            "submission_id",
+            name="uq_student_briefs_submission_id",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     session_id: Mapped[str] = mapped_column(
@@ -180,6 +188,8 @@ class StudentBrief(Base):
         ForeignKey("student_assignments.id", ondelete="RESTRICT"), nullable=False
     )
     revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    submission_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    submission_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     data_completeness: Mapped[str] = mapped_column(String(32), nullable=False)
     submission_reason: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -198,8 +208,44 @@ class ClassroomBriefAnalysisJob(Base):
     source_brief_id: Mapped[str] = mapped_column(
         ForeignKey("student_briefs.id", ondelete="CASCADE"), nullable=False
     )
+    analysis_input: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
+    lease_owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False)
+    failure_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ClassroomPlanSuggestionJob(Base):
+    """One owner-scoped, short-lived request for a safe plan-authoring suggestion."""
+
+    __tablename__ = "classroom_plan_suggestion_jobs"
+    __table_args__ = (
+        UniqueConstraint(
+            "teacher_id",
+            "space_id",
+            "parent_algorithm_id",
+            "request_hash",
+            "active_slot",
+            name="uq_classroom_plan_suggestion_jobs_active_request",
+        ),
+        Index("ix_classroom_plan_suggestion_jobs_status_run_at", "status", "run_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    teacher_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    space_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    parent_algorithm_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    suggestion_input: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    active_slot: Mapped[int | None] = mapped_column(Integer, nullable=True)
     lease_owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     attempts: Mapped[int] = mapped_column(Integer, nullable=False)

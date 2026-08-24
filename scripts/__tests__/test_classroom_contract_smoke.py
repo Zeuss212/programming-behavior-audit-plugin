@@ -22,6 +22,7 @@ class RecordingClient:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, str | None]] = []
         self.evidence_bodies: list[bytes] = []
+        self.submitted_payloads: list[dict[str, object]] = []
         self._ticket_count = 0
         self.session_id = "33333333-3333-4333-8333-333333333333"
 
@@ -96,6 +97,7 @@ class RecordingClient:
             assert token == "plugin-token"
             assert payload is not None
             assert payload["reason"] == "student_manual"
+            self.submitted_payloads.append(payload)
             return {
                 "brief_id": "55555555-5555-4555-8555-555555555555",
                 "session_id": self.session_id,
@@ -170,3 +172,21 @@ def test_contract_smoke_creates_then_replays_one_logical_classroom_flow(tmp_path
         "/v1/classroom/plugin/sessions/33333333-3333-4333-8333-333333333333/submit",
         "/v1/classroom/teacher/sessions/33333333-3333-4333-8333-333333333333/brief",
     ]
+
+
+def test_contract_smoke_requests_bounded_ai_analysis_only_for_an_allowed_plan(tmp_path: Path):
+    smoke = _load_smoke_module()
+    client = RecordingClient()
+    state_file = tmp_path / "classroom-contract-ai-state.json"
+    now = datetime(2026, 8, 13, 9, 0, tzinfo=UTC)
+
+    smoke.run_smoke(client, state_file=state_file, now=now, ai_policy="allowed")
+    smoke.run_smoke(
+        client, state_file=state_file, now=now, repeat_existing=True, ai_policy="allowed"
+    )
+
+    assert client.submitted_payloads[0]["request_ai_analysis"] is True
+    assert "ai_analysis_status" not in client.submitted_payloads[0]
+    analysis_input = client.submitted_payloads[0]["analysis_input"]
+    assert isinstance(analysis_input, dict)
+    assert analysis_input["lesson"] == {"title": "本地课堂契约冒烟"}

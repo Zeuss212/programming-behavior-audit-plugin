@@ -114,7 +114,19 @@ class HttpSmokeClient:
             with urlopen(request, timeout=15) as response:  # nosec B310 - caller controls local base URL.
                 raw = response.read()
         except HTTPError as error:
-            raise SmokeFailure(f"{method} {path} returned HTTP {error.code}") from error
+            # The classroom API deliberately returns only a stable public error
+            # code.  Surface that code in a local smoke failure without copying
+            # a potentially sensitive response body into test output.
+            error_code = ""
+            try:
+                decoded_error = json.loads(error.read().decode("utf-8"))
+                if isinstance(decoded_error, dict):
+                    error_payload = decoded_error.get("error")
+                    if isinstance(error_payload, dict) and isinstance(error_payload.get("code"), str):
+                        error_code = f" ({error_payload['code']})"
+            except (UnicodeDecodeError, ValueError):
+                pass
+            raise SmokeFailure(f"{method} {path} returned HTTP {error.code}{error_code}") from error
         except (OSError, URLError) as error:
             raise SmokeFailure(f"{method} {path} is unavailable") from error
         try:
@@ -221,8 +233,38 @@ def _evidence_body() -> bytes:
     return gzip.compress(payload, mtime=0)
 
 
-def _brief_payload() -> dict[str, object]:
+def _analysis_input() -> dict[str, object]:
+    """Bounded private evidence sent only when the published plan permits AI analysis."""
+
     return {
+        "lesson": {"title": "本地课堂契约冒烟"},
+        "knowledge_points": [
+            {
+                "knowledge_point_id": "KP_DICT0001",
+                "name": "字典读取",
+                "description": "按键读取字典中的值并验证运行结果。",
+                "question": "学生是否正确读取字典中的值？",
+                "evidence_criteria": [
+                    {"id": "uses_lookup", "direction": "support", "statement": "代码使用键读取字典值。"}
+                ],
+            }
+        ],
+        "evidence_events": [
+            {
+                "event_id": "chunk-1#event-1",
+                "sequence": 1,
+                "kind": "run_success",
+                "description": "学生运行了字典读取练习。",
+            }
+        ],
+        "code_snapshots": [
+            {"event_id": "chunk-1#event-1", "source": "scores = {'Ada': 88}\nvalue = scores['Ada']"}
+        ],
+    }
+
+
+def _brief_payload(*, request_ai_analysis: bool) -> dict[str, object]:
+    payload: dict[str, object] = {
         "summary": "学生完成字典读取函数并运行了验证。",
         "knowledge_points": [
             {
@@ -237,9 +279,12 @@ def _brief_payload() -> dict[str, object]:
         ],
         "process_overview": ["完成一次运行验证。"],
         "issues": ["缺少空键测试。"],
-        "ai_analysis_status": "not_requested",
         "reason": "student_manual",
     }
+    if request_ai_analysis:
+        payload["request_ai_analysis"] = True
+        payload["analysis_input"] = _analysis_input()
+    return payload
 
 
 def _write_state(path: Path, state: dict[str, object]) -> None:
@@ -348,13 +393,14 @@ def _submit_and_read(
     *,
     session_id: str,
     access_token: str,
+    request_ai_analysis: bool,
 ) -> dict[str, object]:
 
     submission = client.request_json(
         "POST",
         f"/v1/classroom/plugin/sessions/{session_id}/submit",
         token=access_token,
-        payload=_brief_payload(),
+        payload=_brief_payload(request_ai_analysis=request_ai_analysis),
     )
     brief_id = _require_string(submission, "brief_id")
     revision = _require_positive_int(submission, "revision")
@@ -395,11 +441,14 @@ def run_smoke(
     state_file: Path,
     now: datetime,
     repeat_existing: bool = False,
+    ai_policy: str = "prohibited",
 ) -> dict[str, object]:
     """Run a new contract flow or replay the durable identity-only state."""
 
     if now.tzinfo is None:
         raise ValueError("now must be timezone-aware")
+    if ai_policy not in {"prohibited", "allowed"}:
+        raise ValueError("ai_policy must be prohibited or allowed")
     if repeat_existing:
         state = _read_collecting_state(state_file)
         session_id, access_token = _launch_session(
@@ -418,6 +467,7 @@ def run_smoke(
             resumed,
             session_id=session_id,
             access_token=access_token,
+            request_ai_analysis=ai_policy == "allowed",
         )
         _write_state(state_file, completed)
         return completed
@@ -434,7 +484,7 @@ def run_smoke(
             "profile": _profile(),
             "scheduled_start_at": clock.isoformat(),
             "scheduled_end_at": (clock + timedelta(minutes=45)).isoformat(),
-            "ai_policy": "prohibited",
+            "ai_policy": ai_policy,
         },
     )
     draft_id = _require_string(draft, "draft_id")

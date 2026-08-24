@@ -25,6 +25,7 @@ from classroom_sync.services.brief_analysis import (
 )
 from classroom_sync.services.briefs import BriefService
 from classroom_sync.services.deadlines import DeadlineService
+from classroom_sync.services.plan_suggestion_jobs import PlanSuggestionJobService
 from classroom_sync.services.plan_suggestions import (
     AiProviderSettings,
     OpenAiCompletionClient,
@@ -127,10 +128,17 @@ def create_runtime_services(settings: Settings) -> ClassroomServices:
     except AiSuggestionUnavailableError:
         ai_settings = None
     plan_suggestion_service = None
+    plan_suggestion_job_service = None
     brief_analysis_service = None
     if ai_settings is not None:
         ai_client = httpx.Client(timeout=ai_settings.timeout_seconds)
         plan_suggestion_service = OpenAiPlanSuggestionService(ai_settings, ai_client)
+        plan_suggestion_job_service = PlanSuggestionJobService(
+            session_factory,
+            plan_suggestion_service,
+            clock=utc_now,
+            max_attempts=settings.ai_max_attempts,
+        )
         brief_analysis_service = BriefAnalysisJobService(
             session_factory,
             brief_service,
@@ -147,6 +155,7 @@ def create_runtime_services(settings: Settings) -> ClassroomServices:
         deadline_service=deadline_service,
         read_service=ClassroomReadService(session_factory),
         plan_suggestion_service=plan_suggestion_service,
+        plan_suggestion_job_service=plan_suggestion_job_service,
         brief_analysis_service=brief_analysis_service,
     )
 

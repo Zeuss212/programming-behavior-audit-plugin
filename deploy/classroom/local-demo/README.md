@@ -77,6 +77,10 @@ PYTHONPATH=scripts uv run --no-project python scripts/local_classroom_demo_smoke
 
 该命令验证 façade 登录、student002 跨课程拒绝、同步服务就绪，并完成发布、接受、插件会话、证据提交和简报生成。它需要一个全新的本地 demo 数据库；若 student001 已提交过本节实验，先按下方“停止与重置”显式重置，再运行该命令。输出不包含 bearer、课堂票据、插件令牌或原始证据。
 
+## 升级顺序
+
+对保留数据的环境升级时，先备份 PostgreSQL，再由单个 `sync-api` 实例执行 `alembic upgrade head`。只有在迁移成功且 `sync-api` 就绪检查通过后，才重启 `deadline-worker` 和学生插件。`0006` 与 `0007` 只添加可空列和唯一约束；应用回滚时可先回退应用镜像并保留这些列，不要在未备份时执行降级迁移。旧证据块没有可信分析摘要时，基础简报仍会保留，AI 分析标记为不可用。
+
 ## 停止与重置
 
 ~~~sh

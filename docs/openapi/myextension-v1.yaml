@@ -946,7 +946,11 @@ components:
           session_id: { $ref: '#/components/schemas/Uuid' },
           status: { const: finalized },
           last_contiguous_sequence: { type: integer, minimum: 0 },
-          analysis_job_id: { $ref: '#/components/schemas/Uuid' }
+          analysis_job_id:
+            {
+              type: [string, 'null'],
+              pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+            }
         }
     DeletedSessionResponse:
       type: object
@@ -1149,7 +1153,8 @@ components:
       properties:
         {
           schema_version: { const: 1 },
-          last_sequence: { type: integer, minimum: 0 }
+          last_sequence: { type: integer, minimum: 0 },
+          request_ai_analysis: { type: boolean, default: false }
         }
     SessionAbandon:
       type: object

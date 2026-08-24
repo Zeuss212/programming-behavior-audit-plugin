@@ -98,6 +98,7 @@ def test_private_analysis_input_rejects_sensitive_client_payloads(
         'token = "sk-1234567890abcdef"',
         'secret = "aB3_fGh7JkLm9NpQr2StUv4WxYz6CdEf"',
         "# aB3_fGh7JkLm9NpQr2StUv4WxYz6CdEf",
+        "%env PASSWORD=aB3_fGh7JkLm9NpQr2StUv4WxYz6CdEf",
     ],
 )
 def test_private_analysis_input_rejects_unlabelled_opaque_secrets(source: str) -> None:

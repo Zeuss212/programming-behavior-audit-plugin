@@ -41,6 +41,9 @@ _QUOTED_OPAQUE_LITERAL = re.compile(
 _COMMENT_OPAQUE_LITERAL = re.compile(
     r"(?m)^\s*#\s*(?P<secret>[A-Za-z0-9_-]{32,})\s*$"
 )
+_OPAQUE_TOKEN = re.compile(
+    r"(?<![A-Za-z0-9_-])(?P<secret>[A-Za-z0-9_-]{32,})(?![A-Za-z0-9_-])"
+)
 
 
 def _is_opaque_secret(value: str) -> bool:
@@ -58,7 +61,11 @@ def _is_opaque_secret(value: str) -> bool:
 def _validate_safe_analysis_input_text(value: str) -> str:
     opaque_literals = (
         match.group("secret")
-        for pattern in (_QUOTED_OPAQUE_LITERAL, _COMMENT_OPAQUE_LITERAL)
+        for pattern in (
+            _QUOTED_OPAQUE_LITERAL,
+            _COMMENT_OPAQUE_LITERAL,
+            _OPAQUE_TOKEN,
+        )
         for match in pattern.finditer(value)
     )
     if _SENSITIVE_ANALYSIS_INPUT.search(value) or any(

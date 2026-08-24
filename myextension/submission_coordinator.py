@@ -232,13 +232,14 @@ class SubmissionCoordinator:
                     raise SubmissionCoordinatorError("Automatic mastery result is invalid.")
                 rows.append(dict(row))
         else:
+            bounded_evidence_refs = evidence_refs[:10]
             for point_id, name in points:
                 rows.append(
                     {
                         "knowledge_point_id": point_id,
                         "name": name,
                         "status": "not_demonstrated",
-                        "evidence_refs": evidence_refs,
+                        "evidence_refs": bounded_evidence_refs,
                         "demonstrated": "基础简报未进行逐项自动判定。",
                         "gap": "需要结合过程证据确认该知识点的掌握情况。",
                         "teacher_suggestion": "查看关联过程证据，并就关键步骤追问学生。",
@@ -308,7 +309,7 @@ class SubmissionCoordinator:
             and (event_id := cls._remote_event_id(event.get("session_seq"), entries))
             is not None
         ] if isinstance(raw_events, list) else []
-        return references[:10] or ["session#missing-evidence"]
+        return references or ["session#missing-evidence"]
 
     @staticmethod
     def _remote_event_id(sequence: object, entries: Sequence[object]) -> str | None:

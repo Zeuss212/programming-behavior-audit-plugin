@@ -36,6 +36,9 @@ _QUOTED_OPAQUE_LITERAL = re.compile(
 _COMMENT_OPAQUE_LITERAL = re.compile(
     r"(?m)(?P<prefix>^\s*#\s*)(?P<secret>[A-Za-z0-9_-]{32,})(?=\s*$)"
 )
+_OPAQUE_TOKEN = re.compile(
+    r"(?<![A-Za-z0-9_-])(?P<secret>[A-Za-z0-9_-]{32,})(?![A-Za-z0-9_-])"
+)
 
 
 def _value(item: object, name: str) -> object:
@@ -77,6 +80,7 @@ def _safe_source(value: str) -> str:
     scrubbed = _scrub_untrusted_text(value)
     for pattern in (_EMAIL, _URL, _JWT, _BARE_SECRET, _COMMON_SECRET):
         scrubbed = pattern.sub("[redacted]", scrubbed)
+    scrubbed = _OPAQUE_TOKEN.sub(_redact_opaque_token, scrubbed)
     scrubbed = _QUOTED_OPAQUE_LITERAL.sub(_redact_quoted_opaque_literal, scrubbed)
     return _COMMENT_OPAQUE_LITERAL.sub(_redact_comment_opaque_literal, scrubbed)
 
@@ -101,6 +105,11 @@ def _redact_quoted_opaque_literal(match: re.Match[str]) -> str:
         return match.group(0)
     quote = match.group("quote")
     return f"{quote}[redacted]{quote}"
+
+
+def _redact_opaque_token(match: re.Match[str]) -> str:
+    secret = match.group("secret")
+    return "[redacted]" if _is_opaque_secret(secret) else secret
 
 
 def _redact_comment_opaque_literal(match: re.Match[str]) -> str:

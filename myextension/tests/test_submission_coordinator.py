@@ -350,3 +350,21 @@ def test_deadline_worker_calls_the_same_coordinator_only_after_the_cutoff(
     assert coordinator.calls == [
         (context().session_id, "system_deadline", cutoff)
     ]
+
+
+def test_delivered_evidence_is_not_truncated_before_per_point_selection() -> None:
+    class Entry:
+        sequence = 1
+        first_event_sequence = 1
+        last_event_sequence = 11
+
+    detail = {
+        "behavior_events": [
+            {"session_seq": sequence, "segment_type": "code_writing"}
+            for sequence in range(1, 12)
+        ]
+    }
+
+    assert SubmissionCoordinator._evidence_refs(detail, [Entry()]) == [
+        f"chunk-1#event-{sequence}" for sequence in range(1, 12)
+    ]

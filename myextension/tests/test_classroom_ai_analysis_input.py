@@ -137,3 +137,16 @@ def test_builder_redacts_identity_urls_and_secret_like_source_literals(secret: s
     encoded = json.dumps(payload, ensure_ascii=False)
     assert secret not in encoded
     assert "[redacted]" in encoded
+
+
+def test_builder_redacts_unquoted_opaque_environment_value() -> None:
+    secret = "aB3_fGh7JkLm9NpQr2StUv4WxYz6CdEf"
+    payload = build_analysis_input(
+        _profile(),
+        _detail(f"%env PASSWORD={secret}\nprint('exercise')"),
+        _ranges(),
+    )
+
+    encoded = json.dumps(payload, ensure_ascii=False)
+    assert secret not in encoded
+    assert "[redacted]" in encoded

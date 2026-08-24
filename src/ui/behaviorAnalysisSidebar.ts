@@ -1254,10 +1254,7 @@ export class BehaviorAnalysisSidebar extends Widget {
     const submitted =
       this.studentSubmissionCompletedSessionId === session.session_id;
     const canSubmit = this.canSubmitStudentClassroom(session.session_id);
-    const aiConsentLabel = node(
-      'label',
-      'jp-BehaviorAudit-checkboxField'
-    );
+    const aiConsentLabel = node('label', 'jp-BehaviorAudit-checkboxField');
     const aiConsent = node('input') as HTMLInputElement;
     aiConsent.id = 'classroom-ai-analysis-consent';
     aiConsent.type = 'checkbox';
@@ -1268,7 +1265,9 @@ export class BehaviorAnalysisSidebar extends Widget {
     });
     aiConsentLabel.append(
       aiConsent,
-      document.createTextNode('生成 AI 教学建议（仅发送本次课堂的脱敏代码片段和过程证据）')
+      document.createTextNode(
+        '生成 AI 教学建议（仅发送本次课堂的脱敏代码片段和过程证据）'
+      )
     );
     const aiConsentHint = node('p', 'jp-BehaviorAudit-notice');
     aiConsentHint.textContent =

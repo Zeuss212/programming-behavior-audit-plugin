@@ -7,7 +7,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import select
@@ -64,6 +64,7 @@ class BriefService:
         content: BriefContent,
         *,
         reason: str,
+        submission_id: str | None = None,
         request_ai_analysis: bool = False,
         analysis_input: Mapping[str, object] | None = None,
         analysis_available: bool = True,
@@ -71,8 +72,19 @@ class BriefService:
         """Persist a new revision while retaining the logical brief and first submit time."""
 
         now = self._utc_now()
+        if submission_id is not None:
+            try:
+                parsed_submission_id = UUID(submission_id)
+            except ValueError as error:
+                raise ValidationError("brief_submission_id_invalid") from error
+            if str(parsed_submission_id) != submission_id:
+                raise ValidationError("brief_submission_id_invalid")
         with self._session_factory.begin() as session:
-            monitor_session = session.get(MonitorSession, session_id)
+            monitor_session = session.scalar(
+                select(MonitorSession)
+                .where(MonitorSession.id == session_id)
+                .with_for_update()
+            )
             if monitor_session is None:
                 raise NotFoundError("monitor_session_not_found")
             assignment = session.get(StudentAssignment, monitor_session.assignment_id)
@@ -86,16 +98,35 @@ class BriefService:
             )
             if plan_version is None:
                 raise NotFoundError("plan_version_not_found")
+            if submission_id is not None:
+                replay = session.scalar(
+                    select(StudentBrief).where(
+                        StudentBrief.session_id == session_id,
+                        StudentBrief.submission_id == submission_id,
+                    )
+                )
+                if replay is not None:
+                    return replay
             if request_ai_analysis != (analysis_input is not None):
                 raise ValidationError("brief_analysis_consent_input_mismatch")
             try:
-                private_analysis_input = (
-                    BriefAnalysisInput.model_validate(analysis_input).model_dump(mode="json")
+                private_source = (
+                    BriefAnalysisInput.model_validate(analysis_input)
                     if analysis_input is not None
                     else None
                 )
             except PydanticValidationError as error:
                 raise ValidationError("brief_analysis_input_invalid") from error
+            if private_source is not None:
+                self._validate_analysis_input_context(
+                    session,
+                    session_id,
+                    plan_version,
+                    private_source,
+                )
+            private_analysis_input = (
+                private_source.model_dump(mode="json") if private_source is not None else None
+            )
             analysis_permitted = request_ai_analysis and plan_version.ai_policy == "allowed"
             previous = session.scalar(
                 select(StudentBrief)
@@ -146,6 +177,7 @@ class BriefService:
                 session_id=session_id,
                 assignment_id=assignment.id,
                 revision=revision,
+                submission_id=submission_id,
                 status=status,
                 data_completeness=monitor_session.completeness,
                 submission_reason=reason,
@@ -245,6 +277,7 @@ class BriefService:
                 generated_at=now,
             )
             job.status = "completed"
+            job.analysis_input = {}
             job.lease_owner = None
             job.lease_expires_at = None
             job.failure_code = None
@@ -287,6 +320,7 @@ class BriefService:
                 generated_at=now,
             )
             job.status = "completed"
+            job.analysis_input = {}
             job.completed_at = now
             self._audit(
                 session,
@@ -361,6 +395,7 @@ class BriefService:
             session_id=source.session_id,
             assignment_id=source.assignment_id,
             revision=latest.revision + 1,
+            submission_id=None,
             status=source.status,
             data_completeness=source.data_completeness,
             submission_reason=source.submission_reason,
@@ -411,8 +446,52 @@ class BriefService:
                     raise ValidationError("brief_evidence_reference_invalid")
                 chunk = chunks.get(int(match.group(1)))
                 event_sequence = int(match.group(2))
-                if chunk is None or not (chunk.first_event_sequence <= event_sequence <= chunk.last_event_sequence):
+                if chunk is None or not (
+                    chunk.first_event_sequence
+                    <= event_sequence
+                    <= chunk.last_event_sequence
+                ):
                     raise ValidationError("brief_evidence_reference_invalid")
+
+    @staticmethod
+    def _validate_analysis_input_context(
+        session: Session,
+        session_id: str,
+        plan_version: PlanVersion,
+        source: BriefAnalysisInput,
+    ) -> None:
+        raw_points = plan_version.profile.get("knowledge_points")
+        plan_point_ids = {
+            point.get("id")
+            for point in raw_points
+            if isinstance(point, dict) and isinstance(point.get("id"), str)
+        } if isinstance(raw_points, list) else set()
+        source_point_ids = {point.knowledge_point_id for point in source.knowledge_points}
+        if source_point_ids != plan_point_ids:
+            raise ValidationError("brief_analysis_input_context_invalid")
+
+        chunks = {
+            chunk.sequence: chunk
+            for chunk in session.scalars(
+                select(EvidenceChunk).where(EvidenceChunk.session_id == session_id)
+            )
+        }
+        for event in source.evidence_events:
+            match = EVIDENCE_REF_PATTERN.fullmatch(event.event_id)
+            if match is None:
+                raise ValidationError("brief_analysis_input_context_invalid")
+            chunk = chunks.get(int(match.group(1)))
+            event_sequence = int(match.group(2))
+            if (
+                event.sequence != event_sequence
+                or chunk is None
+                or not (
+                    chunk.first_event_sequence
+                    <= event_sequence
+                    <= chunk.last_event_sequence
+                )
+            ):
+                raise ValidationError("brief_analysis_input_context_invalid")
 
     @staticmethod
     def _active_duration_ms(monitor_session: MonitorSession, now: datetime) -> int:

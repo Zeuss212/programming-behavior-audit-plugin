@@ -34,6 +34,7 @@ def test_submit_request_accepts_explicit_ai_consent_and_private_input() -> None:
             "process_overview": [],
             "issues": [],
             "reason": "student_manual",
+            "submission_id": "2f70c8d8-79b0-48f3-87f7-9422c91c0e77",
             "request_ai_analysis": True,
             "analysis_input": analysis_input,
         }

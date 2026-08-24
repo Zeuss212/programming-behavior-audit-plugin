@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import UUID
 
 from myextension.analysis_job_store import AnalysisJobStore
 from myextension.canonical_json import sha256_json
@@ -146,6 +147,9 @@ def test_manual_and_deadline_submission_share_one_local_idempotent_result(
     assert outbox.flushes == 1
     assert len(client.payloads) == 1
     assert client.payloads[0]["reason"] == "student_manual"
+    assert str(UUID(str(client.payloads[0]["submission_id"]))) == client.payloads[0][
+        "submission_id"
+    ]
     assert client.payloads[0]["knowledge_points"][0]["status"] == "not_demonstrated"
     assert client.payloads[0]["request_ai_analysis"] is False
     assert "analysis_input" not in client.payloads[0]
@@ -241,7 +245,7 @@ def test_authorized_submission_includes_one_private_bounded_analysis_input(
     assert "records" in analysis_input["code_snapshots"][0]["source"]
 
 
-def test_submission_marks_equivalent_successful_dictionary_code_as_mastered(
+def test_submission_requires_review_when_supporting_events_were_not_delivered(
     tmp_path: Path,
 ) -> None:
     class Outbox:
@@ -315,7 +319,8 @@ def test_submission_marks_equivalent_successful_dictionary_code_as_mastered(
     assert client.payload is not None
     rows = client.payload["knowledge_points"]
     assert isinstance(rows, list)
-    assert rows[0]["status"] == "mastered"
+    assert rows[0]["status"] == "review_required"
+    assert rows[0]["evidence_refs"] == ["session#missing-evidence"]
     assert "records" not in str(rows[0])
 
 

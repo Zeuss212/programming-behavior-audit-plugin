@@ -1154,7 +1154,7 @@ components:
         {
           schema_version: { const: 1 },
           last_sequence: { type: integer, minimum: 0 },
-          request_ai_analysis: { type: boolean, default: true }
+          request_ai_analysis: { type: boolean, default: false }
         }
     SessionAbandon:
       type: object

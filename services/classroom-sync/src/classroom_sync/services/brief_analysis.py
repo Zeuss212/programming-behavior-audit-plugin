@@ -13,18 +13,45 @@ from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from classroom_sync.errors import UpstreamUnavailableError
+from classroom_sync.errors import AuthorizationError, UpstreamUnavailableError
 from classroom_sync.models import ClassroomBriefAnalysisJob
 from classroom_sync.services.plan_suggestions import OpenAiCompletionClient
 
 if TYPE_CHECKING:
     from classroom_sync.services.briefs import BriefService
 
+
+_SENSITIVE_ANALYSIS_INPUT = re.compile(
+    r"(?:https?://|s3://|/Users/|/home/|/root/|/private/|[A-Za-z]:[\\/]|"
+    r"gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|"
+    r"(?:AKIA|ASIA)[0-9A-Z]{16}|xox(?:b|p|a|r|s)-[A-Za-z0-9-]{10,}|"
+    r"AIza[A-Za-z0-9_-]{20,}|ya29\.[A-Za-z0-9._-]{20,}|"
+    r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b|"
+    r"(?:bearer\s+|(?:api[_-]?key|token)\s*[:=]\s*['\"]?)"
+    r"[A-Za-z0-9._-]{8,}|原始输出|诊断信息|学生姓名|"
+    r"\braw\s+(?:model\s+)?(?:output|response)\b|\btraceback\b|"
+    r"\bprovider\s+response\b|\bsystem\s+prompt\b|"
+    r"\bignore\b.{0,40}\binstructions?\b)",
+    re.IGNORECASE,
+)
+
+
+def _validate_safe_analysis_input_text(value: str) -> str:
+    if _SENSITIVE_ANALYSIS_INPUT.search(value):
+        raise ValueError("analysis input contains sensitive client text")
+    return value
+
+
 class EvidenceCriterion(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     id: Annotated[str, Field(min_length=1, max_length=128)]
     direction: Literal["support", "exclude"]
     statement: Annotated[str, Field(min_length=1, max_length=300)]
+
+    @field_validator("statement")
+    @classmethod
+    def reject_sensitive_statement(cls, value: str) -> str:
+        return _validate_safe_analysis_input_text(value)
 
 
 class AnalysisKnowledgePoint(BaseModel):
@@ -35,6 +62,11 @@ class AnalysisKnowledgePoint(BaseModel):
     question: Annotated[str, Field(max_length=200)] = ""
     evidence_criteria: list[EvidenceCriterion] = Field(default_factory=list, max_length=10)
 
+    @field_validator("name", "description", "question")
+    @classmethod
+    def reject_sensitive_point_text(cls, value: str) -> str:
+        return _validate_safe_analysis_input_text(value)
+
 
 class AnalysisEvidenceEvent(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -43,11 +75,21 @@ class AnalysisEvidenceEvent(BaseModel):
     kind: Literal["edit", "run", "run_failure", "run_success"]
     description: Annotated[str, Field(min_length=1, max_length=300)]
 
+    @field_validator("description")
+    @classmethod
+    def reject_sensitive_event_text(cls, value: str) -> str:
+        return _validate_safe_analysis_input_text(value)
+
 
 class AnalysisCodeSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid")
     event_id: Annotated[str, Field(pattern=r"^chunk-[1-9][0-9]*#event-[1-9][0-9]*$")]
     source: Annotated[str, Field(min_length=1, max_length=12_000)]
+
+    @field_validator("source")
+    @classmethod
+    def reject_sensitive_source(cls, value: str) -> str:
+        return _validate_safe_analysis_input_text(value)
 
 
 class BriefAnalysisInput(BaseModel):
@@ -58,6 +100,15 @@ class BriefAnalysisInput(BaseModel):
     knowledge_points: list[AnalysisKnowledgePoint] = Field(min_length=1, max_length=10)
     evidence_events: list[AnalysisEvidenceEvent] = Field(max_length=20)
     code_snapshots: list[AnalysisCodeSnapshot] = Field(max_length=20)
+
+    @field_validator("lesson")
+    @classmethod
+    def reject_sensitive_lesson_text(
+        cls,
+        value: dict[Literal["title"], str],
+    ) -> dict[Literal["title"], str]:
+        _validate_safe_analysis_input_text(value["title"])
+        return value
 
     @model_validator(mode="after")
     def validate_private_input(self) -> BriefAnalysisInput:
@@ -296,7 +347,9 @@ class BriefAnalysisJobService:
     """Lease, execute, and retry brief analysis without blocking student submission."""
 
     _RETRY_DELAYS = (timedelta(seconds=5), timedelta(seconds=30))
-    _LEASE_SECONDS = 60
+    # A single Provider call can spend one timeout in each HTTP phase.  Keep
+    # the lease beyond that whole-operation budget and claim no backlog early.
+    _LEASE_SECONDS = 1_500
 
     def __init__(
         self,
@@ -334,6 +387,7 @@ class BriefAnalysisJobService:
                         ),
                     )
                     .order_by(ClassroomBriefAnalysisJob.run_at, ClassroomBriefAnalysisJob.id)
+                    .limit(1)
                     .with_for_update(skip_locked=True)
                 )
             )
@@ -359,13 +413,18 @@ class BriefAnalysisJobService:
                     analysis=analysis.model_dump(),
                 )
             except UpstreamUnavailableError as error:
-                self._brief_service.record_analysis_failure(
-                    job.id,
-                    worker_id=worker_id,
-                    failure_code=error.code,
-                    retry_delay=self._retry_delay(job.attempts) if error.retryable else None,
-                    occurred_at=self._utc_now(),
-                )
+                try:
+                    self._brief_service.record_analysis_failure(
+                        job.id,
+                        worker_id=worker_id,
+                        failure_code=error.code,
+                        retry_delay=self._retry_delay(job.attempts) if error.retryable else None,
+                        occurred_at=self._utc_now(),
+                    )
+                except AuthorizationError:
+                    continue
+            except AuthorizationError:
+                continue
         return len(jobs)
 
     def _source_for_leased_job(self, job_id: str, worker_id: str) -> BriefAnalysisInput:

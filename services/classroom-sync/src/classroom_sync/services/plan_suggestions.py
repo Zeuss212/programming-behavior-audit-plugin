@@ -294,6 +294,12 @@ class OpenAiPlanSuggestionService:
             OpenAiCompletionClient(settings, client) if settings is not None else None
         )
 
+    @property
+    def retry_provider_errors(self) -> bool:
+        """Only Coding Plan may spend the durable worker retry budget."""
+
+        return self._uses_coding_plan_profile
+
     def generate(self, suggestion_input: PlanSuggestionInput) -> PlanSuggestion:
         completion_client = self._completion_client
         if completion_client is None:

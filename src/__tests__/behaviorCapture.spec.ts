@@ -107,6 +107,7 @@ class FakeUploader {
   readonly starts: ISessionStartResponse[] = [];
   readonly resumes: ISessionState[] = [];
   readonly queued: IBehaviorSegment[] = [];
+  readonly finalizeRequests: boolean[] = [];
   finalizeResult: Promise<ISessionFinalizeResponse> =
     Promise.resolve(FINAL_RESPONSE);
   private current: IUploadSnapshot = {
@@ -154,7 +155,8 @@ class FakeUploader {
     return Promise.resolve(this.snapshot());
   }
 
-  async finalize(): Promise<ISessionFinalizeResponse> {
+  async finalize(requestAiAnalysis = false): Promise<ISessionFinalizeResponse> {
+    this.finalizeRequests.push(requestAiAnalysis);
     if (
       this.current.sessionId === null ||
       this.current.uploadState === 'idle' ||
@@ -240,6 +242,15 @@ describe('behavior capture default-off and start transaction', () => {
     expect(controller.snapshot().uploadState).toBe('idle');
     expect(dependencies.startSession).not.toHaveBeenCalled();
     expect(uploader.starts).toEqual([]);
+  });
+
+  it('defaults stop to no AI analysis', async () => {
+    const { controller, uploader } = harness();
+    await controller.start(PROFILE);
+
+    await controller.stop();
+
+    expect(uploader.finalizeRequests).toEqual([false]);
   });
 
   it('waits for server start before persisting only the session ID and enabling', async () => {

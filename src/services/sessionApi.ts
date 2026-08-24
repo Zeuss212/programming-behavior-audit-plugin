@@ -49,7 +49,7 @@ export function finalizeSession(
   settings: ServerConnection.ISettings,
   sessionId: string,
   lastSequence: number,
-  requestAiAnalysis = true
+  requestAiAnalysis = false
 ): Promise<ISessionFinalizeResponse> {
   return requestAPI<ISessionFinalizeResponse>(
     `sessions/${encodeURIComponent(sessionId)}/finalize`,

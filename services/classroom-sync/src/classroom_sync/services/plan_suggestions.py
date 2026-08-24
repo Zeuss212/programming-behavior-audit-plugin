@@ -287,6 +287,9 @@ class OpenAiPlanSuggestionService:
 
     def __init__(self, settings: AiProviderSettings | None, client: httpx.Client) -> None:
         self._settings = settings
+        self._uses_coding_plan_profile = (
+            settings is not None and "coding" in urlsplit(settings.base_url).path.split("/")
+        )
         self._completion_client = (
             OpenAiCompletionClient(settings, client) if settings is not None else None
         )
@@ -295,22 +298,30 @@ class OpenAiPlanSuggestionService:
         completion_client = self._completion_client
         if completion_client is None:
             raise AiSuggestionUnavailableError("ai_suggestion_not_configured")
+        thinking_mode: Literal["disabled"] | None = (
+            "disabled" if self._uses_coding_plan_profile else None
+        )
+        max_tokens = 2048 if self._uses_coding_plan_profile else 1200
+        messages = self._messages(
+            suggestion_input,
+            include_automatic_evaluation=self._uses_coding_plan_profile,
+        )
 
         try:
             completion = completion_client.complete_with_metadata(
-                self._messages(suggestion_input),
+                messages,
                 temperature=0.2,
-                max_tokens=2048,
-                thinking_mode="disabled",
-                json_mode=True,
+                max_tokens=max_tokens,
+                thinking_mode=thinking_mode,
+                json_mode=self._uses_coding_plan_profile,
             )
-            if completion.finish_reason == "length":
+            if self._uses_coding_plan_profile and completion.finish_reason == "length":
                 completion = completion_client.complete_with_metadata(
-                    self._messages(suggestion_input),
+                    messages,
                     temperature=0.2,
                     max_tokens=4096,
-                    thinking_mode="disabled",
-                    json_mode=True,
+                    thinking_mode=thinking_mode,
+                    json_mode=self._uses_coding_plan_profile,
                 )
         except UpstreamUnavailableError as error:
             logger.warning(
@@ -387,22 +398,29 @@ class OpenAiPlanSuggestionService:
         )
 
     @staticmethod
-    def _messages(suggestion_input: PlanSuggestionInput) -> list[dict[str, str]]:
+    def _messages(
+        suggestion_input: PlanSuggestionInput,
+        *,
+        include_automatic_evaluation: bool,
+    ) -> list[dict[str, str]]:
+        system_content = (
+            "你是课堂教学设计助手。只返回一个 JSON 对象，不要 Markdown。"
+            "对象必须含 title 和 knowledge_points；knowledge_points 是 1 到 10 项，"
+            "每项含 name、description。"
+        )
+        if include_automatic_evaluation:
+            system_content += (
+                "每项可以含 automatic_evaluation。"
+                "automatic_evaluation 只能含 mode=all、summary 和 requirements；"
+                "requirements 每项只能含 kind，kind 只能是 successful_execution、"
+                "dict_literal_assignment、dict_key_value_pairs、dict_subscript_access、"
+                "dict_get_with_default、print_call 或 input_call。"
+                "仅在能用这些本地、非执行性证据可靠判定时提供 automatic_evaluation，"
+                "否则省略该字段。"
+            )
+        system_content += "内容必须是教师可继续编辑的简洁中文课堂方案草稿。"
         return [
-            {
-                "role": "system",
-                "content": (
-                    "你是课堂教学设计助手。只返回一个 JSON 对象，不要 Markdown。"
-                    "对象必须含 title 和 knowledge_points；knowledge_points 是 1 到 10 项，"
-                    "每项含 name、description，并且可以含 automatic_evaluation。"
-                    "automatic_evaluation 只能含 mode=all、summary 和 requirements；"
-                    "requirements 每项只能含 kind，kind 只能是 successful_execution、"
-                    "dict_literal_assignment、dict_key_value_pairs、dict_subscript_access、"
-                    "dict_get_with_default、print_call 或 input_call。"
-                    "仅在能用这些本地、非执行性证据可靠判定时提供 automatic_evaluation，"
-                    "否则省略该字段。内容必须是教师可继续编辑的中文课堂方案草稿。"
-                ),
-            },
+            {"role": "system", "content": system_content},
             {
                 "role": "user",
                 "content": json.dumps(

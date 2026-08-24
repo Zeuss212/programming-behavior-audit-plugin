@@ -100,7 +100,10 @@ def test_adapter_uses_the_fast_json_profile_for_bounded_teaching_text() -> None:
 
     client = httpx.Client(transport=httpx.MockTransport(responder))
     service = OpenAiPlanSuggestionService(
-        AiSuggestionSettings.from_settings(configured_settings()), client
+        AiSuggestionSettings.from_settings(
+            configured_settings(ai_base_url="https://ark.example/api/coding/v3")
+        ),
+        client,
     )
 
     result = service.generate(PlanSuggestionInput(title="", statement="实现字典查询"))
@@ -112,15 +115,83 @@ def test_adapter_uses_the_fast_json_profile_for_bounded_teaching_text() -> None:
         requirement.kind
         for requirement in result.knowledge_points[0].automatic_evaluation.requirements
     ] == ["successful_execution", "dict_literal_assignment", "dict_get_with_default"]
-    assert recorded[0].url == "https://ai.example/v1/chat/completions"
+    assert recorded[0].url == "https://ark.example/api/coding/v3/chat/completions"
     assert recorded[0].headers["authorization"] == "Bearer server-only-secret"
     body = json.loads(recorded[0].content)
     assert body["temperature"] == 0.2
     assert body["max_tokens"] == 2048
     assert body["thinking"] == {"type": "disabled"}
     assert body["response_format"] == {"type": "json_object"}
+    system_content = body["messages"][0]["content"]
+    assert "automatic_evaluation" in system_content
+    assert "dict_get_with_default" in system_content
     assert "server-only-secret" not in recorded[0].content.decode("utf-8")
     assert "实现字典查询" in recorded[0].content.decode("utf-8")
+
+
+def test_adapter_uses_standard_chat_completions_profile_for_plan_endpoint() -> None:
+    recorded: list[httpx.Request] = []
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        recorded.append(request)
+        return response_with(
+            json.dumps(
+                {
+                    "title": "字典课堂练习",
+                    "knowledge_points": [
+                        {"name": "字典读取", "description": "按键读取并验证结果。"}
+                    ],
+                }
+            )
+        )
+
+    service = OpenAiPlanSuggestionService(
+        AiSuggestionSettings.from_settings(
+            configured_settings(ai_base_url="https://ark.example/api/plan/v3")
+        ),
+        httpx.Client(transport=httpx.MockTransport(responder)),
+    )
+
+    result = service.generate(PlanSuggestionInput(title="", statement="实现字典查询"))
+
+    assert result.title == "字典课堂练习"
+    body = json.loads(recorded[0].content)
+    assert body["max_tokens"] == 1200
+    assert "thinking" not in body
+    assert "response_format" not in body
+    system_content = body["messages"][0]["content"]
+    assert "automatic_evaluation" not in system_content
+    assert "dict_get_with_default" not in system_content
+
+
+def test_adapter_keeps_a_complete_standard_plan_response_without_a_second_provider_call() -> None:
+    recorded: list[httpx.Request] = []
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        recorded.append(request)
+        return response_with(
+            json.dumps(
+                {
+                    "title": "字典课堂练习",
+                    "knowledge_points": [
+                        {"name": "字典读取", "description": "按键读取并验证结果。"}
+                    ],
+                }
+            ),
+            finish_reason="length",
+        )
+
+    service = OpenAiPlanSuggestionService(
+        AiSuggestionSettings.from_settings(
+            configured_settings(ai_base_url="https://ark.example/api/plan/v3")
+        ),
+        httpx.Client(transport=httpx.MockTransport(responder)),
+    )
+
+    result = service.generate(PlanSuggestionInput(title="", statement="实现字典查询"))
+
+    assert result.title == "字典课堂练习"
+    assert len(recorded) == 1
 
 
 def test_adapter_retries_once_with_4096_tokens_after_a_length_response() -> None:
@@ -149,7 +220,9 @@ def test_adapter_retries_once_with_4096_tokens_after_a_length_response() -> None
         return next(responses)
 
     service = OpenAiPlanSuggestionService(
-        AiSuggestionSettings.from_settings(configured_settings()),
+        AiSuggestionSettings.from_settings(
+            configured_settings(ai_base_url="https://ark.example/api/coding/v3")
+        ),
         httpx.Client(transport=httpx.MockTransport(responder)),
     )
 

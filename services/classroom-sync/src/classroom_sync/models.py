@@ -165,6 +165,7 @@ class EvidenceChunk(Base):
     first_event_sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     last_event_sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     object_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    analysis_manifest: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
@@ -188,6 +189,7 @@ class StudentBrief(Base):
     )
     revision: Mapped[int] = mapped_column(Integer, nullable=False)
     submission_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    submission_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     data_completeness: Mapped[str] = mapped_column(String(32), nullable=False)
     submission_reason: Mapped[str] = mapped_column(String(32), nullable=False)

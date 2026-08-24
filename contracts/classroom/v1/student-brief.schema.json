@@ -62,6 +62,7 @@
           "evidence_refs": {
             "type": "array",
             "minItems": 1,
+            "maxItems": 10,
             "items": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/evidence_ref"}
           },
           "demonstrated": {"type": "string", "minLength": 1, "maxLength": 1000},

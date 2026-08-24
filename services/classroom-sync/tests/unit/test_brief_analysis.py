@@ -92,6 +92,22 @@ def test_private_analysis_input_rejects_sensitive_client_payloads(
         BriefAnalysisInput.model_validate(payload)
 
 
+@pytest.mark.parametrize(
+    "source",
+    [
+        'token = "sk-1234567890abcdef"',
+        'secret = "aB3_fGh7JkLm9NpQr2StUv4WxYz6CdEf"',
+        "# aB3_fGh7JkLm9NpQr2StUv4WxYz6CdEf",
+    ],
+)
+def test_private_analysis_input_rejects_unlabelled_opaque_secrets(source: str) -> None:
+    payload = valid_source().model_dump(mode="json")
+    payload["code_snapshots"][0]["source"] = source
+
+    with pytest.raises(ValueError, match="sensitive"):
+        BriefAnalysisInput.model_validate(payload)
+
+
 def service_for_response(payload: object, recorded: list[httpx.Request] | None = None):
     provider = AiProviderSettings.from_settings(
         Settings(

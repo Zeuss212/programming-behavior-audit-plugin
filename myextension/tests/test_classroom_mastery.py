@@ -100,3 +100,54 @@ def test_missing_automatic_rule_requires_teacher_review() -> None:
     )
 
     assert rows[0]["status"] == "review_required"
+
+
+def test_mastery_cites_only_events_that_support_the_selected_rule() -> None:
+    detail = {
+        "behavior_events": [
+            {
+                "session_seq": 1,
+                "segment_type": "code_writing",
+                "cell_source": 'records = {"甲": 91}',
+            },
+            {
+                "session_seq": 2,
+                "segment_type": "code_writing",
+                "cell_source": "unrelated = 1",
+            },
+            {
+                "session_seq": 3,
+                "segment_type": "code_execution",
+                "execution_result": "success",
+            },
+        ]
+    }
+
+    rows = evaluate_knowledge_points(
+        profile_with_requirements("dict_literal_assignment", "successful_execution"),
+        detail,
+        ["chunk-1#event-1", "chunk-1#event-2", "chunk-1#event-3"],
+    )
+
+    assert rows[0]["evidence_refs"] == ["chunk-1#event-1", "chunk-1#event-3"]
+
+
+def test_mastery_evidence_references_are_bounded_to_ten() -> None:
+    events = [
+        {
+            "session_seq": sequence,
+            "segment_type": "code_writing",
+            "cell_source": f'print("{sequence}")',
+        }
+        for sequence in range(1, 13)
+    ]
+
+    rows = evaluate_knowledge_points(
+        profile_with_requirements("print_call"),
+        {"behavior_events": events},
+        [f"chunk-1#event-{sequence}" for sequence in range(1, 13)],
+    )
+
+    assert rows[0]["evidence_refs"] == [
+        f"chunk-1#event-{sequence}" for sequence in range(1, 11)
+    ]

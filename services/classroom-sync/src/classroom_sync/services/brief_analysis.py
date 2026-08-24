@@ -23,7 +23,8 @@ if TYPE_CHECKING:
 
 _SENSITIVE_ANALYSIS_INPUT = re.compile(
     r"(?:https?://|s3://|/Users/|/home/|/root/|/private/|[A-Za-z]:[\\/]|"
-    r"gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|"
+    r"sk-[A-Za-z0-9._-]{8,}|gh[pousr]_[A-Za-z0-9_]{20,}|"
+    r"github_pat_[A-Za-z0-9_]{20,}|"
     r"(?:AKIA|ASIA)[0-9A-Z]{16}|xox(?:b|p|a|r|s)-[A-Za-z0-9-]{10,}|"
     r"AIza[A-Za-z0-9_-]{20,}|ya29\.[A-Za-z0-9._-]{20,}|"
     r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b|"
@@ -34,10 +35,35 @@ _SENSITIVE_ANALYSIS_INPUT = re.compile(
     r"\bignore\b.{0,40}\binstructions?\b)",
     re.IGNORECASE,
 )
+_QUOTED_OPAQUE_LITERAL = re.compile(
+    r"(?P<quote>['\"])(?P<secret>[A-Za-z0-9_-]{32,})(?P=quote)"
+)
+_COMMENT_OPAQUE_LITERAL = re.compile(
+    r"(?m)^\s*#\s*(?P<secret>[A-Za-z0-9_-]{32,})\s*$"
+)
+
+
+def _is_opaque_secret(value: str) -> bool:
+    categories = sum(
+        (
+            any(char.islower() for char in value),
+            any(char.isupper() for char in value),
+            any(char.isdigit() for char in value),
+            any(char in "_-" for char in value),
+        )
+    )
+    return categories >= 3 and len(set(value)) >= 12
 
 
 def _validate_safe_analysis_input_text(value: str) -> str:
-    if _SENSITIVE_ANALYSIS_INPUT.search(value):
+    opaque_literals = (
+        match.group("secret")
+        for pattern in (_QUOTED_OPAQUE_LITERAL, _COMMENT_OPAQUE_LITERAL)
+        for match in pattern.finditer(value)
+    )
+    if _SENSITIVE_ANALYSIS_INPUT.search(value) or any(
+        _is_opaque_secret(secret) for secret in opaque_literals
+    ):
         raise ValueError("analysis input contains sensitive client text")
     return value
 

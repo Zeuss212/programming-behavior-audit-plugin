@@ -259,6 +259,22 @@ def test_student_brief_can_explain_missing_evidence_after_the_hard_deadline(
     schema_registry.validate("student-brief", payload)
 
 
+def test_student_brief_limits_evidence_references_per_knowledge_point(
+    schema_registry: ClassroomSchemaRegistry,
+):
+    payload = valid_student_brief()
+    knowledge_points = payload["knowledge_points"]
+    assert isinstance(knowledge_points, list)
+    first_point = knowledge_points[0]
+    assert isinstance(first_point, dict)
+    first_point["evidence_refs"] = [
+        f"chunk-1#event-{sequence}" for sequence in range(1, 12)
+    ]
+
+    with pytest.raises(ValidationError):
+        schema_registry.validate("student-brief", payload)
+
+
 def test_student_brief_accepts_only_bounded_auxiliary_ai_analysis(
     schema_registry: ClassroomSchemaRegistry,
 ):

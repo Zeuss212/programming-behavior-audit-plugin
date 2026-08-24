@@ -297,7 +297,13 @@ def test_student_brief_migration_has_session_scoped_submission_idempotency_key(
     assert "submission_id" in {
         column["name"] for column in inspector.get_columns("student_briefs")
     }
+    assert "submission_hash" in {
+        column["name"] for column in inspector.get_columns("student_briefs")
+    }
     assert any(
         constraint["column_names"] == ["session_id", "submission_id"]
         for constraint in inspector.get_unique_constraints("student_briefs")
     )
+    assert "analysis_manifest" in {
+        column["name"] for column in inspector.get_columns("evidence_chunks")
+    }

@@ -598,7 +598,7 @@ export class BehaviorAnalysisSidebar extends Widget {
     this.noticeTone = 'info';
     this.render();
     try {
-      const finalized = await this.deps.capture.stop();
+      const finalized = await this.deps.capture.stop(true);
       if (this.isDisposed) return;
       if (
         this.currentSessionId !== null &&

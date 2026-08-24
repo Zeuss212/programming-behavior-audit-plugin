@@ -82,6 +82,19 @@ def seeded_brief_service(
                             "description": "使用 get 处理键不存在。",
                         }
                     ],
+                    "dimensions": [
+                        {
+                            "knowledge_point_id": "KP_DICT0001",
+                            "question": "学生是否选择了恰当的查询方式？",
+                            "evidence_criteria": [
+                                {
+                                    "id": "uses-get",
+                                    "direction": "support",
+                                    "statement": "使用 get 并明确默认值。",
+                                }
+                            ],
+                        }
+                    ],
                 },
                 content_hash="a" * 64,
                 scheduled_start_at=now,
@@ -159,6 +172,19 @@ def seeded_brief_service(
                 first_event_sequence=1,
                 last_event_sequence=3,
                 object_key="classrooms/class-1/sessions/session-1/chunks/00000001.json.gz",
+                analysis_manifest={
+                    "events": {
+                        "1": {
+                            "kind": "edit",
+                            "description": "编辑了代码。",
+                            "source_sha256": "6b263e568f380d26a39831afe0b752f8c507c897ab02e79bb04192458f02bff3",
+                        },
+                        "2": {
+                            "kind": "run_success",
+                            "description": "完成一次无异常运行；这不代表答案一定正确。",
+                        },
+                    }
+                },
                 created_at=now,
             )
         )
@@ -196,7 +222,13 @@ def valid_analysis_input() -> dict[str, object]:
                 "name": "字典读取",
                 "description": "使用 get 处理键不存在。",
                 "question": "学生是否选择了恰当的查询方式？",
-                "evidence_criteria": [],
+                "evidence_criteria": [
+                    {
+                        "id": "uses-get",
+                        "direction": "support",
+                        "statement": "使用 get 并明确默认值。",
+                    }
+                ],
             }
         ],
         "evidence_events": [
@@ -252,7 +284,7 @@ def test_replayed_submission_id_returns_original_receipt_without_duplicate_ai_jo
     )
     replay = service.submit(
         IDS["session"],
-        valid_content("响应丢失后的重放不得创建新 revision。"),
+        valid_content(),
         reason="student_manual",
         submission_id=submission_id,
         request_ai_analysis=True,
@@ -264,6 +296,29 @@ def test_replayed_submission_id_returns_original_receipt_without_duplicate_ai_jo
     with factory() as session:
         assert len(list(session.scalars(select(StudentBrief)))) == 1
         assert len(list(session.scalars(select(ClassroomBriefAnalysisJob)))) == 1
+
+
+def test_replayed_submission_id_rejects_changed_request_payload():
+    now = datetime(2026, 8, 12, 8, 30, tzinfo=UTC)
+    service, factory, _registry = seeded_brief_service(now)
+    submission_id = "74f70f61-b6d6-44c6-86c8-71ef9c25d05b"
+    service.submit(
+        IDS["session"],
+        valid_content(),
+        reason="student_manual",
+        submission_id=submission_id,
+    )
+
+    with pytest.raises(ValidationError, match="brief_submission_id_conflict"):
+        service.submit(
+            IDS["session"],
+            valid_content("改变过的请求不得伪装成重放。"),
+            reason="student_manual",
+            submission_id=submission_id,
+        )
+
+    with factory() as session:
+        assert len(list(session.scalars(select(StudentBrief)))) == 1
 
 
 def test_server_requested_analysis_writes_pending_brief_and_durable_job():
@@ -286,7 +341,60 @@ def test_server_requested_analysis_writes_pending_brief_and_durable_job():
     assert "analysis_input" not in brief.payload
 
 
-@pytest.mark.parametrize("invalid_binding", ["knowledge_point", "evidence_event"])
+def test_legacy_evidence_without_trusted_manifest_keeps_base_brief_available():
+    now = datetime(2026, 8, 12, 8, 30, tzinfo=UTC)
+    service, factory, _registry = seeded_brief_service(now)
+    with factory.begin() as session:
+        chunk = session.scalar(select(EvidenceChunk))
+        assert chunk is not None
+        chunk.analysis_manifest = None
+
+    brief = service.submit(
+        IDS["session"],
+        valid_content(),
+        reason="student_manual",
+        request_ai_analysis=True,
+        analysis_input=valid_analysis_input(),
+    )
+
+    assert brief.payload["ai_analysis_status"] == "unavailable"
+    with factory() as session:
+        assert list(session.scalars(select(ClassroomBriefAnalysisJob))) == []
+
+
+def test_unbound_code_snapshot_is_never_forwarded_to_an_ai_job():
+    now = datetime(2026, 8, 12, 8, 30, tzinfo=UTC)
+    service, factory, _registry = seeded_brief_service(now)
+    source = valid_analysis_input()
+    source["code_snapshots"][0]["source"] = "safe_but_unbound = True"
+
+    brief = service.submit(
+        IDS["session"],
+        valid_content(),
+        reason="student_manual",
+        request_ai_analysis=True,
+        analysis_input=source,
+    )
+
+    assert brief.payload["ai_analysis_status"] == "unavailable"
+    with factory() as session:
+        assert list(session.scalars(select(ClassroomBriefAnalysisJob))) == []
+
+
+@pytest.mark.parametrize(
+    "invalid_binding",
+    [
+        "knowledge_point",
+        "lesson_title",
+        "point_name",
+        "point_description",
+        "question",
+        "criterion",
+        "event_description",
+        "event_kind",
+        "evidence_event",
+    ],
+)
 def test_server_rejects_private_analysis_input_not_bound_to_plan_or_evidence(
     invalid_binding: str,
 ):
@@ -295,6 +403,25 @@ def test_server_rejects_private_analysis_input_not_bound_to_plan_or_evidence(
     source = deepcopy(valid_analysis_input())
     if invalid_binding == "knowledge_point":
         source["knowledge_points"][0]["knowledge_point_id"] = "KP_INVENTED"
+    elif invalid_binding == "lesson_title":
+        source["lesson"]["title"] = "另一节安全课程"
+    elif invalid_binding == "point_name":
+        source["knowledge_points"][0]["name"] = "安全的新名称"
+    elif invalid_binding == "point_description":
+        source["knowledge_points"][0]["description"] = "安全但未发布的描述。"
+    elif invalid_binding == "question":
+        source["knowledge_points"][0]["question"] = "是否完成了其他任务？"
+    elif invalid_binding == "criterion":
+        source["knowledge_points"][0]["evidence_criteria"][0]["statement"] = (
+            "安全但未发布的判定标准。"
+        )
+    elif invalid_binding == "event_description":
+        source["evidence_events"][0]["description"] = "客户端声称学生已完全掌握。"
+    elif invalid_binding == "event_kind":
+        source["evidence_events"][0]["kind"] = "run_success"
+        source["evidence_events"][0]["description"] = (
+            "完成一次无异常运行；这不代表答案一定正确。"
+        )
     else:
         source["evidence_events"][0]["event_id"] = "chunk-1#event-99"
         source["evidence_events"][0]["sequence"] = 99

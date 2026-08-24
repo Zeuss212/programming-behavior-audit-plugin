@@ -731,7 +731,9 @@ raise SystemExit(3)
         cwd=Path(__file__).parents[2],
         text=True,
         capture_output=True,
-        timeout=1.0,
+        # Include cold interpreter/module startup while still failing quickly
+        # if a FIFO open blocks the recovery or deletion path.
+        timeout=5.0,
         check=False,
     )
 

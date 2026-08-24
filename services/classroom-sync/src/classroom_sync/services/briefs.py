@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from typing import cast
 from uuid import UUID, uuid4
@@ -28,6 +30,16 @@ from classroom_sync.models import (
 from classroom_sync.services.brief_analysis import BriefAnalysisInput
 
 EVIDENCE_REF_PATTERN = re.compile(r"^chunk-(\d+)#event-(\d+)$")
+_EVENT_DESCRIPTIONS = {
+    "edit": {
+        "编辑了代码。",
+        "删除或替换了代码。",
+        "粘贴并编辑了代码。",
+    },
+    "run": {"执行了一次代码。"},
+    "run_failure": {"运行出现异常，之后可结合后续编辑与重运行判断修正过程。"},
+    "run_success": {"完成一次无异常运行；这不代表答案一定正确。"},
+}
 
 
 @dataclass(frozen=True)
@@ -79,6 +91,12 @@ class BriefService:
                 raise ValidationError("brief_submission_id_invalid") from error
             if str(parsed_submission_id) != submission_id:
                 raise ValidationError("brief_submission_id_invalid")
+        submission_hash = self._submission_hash(
+            content,
+            reason=reason,
+            request_ai_analysis=request_ai_analysis,
+            analysis_input=analysis_input,
+        )
         with self._session_factory.begin() as session:
             monitor_session = session.scalar(
                 select(MonitorSession)
@@ -106,6 +124,8 @@ class BriefService:
                     )
                 )
                 if replay is not None:
+                    if replay.submission_hash != submission_hash:
+                        raise ValidationError("brief_submission_id_conflict")
                     return replay
             if request_ai_analysis != (analysis_input is not None):
                 raise ValidationError("brief_analysis_consent_input_mismatch")
@@ -117,8 +137,9 @@ class BriefService:
                 )
             except PydanticValidationError as error:
                 raise ValidationError("brief_analysis_input_invalid") from error
+            analysis_context_available = True
             if private_source is not None:
-                self._validate_analysis_input_context(
+                analysis_context_available = self._validate_analysis_input_context(
                     session,
                     session_id,
                     plan_version,
@@ -128,6 +149,7 @@ class BriefService:
                 private_source.model_dump(mode="json") if private_source is not None else None
             )
             analysis_permitted = request_ai_analysis and plan_version.ai_policy == "allowed"
+            analysis_ready = analysis_available and analysis_context_available
             previous = session.scalar(
                 select(StudentBrief)
                 .where(StudentBrief.session_id == session_id)
@@ -163,7 +185,7 @@ class BriefService:
                 "issues": list(content.issues),
                 "ai_analysis_status": (
                     "pending"
-                    if analysis_permitted and analysis_available
+                    if analysis_permitted and analysis_ready
                     else "unavailable"
                     if analysis_permitted
                     else "not_requested"
@@ -178,6 +200,7 @@ class BriefService:
                 assignment_id=assignment.id,
                 revision=revision,
                 submission_id=submission_id,
+                submission_hash=submission_hash if submission_id is not None else None,
                 status=status,
                 data_completeness=monitor_session.completeness,
                 submission_reason=reason,
@@ -185,7 +208,7 @@ class BriefService:
                 generated_at=now,
             )
             session.add(brief)
-            if analysis_permitted and analysis_available:
+            if analysis_permitted and analysis_ready:
                 if private_analysis_input is None:
                     raise ValidationError("brief_analysis_input_required")
                 session.flush()
@@ -396,6 +419,7 @@ class BriefService:
             assignment_id=source.assignment_id,
             revision=latest.revision + 1,
             submission_id=None,
+            submission_hash=None,
             status=source.status,
             data_completeness=source.data_completeness,
             submission_reason=source.submission_reason,
@@ -459,15 +483,62 @@ class BriefService:
         session_id: str,
         plan_version: PlanVersion,
         source: BriefAnalysisInput,
-    ) -> None:
-        raw_points = plan_version.profile.get("knowledge_points")
-        plan_point_ids = {
-            point.get("id")
-            for point in raw_points
-            if isinstance(point, dict) and isinstance(point.get("id"), str)
-        } if isinstance(raw_points, list) else set()
-        source_point_ids = {point.knowledge_point_id for point in source.knowledge_points}
-        if source_point_ids != plan_point_ids:
+    ) -> bool:
+        profile = plan_version.profile
+        if source.lesson["title"] != BriefService._plan_text(profile.get("title"), 200):
+            raise ValidationError("brief_analysis_input_context_invalid")
+        raw_points = profile.get("knowledge_points")
+        raw_dimensions = profile.get("dimensions")
+        dimensions = {
+            item.get("knowledge_point_id"): item
+            for item in raw_dimensions
+            if isinstance(item, Mapping)
+            and isinstance(item.get("knowledge_point_id"), str)
+        } if isinstance(raw_dimensions, list) else {}
+        expected_points: list[dict[str, object]] = []
+        if isinstance(raw_points, list):
+            for point in raw_points[:10]:
+                if not isinstance(point, Mapping) or not isinstance(point.get("id"), str):
+                    continue
+                point_id = cast(str, point["id"])
+                dimension = dimensions.get(point_id)
+                raw_criteria = (
+                    dimension.get("evidence_criteria")
+                    if isinstance(dimension, Mapping)
+                    else None
+                )
+                criteria = [
+                    {
+                        "id": criterion.get("id"),
+                        "direction": criterion.get("direction"),
+                        "statement": BriefService._plan_text(
+                            criterion.get("statement"), 300
+                        ),
+                    }
+                    for criterion in raw_criteria[:10]
+                    if isinstance(criterion, Mapping)
+                    and isinstance(criterion.get("id"), str)
+                    and criterion.get("direction") in {"support", "exclude"}
+                    and BriefService._plan_text(criterion.get("statement"), 300)
+                ] if isinstance(raw_criteria, list) else []
+                expected_points.append(
+                    {
+                        "knowledge_point_id": point_id,
+                        "name": BriefService._plan_text(point.get("name"), 80),
+                        "description": BriefService._plan_text(
+                            point.get("description"), 500
+                        ),
+                        "question": BriefService._plan_text(
+                            dimension.get("question")
+                            if isinstance(dimension, Mapping)
+                            else "",
+                            200,
+                        ),
+                        "evidence_criteria": criteria,
+                    }
+                )
+        actual_points = [point.model_dump(mode="json") for point in source.knowledge_points]
+        if actual_points != expected_points:
             raise ValidationError("brief_analysis_input_context_invalid")
 
         chunks = {
@@ -476,7 +547,11 @@ class BriefService:
                 select(EvidenceChunk).where(EvidenceChunk.session_id == session_id)
             )
         }
+        context_available = True
+        trusted_by_event_id: dict[str, Mapping[str, object]] = {}
         for event in source.evidence_events:
+            if event.description not in _EVENT_DESCRIPTIONS[event.kind]:
+                raise ValidationError("brief_analysis_input_context_invalid")
             match = EVIDENCE_REF_PATTERN.fullmatch(event.event_id)
             if match is None:
                 raise ValidationError("brief_analysis_input_context_invalid")
@@ -492,6 +567,59 @@ class BriefService:
                 )
             ):
                 raise ValidationError("brief_analysis_input_context_invalid")
+            raw_manifest = chunk.analysis_manifest
+            trusted_events = (
+                raw_manifest.get("events") if isinstance(raw_manifest, Mapping) else None
+            )
+            trusted_event = (
+                trusted_events.get(str(event_sequence))
+                if isinstance(trusted_events, Mapping)
+                else None
+            )
+            if trusted_event is None:
+                context_available = False
+            elif not isinstance(trusted_event, Mapping) or (
+                trusted_event.get("kind") != event.kind
+                or trusted_event.get("description") != event.description
+            ):
+                raise ValidationError("brief_analysis_input_context_invalid")
+            else:
+                trusted_by_event_id[event.event_id] = trusted_event
+        for snapshot in source.code_snapshots:
+            trusted_event = trusted_by_event_id.get(snapshot.event_id)
+            expected_hash = (
+                trusted_event.get("source_sha256")
+                if isinstance(trusted_event, Mapping)
+                else None
+            )
+            if expected_hash != hashlib.sha256(snapshot.source.encode("utf-8")).hexdigest():
+                context_available = False
+        return context_available
+
+    @staticmethod
+    def _plan_text(value: object, limit: int) -> str:
+        return value.strip()[:limit] if isinstance(value, str) else ""
+
+    @staticmethod
+    def _submission_hash(
+        content: BriefContent,
+        *,
+        reason: str,
+        request_ai_analysis: bool,
+        analysis_input: Mapping[str, object] | None,
+    ) -> str:
+        canonical = json.dumps(
+            {
+                "content": asdict(content),
+                "reason": reason,
+                "request_ai_analysis": request_ai_analysis,
+                "analysis_input": analysis_input,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(canonical).hexdigest()
 
     @staticmethod
     def _active_duration_ms(monitor_session: MonitorSession, now: datetime) -> int:

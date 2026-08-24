@@ -907,6 +907,7 @@ describe('BehaviorAnalysisSidebar', () => {
     await flush();
 
     expect(capture.stop).toHaveBeenCalledTimes(1);
+    expect(capture.stop).toHaveBeenCalledWith(true);
     sidebar.dispose();
   });
 

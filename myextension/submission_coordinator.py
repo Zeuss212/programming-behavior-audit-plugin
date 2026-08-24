@@ -308,7 +308,7 @@ class SubmissionCoordinator:
             and (event_id := cls._remote_event_id(event.get("session_seq"), entries))
             is not None
         ] if isinstance(raw_events, list) else []
-        return references or ["session#missing-evidence"]
+        return references[:10] or ["session#missing-evidence"]
 
     @staticmethod
     def _remote_event_id(sequence: object, entries: Sequence[object]) -> str | None:

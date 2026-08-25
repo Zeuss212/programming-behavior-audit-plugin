@@ -40,7 +40,7 @@ const expectedCommands = [
 ] as const;
 
 suite('Behavior Audit extension host', () => {
-  test('persists edit/save evidence, materializes five brief categories, and detects interruption', async function () {
+  test('persists edit/save evidence, materializes six brief categories, and detects interruption', async function () {
     this.timeout(30_000);
     const extension = vscode.extensions.getExtension<TestAuditApi>(
       'bluedot-ai.behavior-audit-vscode',
@@ -83,6 +83,7 @@ suite('Behavior Audit extension host', () => {
         'run_statistics',
         'evidence_summary',
         'attention_point',
+        'teacher_evaluation',
       ]),
     );
 

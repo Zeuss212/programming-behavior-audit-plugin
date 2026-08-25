@@ -191,7 +191,8 @@ labextension、服务端配置、API schemas、维度模板、信号字典和测
 
 ```bash
 uv venv --python 3.12
-uv pip install --python .venv/bin/python -e ".[dev,test]"
+uv sync --extra dev --extra test --no-install-project
+PATH="$PWD/.venv/bin:$PATH" uv pip install --python .venv/bin/python -e ".[dev,test]"
 PATH="$PWD/.venv/bin:$PATH" .venv/bin/jlpm install --immutable
 PATH="$PWD/.venv/bin:$PATH" .venv/bin/jlpm lint:check
 PATH="$PWD/.venv/bin:$PATH" .venv/bin/jlpm build:lib:prod
@@ -204,7 +205,7 @@ PATH="$PWD/.venv/bin:$PATH" .venv/bin/jlpm test --runInBand
 ```bash
 PATH="$PWD/.venv/bin:$PATH" .venv/bin/jlpm clean:all
 PATH="$PWD/.venv/bin:$PATH" .venv/bin/jlpm build:prod
-PATH="$PWD/.venv/bin:$PATH" .venv/bin/python -m build --wheel
+PATH="$PWD/.venv/bin:$PATH" uv build --wheel
 ```
 
 不要手工修改 `myextension/_version.py`；Python 版本由 `package.json` 的

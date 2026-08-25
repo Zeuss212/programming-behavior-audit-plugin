@@ -10,3 +10,4 @@ esbuild.mjs
 tsconfig*.json
 package-lock.json
 **/*.map
+*.py

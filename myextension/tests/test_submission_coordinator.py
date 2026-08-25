@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import UUID
 
 from myextension.analysis_job_store import AnalysisJobStore
 from myextension.canonical_json import sha256_json
 from myextension.dimension_profile_store import DimensionProfileStore
-from myextension.platform_client import BriefSubmissionReceipt
+from myextension.platform_client import BriefSubmissionReceipt, PlatformClientError
 from myextension.platform_context_store import PlatformContextStore
 from myextension.platform_deadline_worker import PlatformDeadlineWorker
 from myextension.review_store import ReviewStore
@@ -146,6 +147,9 @@ def test_manual_and_deadline_submission_share_one_local_idempotent_result(
     assert outbox.flushes == 1
     assert len(client.payloads) == 1
     assert client.payloads[0]["reason"] == "student_manual"
+    assert str(UUID(str(client.payloads[0]["submission_id"]))) == client.payloads[0][
+        "submission_id"
+    ]
     assert client.payloads[0]["knowledge_points"][0]["status"] == "not_demonstrated"
     assert client.payloads[0]["request_ai_analysis"] is False
     assert "analysis_input" not in client.payloads[0]
@@ -241,7 +245,80 @@ def test_authorized_submission_includes_one_private_bounded_analysis_input(
     assert "records" in analysis_input["code_snapshots"][0]["source"]
 
 
-def test_submission_marks_equivalent_successful_dictionary_code_as_mastered(
+def test_deadline_retry_reuses_durable_ai_consent_after_manual_upload_failure(
+    tmp_path: Path,
+) -> None:
+    class Outbox:
+        def flush_once(self):
+            return None
+
+        def list_entries(self, _session_id):
+            return []
+
+    class Client:
+        def __init__(self) -> None:
+            self.payloads: list[dict[str, object]] = []
+
+        def submit_brief(self, stored_context, payload):
+            self.payloads.append(dict(payload))
+            if len(self.payloads) == 1:
+                raise PlatformClientError("platform_submission_unavailable")
+            return BriefSubmissionReceipt(
+                brief_id="8a15f505-5d7e-46fe-a0e0-75dd5c336493",
+                session_id=stored_context.session_id,
+                revision=1,
+                status="completed",
+            )
+
+    profiles = DimensionProfileStore(tmp_path)
+    draft = profiles.create_draft(make_assessment_profile())
+    profile = profiles.publish(str(draft["profile_id"]))
+    session_store = SessionStore(tmp_path)
+    session_store.start(
+        problem_id=str(profile["problem_id"]),
+        profile=profile,
+        session_id=context().session_id,
+    )
+    context_store = PlatformContextStore(tmp_path)
+    context_store.save_registered_context(context())
+    service = SessionLogService(
+        root=tmp_path,
+        session_store=session_store,
+        job_store=AnalysisJobStore(tmp_path),
+        review_store=ReviewStore(tmp_path),
+    )
+    client = Client()
+    coordinator = SubmissionCoordinator(
+        tmp_path,
+        session_store=session_store,
+        session_log_service=service,
+        outbox=Outbox(),
+        client=client,
+        context_store=context_store,
+    )
+    cutoff = datetime(2026, 8, 13, 10, 15, tzinfo=timezone.utc)
+
+    pending = coordinator.submit(
+        context().session_id,
+        reason="student_manual",
+        cutoff_at=cutoff,
+        request_ai_analysis=True,
+    )
+    recovered = PlatformDeadlineWorker(
+        context_store,
+        coordinator,
+        now=lambda: cutoff,
+    ).run_once()
+
+    assert pending.status == "pending_upload"
+    assert recovered[0].status == "submitted"
+    assert len(client.payloads) == 2
+    assert client.payloads[0]["submission_id"] == client.payloads[1]["submission_id"]
+    assert client.payloads[1]["request_ai_analysis"] is True
+    assert "analysis_input" in client.payloads[1]
+
+
+def test_submission_requires_review_when_supporting_events_were_not_delivered(
     tmp_path: Path,
 ) -> None:
     class Outbox:
@@ -315,7 +392,8 @@ def test_submission_marks_equivalent_successful_dictionary_code_as_mastered(
     assert client.payload is not None
     rows = client.payload["knowledge_points"]
     assert isinstance(rows, list)
-    assert rows[0]["status"] == "mastered"
+    assert rows[0]["status"] == "review_required"
+    assert rows[0]["evidence_refs"] == ["session#missing-evidence"]
     assert "records" not in str(rows[0])
 
 
@@ -344,4 +422,22 @@ def test_deadline_worker_calls_the_same_coordinator_only_after_the_cutoff(
     assert worker.run_once() == ["submitted"]
     assert coordinator.calls == [
         (context().session_id, "system_deadline", cutoff)
+    ]
+
+
+def test_delivered_evidence_is_not_truncated_before_per_point_selection() -> None:
+    class Entry:
+        sequence = 1
+        first_event_sequence = 1
+        last_event_sequence = 11
+
+    detail = {
+        "behavior_events": [
+            {"session_seq": sequence, "segment_type": "code_writing"}
+            for sequence in range(1, 12)
+        ]
+    }
+
+    assert SubmissionCoordinator._evidence_refs(detail, [Entry()]) == [
+        f"chunk-1#event-{sequence}" for sequence in range(1, 12)
     ]

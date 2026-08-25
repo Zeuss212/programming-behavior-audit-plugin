@@ -4,6 +4,7 @@ export const SESSION_SCHEMA_VERSION = 1 as const;
 export const LEGACY_CLASSROOM_BRIEF_SCHEMA_VERSION = 1 as const;
 export const CLASSROOM_BRIEF_SCHEMA_VERSION = 2 as const;
 export const EXPORT_MANIFEST_SCHEMA_VERSION = 1 as const;
+export const ANALYSIS_LOG_SCHEMA_VERSION = 1 as const;
 
 export type JsonPrimitive = boolean | number | string | null;
 export type JsonValue = JsonPrimitive | JsonObject | readonly JsonValue[];
@@ -208,4 +209,34 @@ export interface ExportManifest {
   readonly session_id: string;
   readonly exported_at: string;
   readonly files: readonly ExportManifestFile[];
+}
+
+export const ANALYSIS_LOG_STATUSES = ['completed', 'skipped', 'failed'] as const;
+export type AnalysisLogStatus = (typeof ANALYSIS_LOG_STATUSES)[number];
+
+export const ANALYSIS_LOG_REASON_CODES = [
+  'disabled_by_student',
+  'ai_not_configured',
+  'ai_provider_request_rejected',
+  'ai_provider_timeout',
+  'ai_provider_network_error',
+  'ai_provider_auth_failed',
+  'ai_provider_rate_limited',
+  'ai_provider_unavailable',
+  'ai_response_truncated',
+  'ai_response_invalid',
+  'analysis_unavailable',
+] as const;
+export type AnalysisLogReasonCode = (typeof ANALYSIS_LOG_REASON_CODES)[number];
+
+export interface AnalysisLog {
+  readonly schema_version: typeof ANALYSIS_LOG_SCHEMA_VERSION;
+  readonly session_id: string;
+  readonly generated_at: string;
+  readonly status: AnalysisLogStatus;
+  readonly analysis?: JsonObject;
+  readonly reason?: Readonly<{
+    code: AnalysisLogReasonCode;
+    message: string;
+  }>;
 }

@@ -165,12 +165,20 @@ class EvidenceChunk(Base):
     first_event_sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     last_event_sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     object_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    analysis_manifest: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class StudentBrief(Base):
     __tablename__ = "student_briefs"
-    __table_args__ = (UniqueConstraint("session_id", "revision", name="uq_student_briefs_revision"),)
+    __table_args__ = (
+        UniqueConstraint("session_id", "revision", name="uq_student_briefs_revision"),
+        UniqueConstraint(
+            "session_id",
+            "submission_id",
+            name="uq_student_briefs_submission_id",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     session_id: Mapped[str] = mapped_column(
@@ -180,6 +188,8 @@ class StudentBrief(Base):
         ForeignKey("student_assignments.id", ondelete="RESTRICT"), nullable=False
     )
     revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    submission_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    submission_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     data_completeness: Mapped[str] = mapped_column(String(32), nullable=False)
     submission_reason: Mapped[str] = mapped_column(String(32), nullable=False)

@@ -88,6 +88,10 @@
         "title": "编程行为分析: 结束并生成简报"
       },
       {
+        "command": "behaviorAudit.finishAnalyzeExport",
+        "title": "编程行为分析: 结束、生成简报并导出"
+      },
+      {
         "command": "behaviorAudit.abandonCapture",
         "title": "编程行为分析: 放弃当前会话"
       },

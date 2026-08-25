@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import create_engine, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -20,9 +22,10 @@ from classroom_sync.services.plan_suggestions import (
 
 
 class RecordingGenerator:
-    def __init__(self) -> None:
+    def __init__(self, *, retry_provider_errors: bool = False) -> None:
         self.calls: list[PlanSuggestionInput] = []
         self.error: UpstreamUnavailableError | None = None
+        self.retry_provider_errors = retry_provider_errors
 
     def generate(self, suggestion_input: PlanSuggestionInput) -> PlanSuggestion:
         self.calls.append(suggestion_input)
@@ -36,13 +39,13 @@ class RecordingGenerator:
         )
 
 
-def build_service(now: datetime):
+def build_service(now: datetime, *, retry_provider_errors: bool = False):
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
     Base.metadata.create_all(engine)
     session_factory = sessionmaker(bind=engine, expire_on_commit=False)
-    generator = RecordingGenerator()
+    generator = RecordingGenerator(retry_provider_errors=retry_provider_errors)
     service = PlanSuggestionJobService(
         session_factory,
         generator,
@@ -78,6 +81,69 @@ def test_submit_is_idempotent_while_matching_teacher_request_is_active() -> None
     assert jobs[0].suggestion_input == {"title": "", "statement": "实现字典查询"}
 
 
+def test_submit_returns_concurrent_winner_after_unique_insert_race() -> None:
+    now = datetime(2026, 8, 19, 10, 0, tzinfo=UTC)
+    winner = ClassroomPlanSuggestionJob(
+        id="winner-job",
+        teacher_id="teacher-1",
+        space_id="space-1",
+        parent_algorithm_id="parent-1",
+        request_hash="a" * 64,
+        suggestion_input={"title": "", "statement": "实现字典查询"},
+        result=None,
+        run_at=now,
+        status="pending",
+        active_slot=1,
+        lease_owner=None,
+        lease_expires_at=None,
+        attempts=0,
+        failure_code=None,
+        completed_at=None,
+        created_at=now,
+        updated_at=now,
+    )
+
+    class RaceSession:
+        scalar_calls = 0
+
+        def scalar(self, _statement):
+            self.scalar_calls += 1
+            return None if self.scalar_calls == 1 else winner
+
+        def add(self, _job):
+            return None
+
+        def flush(self):
+            raise IntegrityError("duplicate", {}, RuntimeError("unique race"))
+
+        @contextmanager
+        def begin_nested(self):
+            yield self
+
+    race_session = RaceSession()
+
+    class RaceFactory:
+        @contextmanager
+        def begin(self):
+            yield race_session
+
+    service = PlanSuggestionJobService(
+        RaceFactory(),  # type: ignore[arg-type]
+        RecordingGenerator(),
+        clock=lambda: now,
+    )
+
+    result = service.submit(
+        teacher_id="teacher-1",
+        space_id="space-1",
+        parent_algorithm_id="parent-1",
+        suggestion_input=PlanSuggestionInput(title="", statement="实现字典查询"),
+    )
+
+    assert result.job_id == "winner-job"
+    assert result.status == "pending"
+
+
 def test_worker_persists_only_validated_result_then_erases_teacher_input() -> None:
     now = datetime(2026, 8, 19, 10, 0, tzinfo=UTC)
     service, generator, session_factory = build_service(now)
@@ -107,7 +173,7 @@ def test_worker_persists_only_validated_result_then_erases_teacher_input() -> No
 
 def test_worker_returns_a_safe_failure_after_retry_budget_and_erases_input() -> None:
     now = datetime(2026, 8, 19, 10, 0, tzinfo=UTC)
-    service, generator, session_factory = build_service(now)
+    service, generator, session_factory = build_service(now, retry_provider_errors=True)
     generator.error = UpstreamUnavailableError("ai_suggestion_upstream_unavailable")
     submitted = service.submit(
         teacher_id="teacher-1",
@@ -137,6 +203,100 @@ def test_worker_returns_a_safe_failure_after_retry_budget_and_erases_input() -> 
     assert job is not None
     assert job.suggestion_input == {}
     assert job.result is None
+
+
+def test_standard_profile_provider_failure_is_terminal_after_one_call() -> None:
+    now = datetime(2026, 8, 19, 10, 0, tzinfo=UTC)
+    service, generator, session_factory = build_service(now)
+    generator.error = UpstreamUnavailableError("ai_provider_timeout", retryable=True)
+    submitted = service.submit(
+        teacher_id="teacher-1",
+        space_id="space-1",
+        parent_algorithm_id="parent-1",
+        suggestion_input=PlanSuggestionInput(title="", statement="实现字典查询"),
+    )
+
+    assert service.run_due_jobs("worker-a") == 1
+
+    failed = service.get_for_teacher(submitted.job_id, teacher_id="teacher-1")
+    assert failed.status == "failed"
+    assert failed.failure_code == "ai_provider_timeout"
+    assert len(generator.calls) == 1
+    with session_factory() as session:
+        job = session.get(ClassroomPlanSuggestionJob, submitted.job_id)
+    assert job is not None
+    assert job.attempts == 1
+    assert job.suggestion_input == {}
+
+
+def test_worker_claims_one_job_and_keeps_lease_for_full_provider_budget() -> None:
+    now = datetime(2026, 8, 19, 10, 0, tzinfo=UTC)
+    service, _generator, _session_factory = build_service(now)
+    for statement in ("实现字典查询", "实现字典遍历"):
+        service.submit(
+            teacher_id="teacher-1",
+            space_id="space-1",
+            parent_algorithm_id="parent-1",
+            suggestion_input=PlanSuggestionInput(title="", statement=statement),
+        )
+
+    claimed = service.claim_due_jobs("worker-a")
+
+    assert len(claimed) == 1
+    claimed_by_second_worker = service.claim_due_jobs(
+        "worker-b", now + timedelta(seconds=1_440)
+    )
+    assert len(claimed_by_second_worker) == 1
+    assert claimed_by_second_worker[0].id != claimed[0].id
+
+
+def test_expired_lease_at_attempt_limit_fails_without_another_provider_call() -> None:
+    now = datetime(2026, 8, 19, 10, 0, tzinfo=UTC)
+    service, generator, session_factory = build_service(now)
+    submitted = service.submit(
+        teacher_id="teacher-1",
+        space_id="space-1",
+        parent_algorithm_id="parent-1",
+        suggestion_input=PlanSuggestionInput(title="", statement="实现字典查询"),
+    )
+    claimed = service.claim_due_jobs("crashed-worker")
+    assert len(claimed) == 1
+    with session_factory.begin() as session:
+        job = session.get(ClassroomPlanSuggestionJob, submitted.job_id)
+        assert job is not None
+        job.attempts = 2
+        lease_expires_at = job.lease_expires_at
+    assert lease_expires_at is not None
+
+    assert service.claim_due_jobs("recovery-worker", lease_expires_at) == ()
+
+    failed = service.get_for_teacher(submitted.job_id, teacher_id="teacher-1")
+    assert failed.status == "failed"
+    assert failed.failure_code == "ai_suggestion_attempts_exhausted"
+    assert generator.calls == []
+    with session_factory() as session:
+        job = session.get(ClassroomPlanSuggestionJob, submitted.job_id)
+    assert job is not None
+    assert job.attempts == 2
+    assert job.suggestion_input == {}
+
+
+def test_worker_tick_survives_a_lease_lost_after_provider_completion(monkeypatch) -> None:
+    now = datetime(2026, 8, 19, 10, 0, tzinfo=UTC)
+    service, _generator, _session_factory = build_service(now)
+    service.submit(
+        teacher_id="teacher-1",
+        space_id="space-1",
+        parent_algorithm_id="parent-1",
+        suggestion_input=PlanSuggestionInput(title="", statement="实现字典查询"),
+    )
+
+    def lose_lease(*_args, **_kwargs):
+        raise AuthorizationError("plan_suggestion_job_lease_not_owned")
+
+    monkeypatch.setattr(service, "complete", lose_lease)
+
+    assert service.run_due_jobs("worker-a") == 1
 
 
 def test_job_cannot_be_read_by_a_different_teacher() -> None:

@@ -54,6 +54,7 @@ function setup(overrides: Partial<AuditCommandServices> = {}) {
   );
   const captureCurrent = vi.fn(() => undefined);
   const reportMaterialize = vi.fn(() => Promise.resolve({} as never));
+  const finishAnalyzeExport = vi.fn(() => Promise.resolve());
   const services: AuditCommandServices = {
     capture: {
       start: captureStart,
@@ -67,6 +68,7 @@ function setup(overrides: Partial<AuditCommandServices> = {}) {
     selectedPlan: () => plan(),
     hasConsent: () => true,
     interruptedSessionId: () => 'session-command-001',
+    finishAnalyzeExport,
     actions,
     ...overrides,
   };
@@ -77,7 +79,15 @@ function setup(overrides: Partial<AuditCommandServices> = {}) {
     services,
     actions,
     disposables,
-    spies: { confirm, showError, captureStart, captureFinish, captureCurrent, reportMaterialize },
+    spies: {
+      confirm,
+      showError,
+      captureStart,
+      captureFinish,
+      captureCurrent,
+      reportMaterialize,
+      finishAnalyzeExport,
+    },
   };
 }
 
@@ -154,5 +164,47 @@ describe('registerAuditCommands', () => {
     expect(spies.captureFinish).toHaveBeenCalledWith('completed');
     expect(spies.reportMaterialize).toHaveBeenCalledTimes(2);
     expect(spies.captureFinish).toHaveBeenCalledTimes(1);
+  });
+
+  it('confirms the one-click workflow and stops completely when confirmation is cancelled', async () => {
+    const { handlers, spies } = setup();
+    spies.confirm.mockResolvedValue(false);
+
+    await handlers.get('behaviorAudit.finishAnalyzeExport')?.();
+
+    expect(handlers.has('behaviorAudit.finishAnalyzeExport')).toBe(true);
+    expect(spies.confirm).toHaveBeenCalledOnce();
+    expect(spies.captureFinish).not.toHaveBeenCalled();
+    expect(spies.reportMaterialize).not.toHaveBeenCalled();
+    expect(spies.finishAnalyzeExport).not.toHaveBeenCalled();
+  });
+
+  it('runs finish, local brief, and the post-brief export workflow in order', async () => {
+    const { handlers, spies } = setup();
+
+    await handlers.get('behaviorAudit.finishAnalyzeExport')?.();
+
+    expect(handlers.has('behaviorAudit.finishAnalyzeExport')).toBe(true);
+    expect(spies.captureFinish).toHaveBeenCalledWith('completed');
+    expect(spies.reportMaterialize).toHaveBeenCalledWith('session-command-001');
+    expect(spies.finishAnalyzeExport).toHaveBeenCalledWith('session-command-001');
+    expect(spies.captureFinish.mock.invocationCallOrder[0]).toBeLessThan(
+      spies.reportMaterialize.mock.invocationCallOrder[0]!,
+    );
+    expect(spies.reportMaterialize.mock.invocationCallOrder[0]).toBeLessThan(
+      spies.finishAnalyzeExport.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it('does not invoke export after a brief failure when the retry is declined', async () => {
+    const { handlers, spies } = setup();
+    spies.reportMaterialize.mockRejectedValueOnce(new Error('disk full'));
+    spies.showError.mockResolvedValue(undefined);
+
+    await handlers.get('behaviorAudit.finishAnalyzeExport')?.();
+
+    expect(spies.captureFinish).toHaveBeenCalledWith('completed');
+    expect(spies.reportMaterialize).toHaveBeenCalledOnce();
+    expect(spies.finishAnalyzeExport).not.toHaveBeenCalled();
   });
 });

@@ -14,6 +14,7 @@ import {
   type JsonValue,
 } from '../domain/types';
 import type { SessionArtifactKind, SessionRepository } from '../storage/sessionRepository';
+import { normalizeAnalysisArtifact } from './analysisLog';
 import { generateClassroomBrief } from './briefGenerator';
 import { generateOperationLog, generateProcessLog } from './logGenerator';
 import { renderTeacherBrief } from './teacherBrief';
@@ -202,6 +203,7 @@ export class FileSessionExporter implements SessionExporter {
       if (plan === undefined) {
         throw new Error('Plan snapshot not found.');
       }
+      const exportedAt = this.now().toISOString();
       const sources: ExportFileSource[] = [
         {
           path: 'plan_snapshot.json',
@@ -212,7 +214,6 @@ export class FileSessionExporter implements SessionExporter {
         ['operation_log', 'operation_log.json', true],
         ['process_log', 'process_log.md', true],
         ['classroom_brief', 'classroom_brief.json', true],
-        ['ai_analysis', 'ai_analysis.json', false],
       ];
       for (const [kind, path, required] of artifacts) {
         const bytes = await this.repository.readArtifact(sessionId, kind);
@@ -224,6 +225,14 @@ export class FileSessionExporter implements SessionExporter {
           sources.push({ path, bytes });
         }
       }
+      sources.push({
+        path: 'analysis_log.json',
+        bytes: normalizeAnalysisArtifact(
+          await this.repository.readArtifact(sessionId, 'ai_analysis'),
+          sessionId,
+          exportedAt,
+        ),
+      });
       const classroomBrief = parseBrief(
         sources.find((source) => source.path === 'classroom_brief.json')?.bytes ?? new Uint8Array(),
       );
@@ -258,7 +267,7 @@ export class FileSessionExporter implements SessionExporter {
         schema_version: EXPORT_MANIFEST_SCHEMA_VERSION,
         extension_version: this.extensionVersion,
         session_id: session.session_id,
-        exported_at: this.now().toISOString(),
+        exported_at: exportedAt,
         files,
       };
       await writeFile(

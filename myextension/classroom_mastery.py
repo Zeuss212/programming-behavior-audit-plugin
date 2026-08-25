@@ -27,6 +27,7 @@ _GAPS = {
     "print_call": "未观察到 print() 结果输出。",
     "input_call": "未观察到 input() 输入处理。",
 }
+_MAX_EVIDENCE_REFS = 10
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,8 @@ class _EvidenceFeatures:
     print_call: bool
     input_call: bool
     evidence_complete: bool
+    supporting_sequences: Mapping[str, frozenset[int]]
+    has_sequence_data: bool
 
     def supports(self, requirement: str) -> bool:
         return bool(getattr(self, requirement))
@@ -52,7 +55,9 @@ def evaluate_knowledge_points(
     """Return teacher-safe mastery rows without returning local source text."""
 
     features = _extract_features(detail)
-    references = [item for item in evidence_refs if isinstance(item, str) and item]
+    references = list(dict.fromkeys(
+        item for item in evidence_refs if isinstance(item, str) and item
+    ))
     if not references:
         references = ["session#missing-evidence"]
     raw_points = profile.get("knowledge_points")
@@ -65,13 +70,14 @@ def evaluate_knowledge_points(
         point_id = point.get("id")
         name = point.get("name")
         rule = _rule_from(point.get("automatic_evaluation"))
+        row_references = _supporting_references(rule, features, references)
         rows.append(
             _row_for(
                 knowledge_point_id=point_id if isinstance(point_id, str) else f"KP_{index}",
                 name=name if isinstance(name, str) and name else f"知识点 {index}",
                 rule=rule,
                 features=features,
-                evidence_refs=references,
+                evidence_refs=row_references,
             )
         )
     return rows
@@ -178,6 +184,33 @@ def _row(
     }
 
 
+def _supporting_references(
+    rule: tuple[str, tuple[str, ...]] | None,
+    features: _EvidenceFeatures,
+    references: list[str],
+) -> list[str]:
+    if rule is None or not features.evidence_complete or not features.has_sequence_data:
+        return ["session#missing-evidence"]
+    supported_sequences = {
+        sequence
+        for requirement in rule[1]
+        for sequence in features.supporting_sequences.get(requirement, frozenset())
+    }
+    selected = [
+        reference
+        for reference in references
+        if _reference_sequence(reference) in supported_sequences
+    ][:_MAX_EVIDENCE_REFS]
+    return selected or ["session#missing-evidence"]
+
+
+def _reference_sequence(reference: str) -> int | None:
+    _separator, marker, raw_sequence = reference.rpartition("#event-")
+    if not marker or not raw_sequence.isdigit():
+        return None
+    return int(raw_sequence)
+
+
 def _extract_features(detail: Mapping[str, object]) -> _EvidenceFeatures:
     events = detail.get("behavior_events")
     if not isinstance(events, Sequence) or isinstance(events, (str, bytes)):
@@ -185,23 +218,24 @@ def _extract_features(detail: Mapping[str, object]) -> _EvidenceFeatures:
     event_rows = [event for event in events if isinstance(event, Mapping)]
     if len(event_rows) != len(events):
         return _empty_features()
-    sources = [
-        source
-        for event in event_rows
-        if isinstance((source := event.get("cell_source")), str) and source.strip()
-    ]
-    trees: list[ast.Module] = []
-    for source in sources:
+    tree_rows: list[tuple[ast.Module, int | None]] = []
+    has_sequence_data = any(_event_sequence(event) is not None for event in event_rows)
+    for event in event_rows:
+        source = event.get("cell_source")
+        if not isinstance(source, str) or not source.strip():
+            continue
         try:
-            trees.append(ast.parse(source))
+            tree_rows.append((ast.parse(source), _event_sequence(event)))
         except SyntaxError:
             continue
-    if not trees:
+    if not tree_rows:
         return _empty_features()
 
+    supporting: dict[str, set[int]] = {kind: set() for kind in _RULE_KINDS}
     dictionary_names: set[str] = set()
+    dictionary_literal_assignment = False
     dictionary_with_pairs = False
-    for tree in trees:
+    for tree, sequence in tree_rows:
         for node in ast.walk(tree):
             value: ast.expr | None = None
             targets: list[ast.expr] = []
@@ -213,22 +247,30 @@ def _extract_features(detail: Mapping[str, object]) -> _EvidenceFeatures:
                 targets = [node.target]
             if value is None or not _is_dictionary_constructor(value):
                 continue
-            dictionary_names.update(
-                target.id for target in targets if isinstance(target, ast.Name)
-            )
-            dictionary_with_pairs = dictionary_with_pairs or _has_two_or_more_pairs(value)
+            names = {target.id for target in targets if isinstance(target, ast.Name)}
+            if names:
+                dictionary_literal_assignment = True
+                dictionary_names.update(names)
+                _record_support(supporting, "dict_literal_assignment", sequence)
+            if _has_two_or_more_pairs(value):
+                dictionary_with_pairs = True
+                _record_support(supporting, "dict_key_value_pairs", sequence)
 
     subscript_access = False
     get_with_default = False
     print_call = False
     input_call = False
     assigned_keys: dict[str, set[str]] = {name: set() for name in dictionary_names}
-    for tree in trees:
+    assigned_key_sequences: dict[str, set[int]] = {
+        name: set() for name in dictionary_names
+    }
+    for tree, sequence in tree_rows:
         for node in ast.walk(tree):
             if isinstance(node, ast.Subscript) and _is_known_dictionary_name(
                 node.value, dictionary_names
             ):
                 subscript_access = True
+                _record_support(supporting, "dict_subscript_access", sequence)
             for target in _assignment_targets(node):
                 if isinstance(target, ast.Subscript) and _is_known_dictionary_name(
                     target.value, dictionary_names
@@ -236,10 +278,21 @@ def _extract_features(detail: Mapping[str, object]) -> _EvidenceFeatures:
                     assigned_keys[target.value.id].add(
                         ast.dump(target.slice, include_attributes=False)
                     )
+                    if sequence is not None:
+                        assigned_key_sequences[target.value.id].add(sequence)
+                    if len(assigned_keys[target.value.id]) >= 2:
+                        dictionary_with_pairs = True
+                        supporting["dict_key_value_pairs"].update(
+                            assigned_key_sequences[target.value.id]
+                        )
             if isinstance(node, ast.Call):
                 if isinstance(node.func, ast.Name):
-                    print_call = print_call or node.func.id == "print"
-                    input_call = input_call or node.func.id == "input"
+                    if node.func.id == "print":
+                        print_call = True
+                        _record_support(supporting, "print_call", sequence)
+                    if node.func.id == "input":
+                        input_call = True
+                        _record_support(supporting, "input_call", sequence)
                 if (
                     isinstance(node.func, ast.Attribute)
                     and node.func.attr == "get"
@@ -247,17 +300,25 @@ def _extract_features(detail: Mapping[str, object]) -> _EvidenceFeatures:
                     and len(node.args) >= 2
                 ):
                     get_with_default = True
+                    _record_support(supporting, "dict_get_with_default", sequence)
 
-    successful_execution = any(
-        event.get("segment_type") == "code_execution"
-        and event.get("execution_result") == "success"
-        and not event.get("error_type")
-        and not event.get("error_message")
-        for event in event_rows
-    )
+    successful_execution = False
+    for event in event_rows:
+        if (
+            event.get("segment_type") == "code_execution"
+            and event.get("execution_result") == "success"
+            and not event.get("error_type")
+            and not event.get("error_message")
+        ):
+            successful_execution = True
+            _record_support(
+                supporting,
+                "successful_execution",
+                _event_sequence(event),
+            )
     return _EvidenceFeatures(
         successful_execution=successful_execution,
-        dict_literal_assignment=bool(dictionary_names),
+        dict_literal_assignment=dictionary_literal_assignment,
         dict_key_value_pairs=(
             dictionary_with_pairs or any(len(keys) >= 2 for keys in assigned_keys.values())
         ),
@@ -266,6 +327,10 @@ def _extract_features(detail: Mapping[str, object]) -> _EvidenceFeatures:
         print_call=print_call,
         input_call=input_call,
         evidence_complete=True,
+        supporting_sequences={
+            kind: frozenset(sequences) for kind, sequences in supporting.items()
+        },
+        has_sequence_data=has_sequence_data,
     )
 
 
@@ -279,7 +344,23 @@ def _empty_features() -> _EvidenceFeatures:
         print_call=False,
         input_call=False,
         evidence_complete=False,
+        supporting_sequences={kind: frozenset() for kind in _RULE_KINDS},
+        has_sequence_data=False,
     )
+
+
+def _event_sequence(event: Mapping[str, object]) -> int | None:
+    sequence = event.get("session_seq")
+    return sequence if isinstance(sequence, int) and not isinstance(sequence, bool) else None
+
+
+def _record_support(
+    supporting: dict[str, set[int]],
+    requirement: str,
+    sequence: int | None,
+) -> None:
+    if sequence is not None:
+        supporting[requirement].add(sequence)
 
 
 def _is_dictionary_constructor(value: ast.expr) -> bool:

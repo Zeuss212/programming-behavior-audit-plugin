@@ -311,7 +311,7 @@ export class BehaviorEventUploader implements IBehaviorSegmentSink {
     return operation;
   }
 
-  finalize(requestAiAnalysis = true): Promise<ISessionFinalizeResponse> {
+  finalize(requestAiAnalysis = false): Promise<ISessionFinalizeResponse> {
     if (this.finalizePromise) {
       return this.finalizePromise;
     }

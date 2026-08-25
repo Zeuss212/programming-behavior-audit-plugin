@@ -138,6 +138,45 @@ def test_evidence_is_private_idempotent_and_conflicts_on_a_changed_sequence():
         )
 
 
+def test_evidence_persists_only_trusted_analysis_event_classifications():
+    storage = RecordingStorage()
+    service, factory, credentials = seeded_service(storage)
+    body = gzip.compress(
+        b'{"events":[{"session_seq":1,"segment_type":"code_writing",'
+        b'"cell_source":"secret source"},{"session_seq":2,'
+        b'"segment_type":"code_execution","execution_result":"success",'
+        b'"error_message":"private diagnostic"}]}'
+    )
+
+    service.put_evidence_chunk(
+        credentials.access_token,
+        session_id=credentials.session_id,
+        sequence=1,
+        body=body,
+        first_event_sequence=1,
+        last_event_sequence=2,
+    )
+
+    with factory() as session:
+        chunk = session.scalar(select(EvidenceChunk))
+        assert chunk is not None
+        assert chunk.analysis_manifest == {
+            "events": {
+                "1": {
+                    "kind": "edit",
+                    "description": "编辑了代码。",
+                    "source_sha256": "f07976861a734242e7cd7f598ff191e0f065b031efe9f1f8e5c50e670a20bdc7",
+                },
+                "2": {
+                    "kind": "run_success",
+                    "description": "完成一次无异常运行；这不代表答案一定正确。",
+                },
+            }
+        }
+        assert "secret source" not in str(chunk.analysis_manifest)
+        assert "private diagnostic" not in str(chunk.analysis_manifest)
+
+
 def test_evidence_limits_and_storage_failure_do_not_create_database_receipts():
     """Unsafe payloads and failed object writes never gain a durable evidence index."""
     storage = RecordingStorage(fail=True)

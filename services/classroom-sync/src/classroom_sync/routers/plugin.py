@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from typing import Annotated
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from fastapi import APIRouter, Body, Header, Request, status
 from pydantic import BaseModel, ConfigDict, model_validator
@@ -31,6 +33,7 @@ class SubmitBriefRequest(BaseModel):
     process_overview: list[str]
     issues: list[str]
     reason: str
+    submission_id: UUID | None = None
     request_ai_analysis: bool = False
     analysis_input: BriefAnalysisInput | None = None
 
@@ -45,6 +48,20 @@ def get_plugin_bearer(authorization: str | None) -> str:
     if authorization is None or not authorization.startswith("Bearer "):
         raise AuthenticationError("missing_plugin_token")
     return authorization.removeprefix("Bearer ")
+
+
+def stable_submission_id(session_id: str, payload: SubmitBriefRequest) -> str:
+    """Keep pre-idempotency clients safe during a synchronized rollout."""
+
+    if payload.submission_id is not None:
+        return str(payload.submission_id)
+    canonical = json.dumps(
+        payload.model_dump(mode="json", exclude={"submission_id"}),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return str(uuid5(NAMESPACE_URL, f"classroom-brief:{session_id}:{canonical}"))
 
 
 def credentials_response(credentials: SessionCredentials) -> dict[str, object]:
@@ -164,6 +181,7 @@ def submit_brief(
             issues=tuple(payload.issues),
         ),
         reason=payload.reason,
+        submission_id=stable_submission_id(session_id, payload),
         request_ai_analysis=payload.request_ai_analysis,
         analysis_input=(
             payload.analysis_input.model_dump(mode="json")

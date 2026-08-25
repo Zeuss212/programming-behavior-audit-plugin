@@ -8,7 +8,12 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError
 
-from classroom_sync.models import Base, ClassroomBriefAnalysisJob, ClassroomPlanSuggestionJob
+from classroom_sync.models import (
+    Base,
+    ClassroomBriefAnalysisJob,
+    ClassroomPlanSuggestionJob,
+    StudentBrief,
+)
 
 CORE_TABLES = {
     "plan_drafts",
@@ -277,3 +282,28 @@ def test_plan_suggestion_job_migration_has_owner_scoped_active_request_key(tmp_p
         == ["teacher_id", "space_id", "parent_algorithm_id", "request_hash", "active_slot"]
         for constraint in inspector.get_unique_constraints("classroom_plan_suggestion_jobs")
     )
+
+
+def test_student_brief_migration_has_session_scoped_submission_idempotency_key(
+    tmp_path: Path,
+):
+    database_url = f"sqlite:///{tmp_path / 'classroom-brief-idempotency.db'}"
+    config = migration_config(database_url)
+
+    command.upgrade(config, "head")
+
+    inspector = inspect(create_engine(database_url))
+    assert StudentBrief.__tablename__ == "student_briefs"
+    assert "submission_id" in {
+        column["name"] for column in inspector.get_columns("student_briefs")
+    }
+    assert "submission_hash" in {
+        column["name"] for column in inspector.get_columns("student_briefs")
+    }
+    assert any(
+        constraint["column_names"] == ["session_id", "submission_id"]
+        for constraint in inspector.get_unique_constraints("student_briefs")
+    )
+    assert "analysis_manifest" in {
+        column["name"] for column in inspector.get_columns("evidence_chunks")
+    }

@@ -70,12 +70,16 @@ export function createSidebarHtml(input: SidebarHtmlInput): string {
       <h2>学生端</h2>
       <p>导入教师方案，确认范围后开始本地采集。</p>
       <label class="consent-row"><input id="consent" type="checkbox">我已了解采集范围并同意开始</label>
+      <label class="consent-row"><input id="auto-analyze" type="checkbox" checked>结束时生成 AI 建议（可选）</label>
+      <p class="secondary">AI 未配置或暂不可用时，仍会保留并导出本地课堂简报。</p>
       <div class="action-list">
         <button type="button" data-command="behaviorAudit.importPlan">导入方案</button>
         <button type="button" data-command="behaviorAudit.startCapture">开始监控</button>
         <button type="button" data-command="behaviorAudit.resumeCapture">继续中断会话</button>
-        <button type="button" data-command="behaviorAudit.finishCapture">结束并生成简报</button>
-        <button type="button" data-command="behaviorAudit.exportSession">导出会话</button>
+        <button class="primary-action" type="button" data-command="behaviorAudit.finishAnalyzeExport">结束、生成简报并导出</button>
+        <button class="secondary-action" type="button" data-command="behaviorAudit.finishCapture">仅结束并生成简报</button>
+        <button class="secondary-action" type="button" data-command="behaviorAudit.analyzeSession">仅生成 AI 建议</button>
+        <button class="secondary-action" type="button" data-command="behaviorAudit.exportSession">仅导出上次会话</button>
       </div>
     </section>
     <section aria-labelledby="status-heading">

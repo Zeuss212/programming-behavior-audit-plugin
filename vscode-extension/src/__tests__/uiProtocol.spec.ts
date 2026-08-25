@@ -12,6 +12,10 @@ describe('parseWebviewMessage', () => {
       type: 'setConsent',
       value: true,
     });
+    expect(parseWebviewMessage({ type: 'setAutoAnalyze', value: false })).toEqual({
+      type: 'setAutoAnalyze',
+      value: false,
+    });
     expect(parseWebviewMessage({ type: 'command', command: 'behaviorAudit.startCapture' })).toEqual({
       type: 'command',
       command: 'behaviorAudit.startCapture',
@@ -28,6 +32,9 @@ describe('parseWebviewMessage', () => {
     { type: 'navigate', route: 'admin' },
     { type: 'refresh', extra: true },
     { type: 'setConsent', value: 'yes' },
+    { type: 'setAutoAnalyze', value: 'yes' },
+    { type: 'setAutoAnalyze', value: true, extra: true },
+    { type: 'command', command: 'behaviorAudit.finishAnalyzeExport', extra: true },
     { type: 'command', command: 'workbench.action.delete' },
     null,
   ])('rejects unknown or extra data: %j', (value) => {

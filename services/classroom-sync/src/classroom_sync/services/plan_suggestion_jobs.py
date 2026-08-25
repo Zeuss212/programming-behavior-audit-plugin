@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from classroom_sync.errors import AuthorizationError, NotFoundError, UpstreamUnavailableError
@@ -25,6 +26,9 @@ from classroom_sync.services.plan_suggestions import (
 
 class PlanSuggestionGenerator(Protocol):
     """One server-only provider capability used by the durable worker."""
+
+    @property
+    def retry_provider_errors(self) -> bool: ...
 
     def generate(self, suggestion_input: PlanSuggestionInput) -> PlanSuggestion: ...
 
@@ -46,7 +50,10 @@ class PlanSuggestionJobService:
     """Lease and execute suggestions without holding an HTTP connection open."""
 
     _RETRY_DELAYS = (timedelta(seconds=5), timedelta(seconds=30))
-    _LEASE_SECONDS = 180
+    # One Coding Plan attempt may make two HTTP calls.  httpx applies the
+    # configured timeout to each connect/write/read/pool phase, so retain the
+    # lease for the complete worst-case operation budget plus one minute.
+    _LEASE_SECONDS = 1_500
 
     def __init__(
         self,
@@ -110,8 +117,24 @@ class PlanSuggestionJobService:
                 created_at=now,
                 updated_at=now,
             )
-            session.add(job)
-            session.flush()
+            try:
+                with session.begin_nested():
+                    session.add(job)
+                    session.flush()
+            except IntegrityError:
+                winner = session.scalar(
+                    select(ClassroomPlanSuggestionJob).where(
+                        ClassroomPlanSuggestionJob.teacher_id == teacher_id,
+                        ClassroomPlanSuggestionJob.space_id == space_id,
+                        ClassroomPlanSuggestionJob.parent_algorithm_id
+                        == parent_algorithm_id,
+                        ClassroomPlanSuggestionJob.request_hash == request_hash,
+                        ClassroomPlanSuggestionJob.active_slot == 1,
+                    )
+                )
+                if winner is None:
+                    raise
+                return self._snapshot(winner)
             return self._snapshot(job)
 
     def get_for_teacher(self, job_id: str, *, teacher_id: str) -> PlanSuggestionJobSnapshot:
@@ -128,12 +151,39 @@ class PlanSuggestionJobService:
     ) -> tuple[ClassroomPlanSuggestionJob, ...]:
         claim_time = self._utc_now() if now is None else self._as_utc(now)
         with self._session_factory.begin() as session:
+            exhausted_jobs = list(
+                session.scalars(
+                    select(ClassroomPlanSuggestionJob)
+                    .where(
+                        ClassroomPlanSuggestionJob.run_at <= claim_time,
+                        ClassroomPlanSuggestionJob.status.in_(("pending", "leased")),
+                        ClassroomPlanSuggestionJob.attempts >= self._max_attempts,
+                        or_(
+                            ClassroomPlanSuggestionJob.lease_expires_at.is_(None),
+                            ClassroomPlanSuggestionJob.lease_expires_at <= claim_time,
+                        ),
+                    )
+                    .with_for_update(skip_locked=True)
+                )
+            )
+            for job in exhausted_jobs:
+                job.suggestion_input = {}
+                job.result = None
+                job.status = "failed"
+                job.active_slot = None
+                job.lease_owner = None
+                job.lease_expires_at = None
+                job.failure_code = "ai_suggestion_attempts_exhausted"
+                job.completed_at = claim_time
+                job.updated_at = claim_time
+
             jobs = list(
                 session.scalars(
                     select(ClassroomPlanSuggestionJob)
                     .where(
                         ClassroomPlanSuggestionJob.run_at <= claim_time,
                         ClassroomPlanSuggestionJob.status.in_(("pending", "leased")),
+                        ClassroomPlanSuggestionJob.attempts < self._max_attempts,
                         or_(
                             ClassroomPlanSuggestionJob.lease_expires_at.is_(None),
                             ClassroomPlanSuggestionJob.lease_expires_at <= claim_time,
@@ -143,6 +193,7 @@ class PlanSuggestionJobService:
                         ClassroomPlanSuggestionJob.run_at,
                         ClassroomPlanSuggestionJob.id,
                     )
+                    .limit(1)
                     .with_for_update(skip_locked=True)
                 )
             )
@@ -164,13 +215,19 @@ class PlanSuggestionJobService:
                 suggestion = self._suggestion_service.generate(source)
                 self.complete(job.id, worker_id=worker_id, suggestion=suggestion)
             except UpstreamUnavailableError as error:
-                self.record_failure(
-                    job.id,
-                    worker_id=worker_id,
-                    failure_code=error.code,
-                    retry_delay=self._retry_delay(job.attempts) if error.retryable else None,
-                    occurred_at=self._utc_now(),
-                )
+                retryable = error.retryable and self._suggestion_service.retry_provider_errors
+                try:
+                    self.record_failure(
+                        job.id,
+                        worker_id=worker_id,
+                        failure_code=error.code,
+                        retry_delay=self._retry_delay(job.attempts) if retryable else None,
+                        occurred_at=self._utc_now(),
+                    )
+                except AuthorizationError:
+                    continue
+            except AuthorizationError:
+                continue
         return len(jobs)
 
     def complete(

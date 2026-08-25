@@ -7,8 +7,10 @@ interface TestAuditApi {
   readonly storageRoot: string;
   startSession(): Promise<string>;
   finishSession(): Promise<string>;
+  finishSessionWithAnalysis(): Promise<string>;
   flush(): Promise<void>;
   readBrief(sessionId: string): Promise<unknown>;
+  readAnalysisLog(sessionId: string): Promise<unknown>;
   recoverPersistedSession(): Promise<Readonly<{
     session_id: string;
     status: string;
@@ -26,6 +28,7 @@ const expectedCommands = [
   'behaviorAudit.startCapture',
   'behaviorAudit.resumeCapture',
   'behaviorAudit.finishCapture',
+  'behaviorAudit.finishAnalyzeExport',
   'behaviorAudit.abandonCapture',
   'behaviorAudit.runPython',
   'behaviorAudit.analyzeSession',
@@ -81,6 +84,17 @@ suite('Behavior Audit extension host', () => {
         'evidence_summary',
         'attention_point',
       ]),
+    );
+
+    const analyzedSessionId = await api.startSession();
+    assert.equal(await api.finishSessionWithAnalysis(), analyzedSessionId);
+    const analysisLog = await api.readAnalysisLog(analyzedSessionId);
+    assert.ok(analysisLog !== null && typeof analysisLog === 'object' && !Array.isArray(analysisLog));
+    assert.equal((analysisLog as { readonly session_id?: unknown }).session_id, analyzedSessionId);
+    assert.equal((analysisLog as { readonly status?: unknown }).status, 'skipped');
+    assert.equal(
+      (analysisLog as { readonly reason?: { readonly code?: unknown } }).reason?.code,
+      'disabled_by_student',
     );
 
     const interruptedSessionId = await api.startSession();

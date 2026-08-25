@@ -13,18 +13,87 @@ from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from classroom_sync.errors import UpstreamUnavailableError
+from classroom_sync.errors import AuthorizationError, UpstreamUnavailableError
 from classroom_sync.models import ClassroomBriefAnalysisJob
 from classroom_sync.services.plan_suggestions import OpenAiCompletionClient
 
 if TYPE_CHECKING:
     from classroom_sync.services.briefs import BriefService
 
+
+_SENSITIVE_ANALYSIS_INPUT = re.compile(
+    r"(?:https?://|s3://|/Users/|/home/|/root/|/private/|[A-Za-z]:[\\/]|"
+    r"sk-[A-Za-z0-9._-]{8,}|gh[pousr]_[A-Za-z0-9_]{20,}|"
+    r"github_pat_[A-Za-z0-9_]{20,}|"
+    r"(?:AKIA|ASIA)[0-9A-Z]{16}|xox(?:b|p|a|r|s)-[A-Za-z0-9-]{10,}|"
+    r"AIza[A-Za-z0-9_-]{20,}|ya29\.[A-Za-z0-9._-]{20,}|"
+    r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b|"
+    r"(?:bearer\s+|(?:api[_-]?key|token)\s*[:=]\s*['\"]?)"
+    r"[A-Za-z0-9._-]{8,}|原始输出|诊断信息|学生姓名|"
+    r"\braw\s+(?:model\s+)?(?:output|response)\b|\btraceback\b|"
+    r"\bprovider\s+response\b|\bsystem\s+prompt\b|"
+    r"\bignore\b.{0,40}\binstructions?\b|"
+    r"(?:忽略|无视|忘记).{0,20}(?:以上|之前|前述|所有)?"
+    r"(?:指令|要求|规则|提示词?))",
+    re.IGNORECASE,
+)
+_QUOTED_OPAQUE_LITERAL = re.compile(
+    r"(?P<quote>['\"])(?P<secret>[A-Za-z0-9._+/=-]{32,})(?P=quote)"
+)
+_COMMENT_OPAQUE_LITERAL = re.compile(
+    r"(?m)^\s*#\s*(?P<secret>[A-Za-z0-9._+/=-]{32,})\s*$"
+)
+_OPAQUE_TOKEN = re.compile(
+    r"(?<![A-Za-z0-9._+/=-])(?P<secret>[A-Za-z0-9._+/=-]{32,})"
+    r"(?![A-Za-z0-9._+/=-])"
+)
+
+
+def _is_opaque_secret(value: str) -> bool:
+    hexadecimal = (
+        len(value) >= 48
+        and re.fullmatch(r"[0-9A-Fa-f]+", value) is not None
+        and any(char.isalpha() for char in value)
+        and any(char.isdigit() for char in value)
+    )
+    categories = sum(
+        (
+            any(char.islower() for char in value),
+            any(char.isupper() for char in value),
+            any(char.isdigit() for char in value),
+            any(char in "._-/+=" for char in value),
+        )
+    )
+    return (hexadecimal or categories >= 3) and len(set(value)) >= 12
+
+
+def _validate_safe_analysis_input_text(value: str) -> str:
+    opaque_literals = (
+        match.group("secret")
+        for pattern in (
+            _QUOTED_OPAQUE_LITERAL,
+            _COMMENT_OPAQUE_LITERAL,
+            _OPAQUE_TOKEN,
+        )
+        for match in pattern.finditer(value)
+    )
+    if _SENSITIVE_ANALYSIS_INPUT.search(value) or any(
+        _is_opaque_secret(secret) for secret in opaque_literals
+    ):
+        raise ValueError("analysis input contains sensitive client text")
+    return value
+
+
 class EvidenceCriterion(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     id: Annotated[str, Field(min_length=1, max_length=128)]
     direction: Literal["support", "exclude"]
     statement: Annotated[str, Field(min_length=1, max_length=300)]
+
+    @field_validator("statement")
+    @classmethod
+    def reject_sensitive_statement(cls, value: str) -> str:
+        return _validate_safe_analysis_input_text(value)
 
 
 class AnalysisKnowledgePoint(BaseModel):
@@ -35,6 +104,11 @@ class AnalysisKnowledgePoint(BaseModel):
     question: Annotated[str, Field(max_length=200)] = ""
     evidence_criteria: list[EvidenceCriterion] = Field(default_factory=list, max_length=10)
 
+    @field_validator("name", "description", "question")
+    @classmethod
+    def reject_sensitive_point_text(cls, value: str) -> str:
+        return _validate_safe_analysis_input_text(value)
+
 
 class AnalysisEvidenceEvent(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -43,11 +117,21 @@ class AnalysisEvidenceEvent(BaseModel):
     kind: Literal["edit", "run", "run_failure", "run_success"]
     description: Annotated[str, Field(min_length=1, max_length=300)]
 
+    @field_validator("description")
+    @classmethod
+    def reject_sensitive_event_text(cls, value: str) -> str:
+        return _validate_safe_analysis_input_text(value)
+
 
 class AnalysisCodeSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid")
     event_id: Annotated[str, Field(pattern=r"^chunk-[1-9][0-9]*#event-[1-9][0-9]*$")]
     source: Annotated[str, Field(min_length=1, max_length=12_000)]
+
+    @field_validator("source")
+    @classmethod
+    def reject_sensitive_source(cls, value: str) -> str:
+        return _validate_safe_analysis_input_text(value)
 
 
 class BriefAnalysisInput(BaseModel):
@@ -58,6 +142,15 @@ class BriefAnalysisInput(BaseModel):
     knowledge_points: list[AnalysisKnowledgePoint] = Field(min_length=1, max_length=10)
     evidence_events: list[AnalysisEvidenceEvent] = Field(max_length=20)
     code_snapshots: list[AnalysisCodeSnapshot] = Field(max_length=20)
+
+    @field_validator("lesson")
+    @classmethod
+    def reject_sensitive_lesson_text(
+        cls,
+        value: dict[Literal["title"], str],
+    ) -> dict[Literal["title"], str]:
+        _validate_safe_analysis_input_text(value["title"])
+        return value
 
     @model_validator(mode="after")
     def validate_private_input(self) -> BriefAnalysisInput:
@@ -296,7 +389,9 @@ class BriefAnalysisJobService:
     """Lease, execute, and retry brief analysis without blocking student submission."""
 
     _RETRY_DELAYS = (timedelta(seconds=5), timedelta(seconds=30))
-    _LEASE_SECONDS = 60
+    # A single Provider call can spend one timeout in each HTTP phase.  Keep
+    # the lease beyond that whole-operation budget and claim no backlog early.
+    _LEASE_SECONDS = 1_500
 
     def __init__(
         self,
@@ -321,13 +416,56 @@ class BriefAnalysisJobService:
         """Lease all due jobs once; a new worker may reclaim an expired lease."""
 
         claim_time = self._utc_now() if now is None else self._as_utc(now)
+        exhausted_job_ids = self._lease_exhausted_jobs(worker_id, claim_time)
+        for job_id in exhausted_job_ids:
+            try:
+                self._brief_service.record_analysis_failure(
+                    job_id,
+                    worker_id=worker_id,
+                    failure_code="ai_brief_analysis_attempts_exhausted",
+                    retry_delay=None,
+                    occurred_at=claim_time,
+                )
+            except AuthorizationError:
+                continue
+
         with self._session_factory.begin() as session:
             jobs = list(
                 session.scalars(
                     select(ClassroomBriefAnalysisJob)
                     .where(
                         ClassroomBriefAnalysisJob.run_at <= claim_time,
-                        ClassroomBriefAnalysisJob.status != "completed",
+                        ClassroomBriefAnalysisJob.status.in_(("pending", "leased")),
+                        ClassroomBriefAnalysisJob.attempts < self._max_attempts,
+                        or_(
+                            ClassroomBriefAnalysisJob.lease_expires_at.is_(None),
+                            ClassroomBriefAnalysisJob.lease_expires_at <= claim_time,
+                        ),
+                    )
+                    .order_by(ClassroomBriefAnalysisJob.run_at, ClassroomBriefAnalysisJob.id)
+                    .limit(1)
+                    .with_for_update(skip_locked=True)
+                )
+            )
+            for job in jobs:
+                job.status = "leased"
+                job.lease_owner = worker_id
+                job.lease_expires_at = claim_time + timedelta(seconds=self._LEASE_SECONDS)
+                job.attempts += 1
+                job.updated_at = claim_time
+        return tuple(jobs)
+
+    def _lease_exhausted_jobs(self, worker_id: str, claim_time: datetime) -> tuple[str, ...]:
+        """Recover crashed final attempts without issuing another Provider request."""
+
+        with self._session_factory.begin() as session:
+            jobs = list(
+                session.scalars(
+                    select(ClassroomBriefAnalysisJob)
+                    .where(
+                        ClassroomBriefAnalysisJob.run_at <= claim_time,
+                        ClassroomBriefAnalysisJob.status.in_(("pending", "leased")),
+                        ClassroomBriefAnalysisJob.attempts >= self._max_attempts,
                         or_(
                             ClassroomBriefAnalysisJob.lease_expires_at.is_(None),
                             ClassroomBriefAnalysisJob.lease_expires_at <= claim_time,
@@ -341,9 +479,8 @@ class BriefAnalysisJobService:
                 job.status = "leased"
                 job.lease_owner = worker_id
                 job.lease_expires_at = claim_time + timedelta(seconds=self._LEASE_SECONDS)
-                job.attempts += 1
                 job.updated_at = claim_time
-        return tuple(jobs)
+            return tuple(job.id for job in jobs)
 
     def run_due_jobs(self, worker_id: str) -> int:
         """Process every currently due job while persisting provider failures safely."""
@@ -359,13 +496,18 @@ class BriefAnalysisJobService:
                     analysis=analysis.model_dump(),
                 )
             except UpstreamUnavailableError as error:
-                self._brief_service.record_analysis_failure(
-                    job.id,
-                    worker_id=worker_id,
-                    failure_code=error.code,
-                    retry_delay=self._retry_delay(job.attempts) if error.retryable else None,
-                    occurred_at=self._utc_now(),
-                )
+                try:
+                    self._brief_service.record_analysis_failure(
+                        job.id,
+                        worker_id=worker_id,
+                        failure_code=error.code,
+                        retry_delay=self._retry_delay(job.attempts) if error.retryable else None,
+                        occurred_at=self._utc_now(),
+                    )
+                except AuthorizationError:
+                    continue
+            except AuthorizationError:
+                continue
         return len(jobs)
 
     def _source_for_leased_job(self, job_id: str, worker_id: str) -> BriefAnalysisInput:

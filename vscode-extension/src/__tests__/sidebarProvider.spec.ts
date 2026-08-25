@@ -23,7 +23,12 @@ describe('AuditSidebarProvider', () => {
     expect(html).toContain('<h2>学生端</h2>');
     expect(html).toContain('data-command="behaviorAudit.openPlanWizard"');
     expect(html).toContain('创建考核方案');
-    expect(html).not.toContain('>生成 AI 建议（可选）</button>');
+    expect(html).toContain('<input id="auto-analyze" type="checkbox" checked>');
+    expect(html).toContain('生成 AI 建议（可选）');
+    expect(html).toContain('data-command="behaviorAudit.finishAnalyzeExport"');
+    expect(html).toContain('结束、生成简报并导出');
+    expect(html).toContain('仅结束并生成简报');
+    expect(html).toContain('仅导出上次会话');
     expect(html).toContain('本扩展不具备系统隔离或考试防作弊权限');
     expect(html).toContain('aria-live="polite"');
     expect(html).not.toMatch(/on(?:click|change|submit)=/iu);

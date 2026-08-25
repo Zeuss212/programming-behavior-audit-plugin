@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Final
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from .canonical_json import atomic_write_json
 from .classroom_ai_analysis_input import build_analysis_input
@@ -83,7 +83,7 @@ class SubmissionCoordinator:
         *,
         reason: str,
         cutoff_at: datetime,
-        request_ai_analysis: bool = False,
+        request_ai_analysis: bool | None = None,
     ) -> SubmissionResult:
         canonical_session_id = _canonical_session_id(session_id)
         if reason not in _REASONS:
@@ -96,9 +96,12 @@ class SubmissionCoordinator:
 
             context = self._registered_context(canonical_session_id)
             if existing is None:
+                durable_ai_consent = (
+                    False if request_ai_analysis is None else request_ai_analysis
+                )
                 payload = self._prepare_payload(
                     canonical_session_id,
-                    request_ai_analysis=request_ai_analysis,
+                    request_ai_analysis=durable_ai_consent,
                 )
                 state = {
                     "schema_version": _STATE_SCHEMA_VERSION,
@@ -115,7 +118,10 @@ class SubmissionCoordinator:
                 payload = state["payload"]
                 if not isinstance(payload, dict):
                     raise SubmissionCoordinatorError("Stored submission payload is invalid.")
-                if payload.get("request_ai_analysis") is not request_ai_analysis:
+                if (
+                    request_ai_analysis is not None
+                    and payload.get("request_ai_analysis") is not request_ai_analysis
+                ):
                     raise SubmissionCoordinatorError(
                         "AI analysis consent does not match the durable submission."
                     )
@@ -171,11 +177,13 @@ class SubmissionCoordinator:
         self._outbox.flush_once()
         profile = self._session_store.read_profile(session_id)
         delivered_entries = self._delivered_entries(session_id)
-        evidence_refs = self._evidence_refs(delivered_entries)
+        detail = self._session_log_service.get_detail(session_id)
+        delivered_detail = self._delivered_detail(detail, delivered_entries)
+        evidence_refs = self._evidence_refs(delivered_detail, delivered_entries)
         mastery_rows = (
             evaluate_knowledge_points(
                 profile,
-                self._session_log_service.get_detail(session_id),
+                delivered_detail,
                 evidence_refs,
             )
             if self._has_automatic_evaluation_rules(profile)
@@ -188,11 +196,12 @@ class SubmissionCoordinator:
             evidence_refs=evidence_refs,
             mastery_rows=mastery_rows,
         )
+        payload["submission_id"] = str(uuid4())
         payload["request_ai_analysis"] = request_ai_analysis
         if request_ai_analysis:
             payload["analysis_input"] = build_analysis_input(
                 profile,
-                self._session_log_service.get_detail(session_id),
+                detail,
                 delivered_entries,
             )
         return payload
@@ -235,7 +244,7 @@ class SubmissionCoordinator:
                         "knowledge_point_id": point_id,
                         "name": name,
                         "status": "not_demonstrated",
-                        "evidence_refs": evidence_refs,
+                        "evidence_refs": ["session#missing-evidence"],
                         "demonstrated": "基础简报未进行逐项自动判定。",
                         "gap": "需要结合过程证据确认该知识点的掌握情况。",
                         "teacher_suggestion": "查看关联过程证据，并就关键步骤追问学生。",
@@ -276,13 +285,56 @@ class SubmissionCoordinator:
             if getattr(entry, "state", None) == "delivered"
         ]
 
-    @staticmethod
-    def _evidence_refs(entries: Sequence[object]) -> list[str]:
+    @classmethod
+    def _delivered_detail(
+        cls,
+        detail: Mapping[str, object],
+        entries: Sequence[object],
+    ) -> dict[str, object]:
+        raw_events = detail.get("behavior_events")
+        events = [
+            event
+            for event in raw_events
+            if isinstance(event, Mapping)
+            and cls._remote_event_id(event.get("session_seq"), entries) is not None
+        ] if isinstance(raw_events, list) else []
+        return {**detail, "behavior_events": events}
+
+    @classmethod
+    def _evidence_refs(
+        cls,
+        detail: Mapping[str, object],
+        entries: Sequence[object],
+    ) -> list[str]:
+        raw_events = detail.get("behavior_events")
         references = [
-            f"chunk-{entry.sequence}#event-{entry.first_event_sequence}"
-            for entry in entries
-        ]
+            event_id
+            for event in raw_events
+            if isinstance(event, Mapping)
+            and (event_id := cls._remote_event_id(event.get("session_seq"), entries))
+            is not None
+        ] if isinstance(raw_events, list) else []
         return references or ["session#missing-evidence"]
+
+    @staticmethod
+    def _remote_event_id(sequence: object, entries: Sequence[object]) -> str | None:
+        if not isinstance(sequence, int) or isinstance(sequence, bool):
+            return None
+        for entry in entries:
+            chunk = getattr(entry, "sequence", None)
+            first = getattr(entry, "first_event_sequence", None)
+            last = getattr(entry, "last_event_sequence", None)
+            if (
+                isinstance(chunk, int)
+                and not isinstance(chunk, bool)
+                and isinstance(first, int)
+                and not isinstance(first, bool)
+                and isinstance(last, int)
+                and not isinstance(last, bool)
+                and first <= sequence <= last
+            ):
+                return f"chunk-{chunk}#event-{sequence}"
+        return None
 
     def _registered_context(self, session_id: str) -> RegisteredPlatformContext:
         context = self._context_store.read_registered_context()

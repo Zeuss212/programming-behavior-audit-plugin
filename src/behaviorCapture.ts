@@ -280,7 +280,7 @@ export function startBehaviorCapture(
     subscribe: listener => uploader.subscribe(listener),
     start: startCapture,
     resume: resumeCapture,
-    stop: async (requestAiAnalysis = true) => {
+    stop: async (requestAiAnalysis = false) => {
       const pendingActivation = activationPromise;
       if (pendingActivation !== null) {
         await pendingActivation;

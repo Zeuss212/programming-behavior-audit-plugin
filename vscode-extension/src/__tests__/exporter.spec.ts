@@ -13,6 +13,7 @@ import {
   type JsonValue,
   type PublishedPlan,
 } from '../domain/types';
+import { createCompletedAnalysisLog, serializeAnalysisLog } from '../reports/analysisLog';
 import { FileSessionExporter, FileReportService } from '../reports/exporter';
 import { FileSessionRepository } from '../storage/sessionRepository';
 
@@ -81,8 +82,22 @@ describe('FileReportService and FileSessionExporter', () => {
     const second = await service.materialize(created.session_id);
     expect(second).toEqual(first);
 
-    const aiBytes = new TextEncoder().encode('{"summary":"可选分析"}\n');
-    await repository.writeArtifact(created.session_id, 'ai_analysis', aiBytes);
+    await repository.writeArtifact(
+      created.session_id,
+      'ai_analysis',
+      serializeAnalysisLog(
+        createCompletedAnalysisLog(
+          created.session_id,
+          '2026-08-10T00:04:30.000Z',
+          {
+            schema_version: 1,
+            summary: '可选分析已完成。',
+            observations: [],
+            attention_points: [],
+          },
+        ),
+      ),
+    );
 
     const exporter = new FileSessionExporter(
       repository,
@@ -96,7 +111,7 @@ describe('FileReportService and FileSessionExporter', () => {
     const names = (await readdir(exportDirectory)).sort();
 
     expect(names).toEqual([
-      'ai_analysis.json',
+      'analysis_log.json',
       'classroom_brief.json',
       'manifest.json',
       'operation_log.json',
@@ -118,6 +133,9 @@ describe('FileReportService and FileSessionExporter', () => {
     expect(JSON.parse(await readFile(join(exportDirectory, 'manifest.json'), 'utf8'))).toEqual(
       manifest,
     );
+    expect(JSON.parse(await readFile(join(exportDirectory, 'analysis_log.json'), 'utf8'))).toMatchObject({
+      status: 'completed',
+    });
 
     await expect(
       exporter.exportSession(created.session_id, { fsPath: destinationRoot }),
@@ -130,6 +148,62 @@ describe('FileReportService and FileSessionExporter', () => {
 
     await expect(service.materialize(created.session_id)).rejects.toMatchObject({
       code: 'session_conflict',
+    });
+  });
+
+  it('exports a hash-listed skipped analysis log when no AI artifact exists', async () => {
+    const created = await repository.create(plan(), 'workspace-export-001');
+    await repository.append(created.session_id, [event(created.session_id)]);
+    await repository.transition(created.session_id, 'collecting', 'finalizing');
+    await repository.transition(created.session_id, 'finalizing', 'completed');
+    await new FileReportService(repository, () => new Date('2026-08-10T00:04:00.000Z')).materialize(
+      created.session_id,
+    );
+
+    const manifest = await new FileSessionExporter(
+      repository,
+      '0.1.0',
+      () => new Date('2026-08-10T00:05:00.000Z'),
+    ).exportSession(created.session_id, { fsPath: destinationRoot });
+    const exported = await readFile(
+      join(destinationRoot, created.session_id, 'analysis_log.json'),
+      'utf8',
+    );
+
+    expect(JSON.parse(exported)).toMatchObject({
+      status: 'skipped',
+      reason: { code: 'analysis_unavailable' },
+    });
+    expect(manifest.files.map((file) => file.path)).toContain('analysis_log.json');
+  });
+
+  it('wraps a historical raw AI analysis artifact in the stable export contract', async () => {
+    const created = await repository.create(plan(), 'workspace-export-001');
+    await repository.append(created.session_id, [event(created.session_id)]);
+    await repository.transition(created.session_id, 'collecting', 'finalizing');
+    await repository.transition(created.session_id, 'finalizing', 'completed');
+    await new FileReportService(repository, () => new Date('2026-08-10T00:04:00.000Z')).materialize(
+      created.session_id,
+    );
+    await repository.writeArtifact(
+      created.session_id,
+      'ai_analysis',
+      new TextEncoder().encode(
+        '{"schema_version":1,"summary":"历史建议","observations":[],"attention_points":[]}\n',
+      ),
+    );
+
+    await new FileSessionExporter(
+      repository,
+      '0.1.0',
+      () => new Date('2026-08-10T00:05:00.000Z'),
+    ).exportSession(created.session_id, { fsPath: destinationRoot });
+
+    expect(
+      JSON.parse(await readFile(join(destinationRoot, created.session_id, 'analysis_log.json'), 'utf8')),
+    ).toMatchObject({
+      status: 'completed',
+      analysis: { summary: '历史建议' },
     });
   });
 

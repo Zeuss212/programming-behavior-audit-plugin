@@ -8,6 +8,7 @@
   const status = document.getElementById('status');
   const notice = document.getElementById('notice');
   const consent = document.getElementById('consent');
+  const autoAnalyze = document.getElementById('auto-analyze');
 
   function setRoute(route) {
     for (const button of routeButtons) {
@@ -39,6 +40,10 @@
     vscode.postMessage({ type: 'setConsent', value: consent.checked });
   });
 
+  autoAnalyze?.addEventListener('change', () => {
+    vscode.postMessage({ type: 'setAutoAnalyze', value: autoAnalyze.checked });
+  });
+
   window.addEventListener('message', (event) => {
     const message = event.data;
     if (message?.type === 'notice') {
@@ -51,6 +56,7 @@
     const state = message.value;
     setRoute(state.route === 'student' ? 'student' : 'teacher');
     consent.checked = state.consent === true;
+    autoAnalyze.checked = state.autoAnalyze !== false;
     notice.textContent = typeof state.notice === 'string' ? state.notice : '';
     if (state.session?.status === 'collecting') {
       status.textContent = `正在监控，共记录 ${String(state.session.eventCount)} 个事件。`;

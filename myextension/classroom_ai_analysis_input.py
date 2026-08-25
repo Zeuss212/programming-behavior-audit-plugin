@@ -31,10 +31,14 @@ _COMMON_SECRET = re.compile(
     r"AIza[A-Za-z0-9_-]{20,}|ya29\.[A-Za-z0-9._-]{20,})\b"
 )
 _QUOTED_OPAQUE_LITERAL = re.compile(
-    r"(?P<quote>['\"])(?P<secret>[A-Za-z0-9_-]{32,})(?P=quote)"
+    r"(?P<quote>['\"])(?P<secret>[A-Za-z0-9._+/=-]{32,})(?P=quote)"
 )
 _COMMENT_OPAQUE_LITERAL = re.compile(
-    r"(?m)(?P<prefix>^\s*#\s*)(?P<secret>[A-Za-z0-9_-]{32,})(?=\s*$)"
+    r"(?m)(?P<prefix>^\s*#\s*)(?P<secret>[A-Za-z0-9._+/=-]{32,})(?=\s*$)"
+)
+_OPAQUE_TOKEN = re.compile(
+    r"(?<![A-Za-z0-9._+/=-])(?P<secret>[A-Za-z0-9._+/=-]{32,})"
+    r"(?![A-Za-z0-9._+/=-])"
 )
 
 
@@ -77,6 +81,7 @@ def _safe_source(value: str) -> str:
     scrubbed = _scrub_untrusted_text(value)
     for pattern in (_EMAIL, _URL, _JWT, _BARE_SECRET, _COMMON_SECRET):
         scrubbed = pattern.sub("[redacted]", scrubbed)
+    scrubbed = _OPAQUE_TOKEN.sub(_redact_opaque_token, scrubbed)
     scrubbed = _QUOTED_OPAQUE_LITERAL.sub(_redact_quoted_opaque_literal, scrubbed)
     return _COMMENT_OPAQUE_LITERAL.sub(_redact_comment_opaque_literal, scrubbed)
 
@@ -84,15 +89,21 @@ def _safe_source(value: str) -> str:
 def _is_opaque_secret(value: str) -> bool:
     """Conservatively recognise random-looking values only in literals/comments."""
 
+    hexadecimal = (
+        len(value) >= 48
+        and re.fullmatch(r"[0-9A-Fa-f]+", value) is not None
+        and any(char.isalpha() for char in value)
+        and any(char.isdigit() for char in value)
+    )
     categories = sum(
         (
             any(char.islower() for char in value),
             any(char.isupper() for char in value),
             any(char.isdigit() for char in value),
-            any(char in "_-" for char in value),
+            any(char in "._-/+=" for char in value),
         )
     )
-    return categories >= 3 and len(set(value)) >= 12
+    return (hexadecimal or categories >= 3) and len(set(value)) >= 12
 
 
 def _redact_quoted_opaque_literal(match: re.Match[str]) -> str:
@@ -101,6 +112,11 @@ def _redact_quoted_opaque_literal(match: re.Match[str]) -> str:
         return match.group(0)
     quote = match.group("quote")
     return f"{quote}[redacted]{quote}"
+
+
+def _redact_opaque_token(match: re.Match[str]) -> str:
+    secret = match.group("secret")
+    return "[redacted]" if _is_opaque_secret(secret) else secret
 
 
 def _redact_comment_opaque_literal(match: re.Match[str]) -> str:

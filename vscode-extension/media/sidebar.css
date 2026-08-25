@@ -94,6 +94,19 @@ input:focus-visible {
   color: var(--vscode-descriptionForeground);
 }
 
+.primary-action {
+  font-weight: 600;
+}
+
+.secondary-action {
+  color: var(--vscode-button-secondaryForeground);
+  background: var(--vscode-button-secondaryBackground);
+}
+
+.secondary-action:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+
 [hidden] {
   display: none !important;
 }

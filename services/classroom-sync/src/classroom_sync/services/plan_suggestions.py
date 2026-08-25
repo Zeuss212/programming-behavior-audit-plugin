@@ -287,8 +287,12 @@ class OpenAiPlanSuggestionService:
 
     def __init__(self, settings: AiProviderSettings | None, client: httpx.Client) -> None:
         self._settings = settings
-        self._uses_coding_plan_profile = (
-            settings is not None and "coding" in urlsplit(settings.base_url).path.split("/")
+        provider_path_segments = (
+            set(urlsplit(settings.base_url).path.split("/")) if settings is not None else set()
+        )
+        self._uses_coding_plan_profile = "coding" in provider_path_segments
+        self._disables_deep_thinking = bool(
+            provider_path_segments.intersection({"coding", "plan"})
         )
         self._completion_client = (
             OpenAiCompletionClient(settings, client) if settings is not None else None
@@ -299,7 +303,7 @@ class OpenAiPlanSuggestionService:
         if completion_client is None:
             raise AiSuggestionUnavailableError("ai_suggestion_not_configured")
         thinking_mode: Literal["disabled"] | None = (
-            "disabled" if self._uses_coding_plan_profile else None
+            "disabled" if self._disables_deep_thinking else None
         )
         max_tokens = 2048 if self._uses_coding_plan_profile else 1200
         messages = self._messages(
@@ -337,8 +341,12 @@ class OpenAiPlanSuggestionService:
             suggestion = self._parse_provider_suggestion(completion.content)
         except (json.JSONDecodeError, KeyError, TypeError, PydanticValidationError, ValueError) as error:
             logger.warning(
-                "AI plan suggestion response rejected: error_type=%s",
+                "AI plan suggestion response rejected: error_type=%s "
+                "finish_reason=%s content_length=%d fenced=%s",
                 type(error).__name__,
+                self._safe_finish_reason(completion.finish_reason),
+                len(completion.content),
+                str(completion.content.lstrip().startswith("```")).lower(),
             )
             raise UpstreamUnavailableError(
                 "ai_suggestion_response_invalid", retryable=False
@@ -357,7 +365,7 @@ class OpenAiPlanSuggestionService:
         allowlist.  A malformed optional rule therefore cannot weaken the
         boundary or discard the independently valid teaching suggestions.
         """
-        payload = json.loads(cls._strip_optional_json_fence(content))
+        payload = json.loads(cls._extract_json_object(content))
         if not isinstance(payload, dict):
             raise TypeError("provider suggestion is not an object")
 
@@ -442,3 +450,36 @@ class OpenAiPlanSuggestionService:
         if len(lines) < 3 or not lines[0].lower().startswith("```json") or lines[-1] != "```":
             raise ValueError("provider fenced response is invalid")
         return "\n".join(lines[1:-1]).strip()
+
+    @classmethod
+    def _extract_json_object(cls, content: str) -> str:
+        value = cls._strip_optional_json_fence(content)
+        try:
+            json.loads(value)
+        except json.JSONDecodeError:
+            decoder = json.JSONDecoder()
+            search_from = 0
+            while True:
+                object_start = value.find("{", search_from)
+                if object_start < 0:
+                    raise
+                try:
+                    payload, object_end = decoder.raw_decode(value, object_start)
+                except json.JSONDecodeError:
+                    search_from = object_start + 1
+                    continue
+                if not isinstance(payload, dict):
+                    search_from = object_start + 1
+                    continue
+                if "{" in value[object_end:] or "}" in value[object_end:]:
+                    raise ValueError("provider response contains ambiguous JSON objects")
+                return value[object_start:object_end]
+        return value
+
+    @staticmethod
+    def _safe_finish_reason(value: str | None) -> str:
+        if value in {"stop", "length", "content_filter", "tool_calls"}:
+            return value
+        if value is None:
+            return "none"
+        return "unknown"

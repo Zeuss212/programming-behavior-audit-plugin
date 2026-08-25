@@ -157,7 +157,7 @@ def test_adapter_uses_standard_chat_completions_profile_for_plan_endpoint() -> N
     assert result.title == "字典课堂练习"
     body = json.loads(recorded[0].content)
     assert body["max_tokens"] == 1200
-    assert "thinking" not in body
+    assert body["thinking"] == {"type": "disabled"}
     assert "response_format" not in body
     system_content = body["messages"][0]["content"]
     assert "automatic_evaluation" not in system_content
@@ -192,6 +192,56 @@ def test_adapter_keeps_a_complete_standard_plan_response_without_a_second_provid
 
     assert result.title == "字典课堂练习"
     assert len(recorded) == 1
+
+
+def test_adapter_accepts_one_json_object_surrounded_by_provider_explanation() -> None:
+    recorded: list[httpx.Request] = []
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        recorded.append(request)
+        payload = json.dumps(
+            {
+                "title": "字典课堂练习",
+                "knowledge_points": [
+                    {"name": "字典读取", "description": "按键读取并验证结果。"}
+                ],
+            },
+            ensure_ascii=False,
+        )
+        return response_with(f"以下是课堂方案建议：\n{payload}\n请教师确认后使用。")
+
+    service = OpenAiPlanSuggestionService(
+        AiSuggestionSettings.from_settings(
+            configured_settings(ai_base_url="https://ark.example/api/plan/v3")
+        ),
+        httpx.Client(transport=httpx.MockTransport(responder)),
+    )
+
+    result = service.generate(PlanSuggestionInput(title="", statement="实现字典查询"))
+
+    assert result.title == "字典课堂练习"
+    assert result.knowledge_points[0].name == "字典读取"
+    assert len(recorded) == 1
+
+
+def test_adapter_rejects_provider_explanation_with_two_json_objects() -> None:
+    payload = json.dumps(
+        {
+            "title": "字典课堂练习",
+            "knowledge_points": [
+                {"name": "字典读取", "description": "按键读取并验证结果。"}
+            ],
+        },
+        ensure_ascii=False,
+    )
+    content = f"候选一：{payload}\n候选二：{payload}"
+    service = OpenAiPlanSuggestionService(
+        AiSuggestionSettings.from_settings(configured_settings()),
+        httpx.Client(transport=httpx.MockTransport(lambda _request: response_with(content))),
+    )
+
+    with pytest.raises(UpstreamUnavailableError, match="ai_suggestion_response_invalid"):
+        service.generate(PlanSuggestionInput(title="", statement="实现字典查询"))
 
 
 def test_adapter_retries_once_with_4096_tokens_after_a_length_response() -> None:
@@ -398,6 +448,40 @@ def test_adapter_logs_only_the_safe_provider_failure_code(caplog: pytest.LogCapt
 
         assert "ai_provider_rate_limited" in caplog.text
         assert "不应记录的教学目标" not in caplog.text
+        assert "server-only-secret" not in caplog.text
+    finally:
+        target_logger.disabled = was_disabled
+        target_logger.propagate = previous_propagate
+
+
+def test_adapter_logs_safe_response_shape_without_provider_content(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    target_logger = logging.getLogger("classroom_sync.services.plan_suggestions")
+    was_disabled = target_logger.disabled
+    previous_propagate = target_logger.propagate
+    target_logger.disabled = False
+    target_logger.propagate = True
+    caplog.set_level("WARNING", logger=target_logger.name)
+    provider_content = "not-json-secret-marker"
+    try:
+        service = OpenAiPlanSuggestionService(
+            AiSuggestionSettings.from_settings(configured_settings()),
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda _request: response_with(provider_content, finish_reason="stop")
+                )
+            ),
+        )
+
+        with pytest.raises(UpstreamUnavailableError, match="ai_suggestion_response_invalid"):
+            service.generate(PlanSuggestionInput(title="", statement="实现字典查询"))
+
+        assert "error_type=JSONDecodeError" in caplog.text
+        assert "finish_reason=stop" in caplog.text
+        assert "content_length=22" in caplog.text
+        assert "fenced=false" in caplog.text
+        assert provider_content not in caplog.text
         assert "server-only-secret" not in caplog.text
     finally:
         target_logger.disabled = was_disabled

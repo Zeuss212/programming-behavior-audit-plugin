@@ -137,6 +137,31 @@ def test_v2_publish_requires_current_teacher_confirmations(tmp_path):
         store.publish(created["profile_id"])
 
 
+def test_v2_profile_preserves_a_valid_automatic_evaluation_rule(tmp_path):
+    payload = make_assessment_profile(confirmed=False)
+    payload["knowledge_points"][0]["automatic_evaluation"] = {
+        "mode": "all",
+        "summary": "创建字典并使用带默认值的安全查询后成功运行。",
+        "requirements": [
+            {"kind": "successful_execution"},
+            {"kind": "dict_literal_assignment"},
+            {"kind": "dict_get_with_default"},
+        ],
+    }
+
+    created = DimensionProfileStore(tmp_path).create_draft(payload)
+
+    assert created["knowledge_points"][0]["automatic_evaluation"] == {
+        "mode": "all",
+        "summary": "创建字典并使用带默认值的安全查询后成功运行。",
+        "requirements": [
+            {"kind": "successful_execution"},
+            {"kind": "dict_literal_assignment"},
+            {"kind": "dict_get_with_default"},
+        ],
+    }
+
+
 def test_v2_rejects_a_stale_knowledge_confirmation():
     payload = make_assessment_profile()
     payload["knowledge_points"][0]["name"] = "修改后的知识点"

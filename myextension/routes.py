@@ -1676,10 +1676,14 @@ class PlatformSessionSubmitRouteHandler(PilotAPIHandler):
                 )
             body = _closed_body(
                 self.read_json_object(max_bytes=4_096),
-                {"schema_version", "reason"},
+                {"schema_version", "reason", "request_ai_analysis"},
                 code="platform_submission_validation_failed",
             )
-            if body["schema_version"] != 1 or body["reason"] != "student_manual":
+            if (
+                body["schema_version"] != 1
+                or body["reason"] != "student_manual"
+                or not isinstance(body["request_ai_analysis"], bool)
+            ):
                 raise ApiRequestError(
                     422,
                     "platform_submission_validation_failed",
@@ -1699,6 +1703,7 @@ class PlatformSessionSubmitRouteHandler(PilotAPIHandler):
                 canonical_id,
                 reason="student_manual",
                 cutoff_at=cutoff_at,
+                request_ai_analysis=body["request_ai_analysis"],
             )
             self.finish_json(
                 {
@@ -1863,16 +1868,25 @@ class SessionFinalizeRouteHandler(PilotAPIHandler):
     @tornado.web.authenticated
     def post(self, session_id):
         try:
-            body = _closed_body(
-                self.read_json_object(),
-                {"schema_version", "last_sequence"},
-                code="session_validation_failed",
-            )
+            body = self.read_json_object()
+            if not {"schema_version", "last_sequence"}.issubset(body) or not set(
+                body
+            ).issubset(
+                {"schema_version", "last_sequence", "request_ai_analysis"}
+            ):
+                raise ApiRequestError(
+                    422,
+                    "session_validation_failed",
+                    "请求内容未通过校验。",
+                    details={"field": "$", "reason": "unknown_or_missing_field"},
+                )
+            request_ai_analysis = body.get("request_ai_analysis", False)
             if (
                 body["schema_version"] != 1
                 or not isinstance(body["last_sequence"], int)
                 or isinstance(body["last_sequence"], bool)
                 or body["last_sequence"] < 0
+                or not isinstance(request_ai_analysis, bool)
             ):
                 raise ApiRequestError(
                     422,
@@ -1892,21 +1906,24 @@ class SessionFinalizeRouteHandler(PilotAPIHandler):
                 canonical_id,
                 last_sequence=body["last_sequence"],
             )
-            input_hash = compute_input_snapshot_hash(
-                session_store,
-                canonical_id,
-            )
-            job = job_store.create(
-                session=finalized,
-                input_snapshot_hash=input_hash,
-            )
-            attached = session_store.attach_job(
-                canonical_id,
-                str(job["job_id"]),
-            )
+            attached = finalized
+            job = None
+            if request_ai_analysis:
+                input_hash = compute_input_snapshot_hash(
+                    session_store,
+                    canonical_id,
+                )
+                job = job_store.create(
+                    session=finalized,
+                    input_snapshot_hash=input_hash,
+                )
+                attached = session_store.attach_job(
+                    canonical_id,
+                    str(job["job_id"]),
+                )
             self._refresh_training_record(canonical_id)
             self._refresh_classroom_brief(canonical_id)
-            if job.get("status") == "queued":
+            if job is not None and job.get("status") == "queued":
                 worker.enqueue(str(job["job_id"]))
             self.finish_json(
                 {
@@ -1915,7 +1932,7 @@ class SessionFinalizeRouteHandler(PilotAPIHandler):
                     "last_contiguous_sequence": attached[
                         "last_contiguous_sequence"
                     ],
-                    "analysis_job_id": attached["analysis_job_id"],
+                    "analysis_job_id": attached.get("analysis_job_id"),
                 },
                 status=202,
             )

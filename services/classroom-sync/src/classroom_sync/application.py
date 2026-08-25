@@ -10,6 +10,7 @@ from classroom_sync.services.assignments import AssignmentService
 from classroom_sync.services.brief_analysis import BriefAnalysisJobService
 from classroom_sync.services.briefs import BriefService
 from classroom_sync.services.deadlines import DeadlineService
+from classroom_sync.services.plan_suggestion_jobs import PlanSuggestionJobService
 from classroom_sync.services.plan_suggestions import PlanSuggestion, PlanSuggestionInput
 from classroom_sync.services.plans import PlanService
 from classroom_sync.services.read_models import ClassroomReadService
@@ -48,4 +49,5 @@ class ClassroomServices:
     deadline_service: DeadlineService | None = None
     read_service: ClassroomReadService | None = None
     plan_suggestion_service: ClassroomPlanSuggestionService | None = None
+    plan_suggestion_job_service: PlanSuggestionJobService | None = None
     brief_analysis_service: BriefAnalysisJobService | None = None

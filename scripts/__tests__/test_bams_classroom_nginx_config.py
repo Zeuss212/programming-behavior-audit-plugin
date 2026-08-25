@@ -15,6 +15,8 @@ def test_bams_ingress_renders_a_syntax_valid_proxy_without_sensitive_logging(
 
     assert "location = /classroom-api" in config
     assert "location ~ ^/classroom-api/v1/classroom/classrooms/[^/]+/events$" in config
+    assert "location = /classroom-api/v1/classroom/plan-suggestions" in config
+    assert "proxy_read_timeout 75s;" in config
     assert "location /classroom-api/" in config
     assert "proxy_pass ${CLASSROOM_SYNC_UPSTREAM};" in config
     assert "proxy_set_header Authorization $http_authorization;" in config

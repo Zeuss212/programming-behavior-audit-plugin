@@ -1970,6 +1970,40 @@ async def test_segment_api_maps_normalized_sequence_gap(
     }
 
 
+async def test_session_finalize_can_skip_local_ai_for_classroom_consent(
+    jp_fetch,
+    jp_web_app,
+    monkeypatch,
+):
+    worker = install_synchronous_worker(jp_web_app, monkeypatch)
+    profile = await create_published_profile(jp_fetch)
+    started = await start_pilot_session(jp_fetch, profile)
+
+    response = await jp_fetch(
+        "myextension",
+        "sessions",
+        started["session_id"],
+        "finalize",
+        method="POST",
+        body=json.dumps(
+            {
+                "schema_version": 1,
+                "last_sequence": 0,
+                "request_ai_analysis": False,
+            }
+        ),
+        headers={"Content-Type": "application/json"},
+        raise_error=False,
+    )
+
+    assert response.code == 202
+    payload = response_json(response)
+    openapi_validator("SessionFinalizeResponse").validate(payload)
+    assert payload["analysis_job_id"] is None
+    assert worker.session_store.read(started["session_id"])["analysis_job_id"] is None
+    assert worker.enqueued == []
+
+
 async def test_session_start_finalize_replay_and_public_job_use_live_services(
     jp_fetch,
     jp_web_app,

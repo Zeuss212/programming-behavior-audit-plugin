@@ -36,7 +36,8 @@ type UploadSegmentBatch = (
 type FinalizeSession = (
   settings: ServerConnection.ISettings,
   sessionId: string,
-  lastSequence: number
+  lastSequence: number,
+  requestAiAnalysis?: boolean
 ) => Promise<ISessionFinalizeResponse>;
 
 export interface IBehaviorEventUploaderDependencies {
@@ -310,7 +311,7 @@ export class BehaviorEventUploader implements IBehaviorSegmentSink {
     return operation;
   }
 
-  finalize(): Promise<ISessionFinalizeResponse> {
+  finalize(requestAiAnalysis = true): Promise<ISessionFinalizeResponse> {
     if (this.finalizePromise) {
       return this.finalizePromise;
     }
@@ -324,7 +325,7 @@ export class BehaviorEventUploader implements IBehaviorSegmentSink {
       );
     }
 
-    const operation = this.runFinalize();
+    const operation = this.runFinalize(requestAiAnalysis);
     this.finalizePromise = operation;
     operation.then(
       () => {
@@ -506,7 +507,9 @@ export class BehaviorEventUploader implements IBehaviorSegmentSink {
     return this.snapshot();
   }
 
-  private async runFinalize(): Promise<ISessionFinalizeResponse> {
+  private async runFinalize(
+    requestAiAnalysis: boolean
+  ): Promise<ISessionFinalizeResponse> {
     const session = this.session;
     if (!session) {
       throw new Error('Finalize requires an active upload session.');
@@ -532,7 +535,8 @@ export class BehaviorEventUploader implements IBehaviorSegmentSink {
       const response = await this.dependencies.finalizeSession(
         this.serverSettings,
         session.session_id,
-        this.lastSequence
+        this.lastSequence,
+        requestAiAnalysis
       );
       if (
         response.schema_version !== 1 ||

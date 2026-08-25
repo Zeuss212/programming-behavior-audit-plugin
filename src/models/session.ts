@@ -20,7 +20,7 @@ export interface ISessionFinalizeResponse {
   session_id: string;
   status: 'finalized';
   last_contiguous_sequence: number;
-  analysis_job_id: string;
+  analysis_job_id: string | null;
 }
 
 export interface ISessionState {

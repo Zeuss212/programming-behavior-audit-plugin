@@ -44,7 +44,8 @@ export function registerClassroomTicket(
 /** Submit through the authenticated local Jupyter server; no platform token enters the browser. */
 export function submitClassroomBrief(
   settings: ServerConnection.ISettings,
-  sessionId: string
+  sessionId: string,
+  requestAiAnalysis: boolean
 ): Promise<IClassroomSubmission> {
   return requestAPI<IClassroomSubmission>(
     `platform/sessions/${encodeURIComponent(sessionId)}/submit`,
@@ -53,7 +54,8 @@ export function submitClassroomBrief(
       method: 'POST',
       body: JSON.stringify({
         schema_version: 1,
-        reason: 'student_manual'
+        reason: 'student_manual',
+        request_ai_analysis: requestAiAnalysis
       }),
       headers: { 'Content-Type': 'application/json' }
     }

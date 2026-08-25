@@ -68,14 +68,14 @@ def test_ai_provider_settings_accept_coding_plan_url_and_bound_timeout() -> None
         ai_base_url="https://open.bigmodel.cn/api/coding/paas/v4",
         ai_model="glm-5.2",
         ai_api_key="server-only-secret",
-        ai_timeout_seconds=30,
+        ai_timeout_seconds=180,
     )
 
     provider = AiProviderSettings.from_settings(settings)
 
     assert provider is not None
     assert provider.base_url == "https://open.bigmodel.cn/api/coding/paas/v4"
-    assert provider.timeout_seconds == 30
+    assert provider.timeout_seconds == 180
 
     with pytest.raises(AiSuggestionUnavailableError, match="ai_suggestion_not_configured"):
         AiProviderSettings.from_settings(
@@ -84,7 +84,7 @@ def test_ai_provider_settings_accept_coding_plan_url_and_bound_timeout() -> None
                 ai_base_url="https://open.bigmodel.cn/api/coding/paas/v4",
                 ai_model="glm-5.2",
                 ai_api_key="server-only-secret",
-                ai_timeout_seconds=31,
+                ai_timeout_seconds=181,
             )
         )
 

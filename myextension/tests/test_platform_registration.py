@@ -385,8 +385,8 @@ async def test_jupyter_manual_submission_uses_the_server_side_coordinator(
         def __init__(self) -> None:
             self.calls = []
 
-        def submit(self, session_id, *, reason, cutoff_at):
-            self.calls.append((session_id, reason, cutoff_at))
+        def submit(self, session_id, *, reason, cutoff_at, request_ai_analysis):
+            self.calls.append((session_id, reason, cutoff_at, request_ai_analysis))
             return SubmissionResult(
                 session_id=session_id,
                 status="submitted",
@@ -414,7 +414,13 @@ async def test_jupyter_manual_submission_uses_the_server_side_coordinator(
         context().session_id,
         "submit",
         method="POST",
-        body=json.dumps({"schema_version": 1, "reason": "student_manual"}),
+        body=json.dumps(
+            {
+                "schema_version": 1,
+                "reason": "student_manual",
+                "request_ai_analysis": True,
+            }
+        ),
         headers={"Content-Type": "application/json"},
         raise_error=False,
     )
@@ -424,4 +430,39 @@ async def test_jupyter_manual_submission_uses_the_server_side_coordinator(
     assert payload["status"] == "submitted"
     assert payload["brief_id"] == "4ea8479f-c4bb-4645-9c1f-1593afdc187a"
     assert coordinator.calls[0][:2] == (context().session_id, "student_manual")
+    assert coordinator.calls[0][3] is True
     assert "short-lived-plugin-token" not in response.body.decode("utf-8")
+
+
+async def test_jupyter_manual_submission_rejects_browser_evidence_payload(
+    jp_fetch,
+    monkeypatch,
+    tmp_path: Path,
+):
+    monkeypatch.setenv("JUPYTERLAB_BEHAVIOR_AUDIT_PLATFORM_MODE", "student")
+    monkeypatch.setenv("JUPYTERLAB_BEHAVIOR_AUDIT_SYNC_BASE_URL", "https://sync.example")
+    monkeypatch.setenv("JUPYTERLAB_BEHAVIOR_AUDIT_LOG_DIR", str(tmp_path))
+    PlatformContextStore(tmp_path).save_registered_context(context())
+
+    response = await jp_fetch(
+        "myextension",
+        "platform",
+        "sessions",
+        context().session_id,
+        "submit",
+        method="POST",
+        body=json.dumps(
+            {
+                "schema_version": 1,
+                "reason": "student_manual",
+                "request_ai_analysis": False,
+                "code_snapshots": [{"source": "print('private')"}],
+            }
+        ),
+        headers={"Content-Type": "application/json"},
+        raise_error=False,
+    )
+
+    assert response.code == 422
+    assert json.loads(response.body)["code"] == "platform_submission_validation_failed"
+    assert "print('private')" not in response.body.decode("utf-8")

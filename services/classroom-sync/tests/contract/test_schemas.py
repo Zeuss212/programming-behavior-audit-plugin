@@ -264,16 +264,22 @@ def test_student_brief_accepts_only_bounded_auxiliary_ai_analysis(
 ):
     payload = valid_student_brief()
     payload["ai_analysis"] = {
-        "learning_overview": "学生完成字典读取并进行了两次运行验证。",
-        "evidence_based_observations": ["提交摘要显示学生修正过一次键访问错误。"],
-        "teaching_suggestions": ["追问缺失键与默认值的处理方式。"],
+        "knowledge_point_analyses": [
+            {
+                "knowledge_point_id": "KP_DICT0001",
+                "status": "observed",
+                "evidence_event_ids": ["chunk-1#event-1"],
+                "teaching_suggestion": "追问缺失键与默认值的处理方式。",
+            }
+        ],
+        "teacher_note": "仅反映本次过程证据，仍需教师复核。",
     }
 
     schema_registry.validate("student-brief", payload)
 
     analysis = payload["ai_analysis"]
     assert isinstance(analysis, dict)
-    analysis["learning_overview"] = "长" * 1001
+    analysis["teacher_note"] = "长" * 501
 
     with pytest.raises(ValidationError):
         schema_registry.validate("student-brief", payload)

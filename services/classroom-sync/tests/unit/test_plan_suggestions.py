@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 import httpx
 import pytest
@@ -79,7 +80,19 @@ def test_adapter_uses_the_fast_json_profile_for_bounded_teaching_text() -> None:
                 {
                     "title": "字典课堂练习",
                     "knowledge_points": [
-                        {"name": "字典读取", "description": "按键读取并验证结果。"}
+                        {
+                            "name": "字典读取",
+                            "description": "按键读取并验证结果。",
+                            "automatic_evaluation": {
+                                "mode": "all",
+                                "summary": "创建字典后进行安全查询并成功运行。",
+                                "requirements": [
+                                    {"kind": "successful_execution"},
+                                    {"kind": "dict_literal_assignment"},
+                                    {"kind": "dict_get_with_default"},
+                                ],
+                            },
+                        }
                     ],
                 }
             )
@@ -87,22 +100,98 @@ def test_adapter_uses_the_fast_json_profile_for_bounded_teaching_text() -> None:
 
     client = httpx.Client(transport=httpx.MockTransport(responder))
     service = OpenAiPlanSuggestionService(
-        AiSuggestionSettings.from_settings(configured_settings()), client
+        AiSuggestionSettings.from_settings(
+            configured_settings(ai_base_url="https://ark.example/api/coding/v3")
+        ),
+        client,
     )
 
     result = service.generate(PlanSuggestionInput(title="", statement="实现字典查询"))
 
     assert result.title == "字典课堂练习"
     assert result.knowledge_points[0].name == "字典读取"
-    assert recorded[0].url == "https://ai.example/v1/chat/completions"
+    assert result.knowledge_points[0].automatic_evaluation is not None
+    assert [
+        requirement.kind
+        for requirement in result.knowledge_points[0].automatic_evaluation.requirements
+    ] == ["successful_execution", "dict_literal_assignment", "dict_get_with_default"]
+    assert recorded[0].url == "https://ark.example/api/coding/v3/chat/completions"
     assert recorded[0].headers["authorization"] == "Bearer server-only-secret"
     body = json.loads(recorded[0].content)
     assert body["temperature"] == 0.2
     assert body["max_tokens"] == 2048
     assert body["thinking"] == {"type": "disabled"}
     assert body["response_format"] == {"type": "json_object"}
+    system_content = body["messages"][0]["content"]
+    assert "automatic_evaluation" in system_content
+    assert "dict_get_with_default" in system_content
     assert "server-only-secret" not in recorded[0].content.decode("utf-8")
     assert "实现字典查询" in recorded[0].content.decode("utf-8")
+
+
+def test_adapter_uses_standard_chat_completions_profile_for_plan_endpoint() -> None:
+    recorded: list[httpx.Request] = []
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        recorded.append(request)
+        return response_with(
+            json.dumps(
+                {
+                    "title": "字典课堂练习",
+                    "knowledge_points": [
+                        {"name": "字典读取", "description": "按键读取并验证结果。"}
+                    ],
+                }
+            )
+        )
+
+    service = OpenAiPlanSuggestionService(
+        AiSuggestionSettings.from_settings(
+            configured_settings(ai_base_url="https://ark.example/api/plan/v3")
+        ),
+        httpx.Client(transport=httpx.MockTransport(responder)),
+    )
+
+    result = service.generate(PlanSuggestionInput(title="", statement="实现字典查询"))
+
+    assert result.title == "字典课堂练习"
+    body = json.loads(recorded[0].content)
+    assert body["max_tokens"] == 1200
+    assert "thinking" not in body
+    assert "response_format" not in body
+    system_content = body["messages"][0]["content"]
+    assert "automatic_evaluation" not in system_content
+    assert "dict_get_with_default" not in system_content
+
+
+def test_adapter_keeps_a_complete_standard_plan_response_without_a_second_provider_call() -> None:
+    recorded: list[httpx.Request] = []
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        recorded.append(request)
+        return response_with(
+            json.dumps(
+                {
+                    "title": "字典课堂练习",
+                    "knowledge_points": [
+                        {"name": "字典读取", "description": "按键读取并验证结果。"}
+                    ],
+                }
+            ),
+            finish_reason="length",
+        )
+
+    service = OpenAiPlanSuggestionService(
+        AiSuggestionSettings.from_settings(
+            configured_settings(ai_base_url="https://ark.example/api/plan/v3")
+        ),
+        httpx.Client(transport=httpx.MockTransport(responder)),
+    )
+
+    result = service.generate(PlanSuggestionInput(title="", statement="实现字典查询"))
+
+    assert result.title == "字典课堂练习"
+    assert len(recorded) == 1
 
 
 def test_adapter_retries_once_with_4096_tokens_after_a_length_response() -> None:
@@ -131,7 +220,9 @@ def test_adapter_retries_once_with_4096_tokens_after_a_length_response() -> None
         return next(responses)
 
     service = OpenAiPlanSuggestionService(
-        AiSuggestionSettings.from_settings(configured_settings()),
+        AiSuggestionSettings.from_settings(
+            configured_settings(ai_base_url="https://ark.example/api/coding/v3")
+        ),
         httpx.Client(transport=httpx.MockTransport(responder)),
     )
 
@@ -193,8 +284,87 @@ def test_adapter_rejects_malformed_or_out_of_bound_provider_output(content: str)
         AiSuggestionSettings.from_settings(configured_settings()), client
     )
 
-    with pytest.raises(UpstreamUnavailableError, match="ai_suggestion_upstream_unavailable"):
+    with pytest.raises(UpstreamUnavailableError, match="ai_suggestion_response_invalid"):
         service.generate(PlanSuggestionInput(title="", statement="实现字典查询"))
+
+
+def test_adapter_rejects_provider_output_with_sensitive_transport_text() -> None:
+    content = json.dumps(
+        {
+            "title": "字典课堂练习",
+            "knowledge_points": [
+                {
+                    "name": "字典读取",
+                    "description": "查看 https://provider.example/raw-output 后完成练习。",
+                }
+            ],
+        }
+    )
+    service = OpenAiPlanSuggestionService(
+        AiSuggestionSettings.from_settings(configured_settings()),
+        httpx.Client(transport=httpx.MockTransport(lambda _request: response_with(content))),
+    )
+
+    with pytest.raises(UpstreamUnavailableError, match="ai_suggestion_response_invalid"):
+        service.generate(PlanSuggestionInput(title="", statement="实现字典查询"))
+
+
+def test_adapter_discards_an_unsupported_optional_automatic_evaluation_rule() -> None:
+    content = json.dumps(
+        {
+            "title": "字典课堂练习",
+            "knowledge_points": [
+                {
+                    "name": "字典读取",
+                    "description": "按键读取并验证结果。",
+                    "automatic_evaluation": {
+                        "mode": "all",
+                        "summary": "这是不安全的规则。",
+                        "requirements": [{"kind": "arbitrary_python"}],
+                    },
+                }
+            ],
+        }
+    )
+    client = httpx.Client(transport=httpx.MockTransport(lambda _request: response_with(content)))
+    service = OpenAiPlanSuggestionService(
+        AiSuggestionSettings.from_settings(configured_settings()), client
+    )
+
+    result = service.generate(PlanSuggestionInput(title="", statement="实现字典查询"))
+
+    assert result.title == "字典课堂练习"
+    assert result.knowledge_points[0].name == "字典读取"
+    assert result.knowledge_points[0].automatic_evaluation is None
+
+
+def test_adapter_ignores_noncontract_explanation_fields_from_the_provider() -> None:
+    content = json.dumps(
+        {
+            "title": "字典课堂练习",
+            "teaching_rationale": "该字段只供模型说明，不能进入课堂方案。",
+            "knowledge_points": [
+                {
+                    "name": "字典读取",
+                    "description": "按键读取并验证结果。",
+                    "evidence_hint": "观察 get 调用。",
+                }
+            ],
+        }
+    )
+    service = OpenAiPlanSuggestionService(
+        AiSuggestionSettings.from_settings(configured_settings()),
+        httpx.Client(transport=httpx.MockTransport(lambda _request: response_with(content))),
+    )
+
+    result = service.generate(PlanSuggestionInput(title="", statement="实现字典查询"))
+
+    assert result.title == "字典课堂练习"
+    assert result.knowledge_points[0].model_dump() == {
+        "name": "字典读取",
+        "description": "按键读取并验证结果。",
+        "automatic_evaluation": None,
+    }
 
 
 @pytest.mark.parametrize("status_code", [429, 500])
@@ -208,6 +378,30 @@ def test_adapter_maps_provider_unavailability_to_a_safe_retryable_error(status_c
 
     with pytest.raises(UpstreamUnavailableError, match="ai_suggestion_upstream_unavailable"):
         service.generate(PlanSuggestionInput(title="", statement="实现字典查询"))
+
+
+def test_adapter_logs_only_the_safe_provider_failure_code(caplog: pytest.LogCaptureFixture) -> None:
+    target_logger = logging.getLogger("classroom_sync.services.plan_suggestions")
+    was_disabled = target_logger.disabled
+    previous_propagate = target_logger.propagate
+    target_logger.disabled = False
+    target_logger.propagate = True
+    caplog.set_level("WARNING", logger=target_logger.name)
+    try:
+        service = OpenAiPlanSuggestionService(
+            AiSuggestionSettings.from_settings(configured_settings()),
+            httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(429))),
+        )
+
+        with pytest.raises(UpstreamUnavailableError, match="ai_suggestion_upstream_unavailable"):
+            service.generate(PlanSuggestionInput(title="", statement="不应记录的教学目标"))
+
+        assert "ai_provider_rate_limited" in caplog.text
+        assert "不应记录的教学目标" not in caplog.text
+        assert "server-only-secret" not in caplog.text
+    finally:
+        target_logger.disabled = was_disabled
+        target_logger.propagate = previous_propagate
 
 
 def test_adapter_maps_provider_timeouts_to_a_safe_retryable_error() -> None:

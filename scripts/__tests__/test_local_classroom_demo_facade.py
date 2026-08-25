@@ -171,3 +171,15 @@ def test_facade_rejects_invalid_login_and_preserves_legacy_student_token_alias()
         status, user = client.request("GET", "/v1/user/info", token="student-token")
         assert status == HTTPStatus.OK
         assert user["username"] == "student001"
+
+
+def test_facade_can_supply_a_bounded_local_roster_for_concurrency_checks(monkeypatch):
+    monkeypatch.setenv("CLASSROOM_MOCK_STUDENT_COUNT", "20")
+    facade = _load_facade_module()
+
+    course_students = [user for user in facade.USERS.values() if user.role_name == "student" and user.space_id == facade.COURSE_ID]
+
+    assert len(course_students) == 20
+    assert facade.authenticate_bearer("student020-token") is not None
+    assert facade.authenticate_bearer("student002-token").space_id == facade.NEGATIVE_COURSE_ID
+    assert len([facade._student_project(student.username) for student in course_students]) == 20

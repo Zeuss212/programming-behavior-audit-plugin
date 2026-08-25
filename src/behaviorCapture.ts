@@ -29,7 +29,7 @@ const PERSISTENCE_FAILURE_REASON = 'active_session_persistence_failed';
 interface IBehaviorCaptureUploader extends IBehaviorSegmentSink {
   start(session: ISessionStartResponse): Promise<void>;
   resume(session: ISessionState): Promise<void>;
-  finalize(): Promise<ISessionFinalizeResponse>;
+  finalize(requestAiAnalysis?: boolean): Promise<ISessionFinalizeResponse>;
   snapshot(): IUploadSnapshot;
   subscribe(listener: (snapshot: IUploadSnapshot) => void): () => void;
 }
@@ -75,7 +75,7 @@ export interface IBehaviorCaptureController {
   snapshot(): IUploadSnapshot;
   start(profile: IProfileReference): Promise<void>;
   resume(session: ISessionState): Promise<void>;
-  stop(): Promise<ISessionFinalizeResponse>;
+  stop(requestAiAnalysis?: boolean): Promise<ISessionFinalizeResponse>;
   subscribe(listener: (snapshot: IUploadSnapshot) => void): () => void;
 }
 
@@ -280,7 +280,7 @@ export function startBehaviorCapture(
     subscribe: listener => uploader.subscribe(listener),
     start: startCapture,
     resume: resumeCapture,
-    stop: async () => {
+    stop: async (requestAiAnalysis = true) => {
       const pendingActivation = activationPromise;
       if (pendingActivation !== null) {
         await pendingActivation;
@@ -290,7 +290,7 @@ export function startBehaviorCapture(
         dependencies.nowIso(),
         notebookMonitor?.getCurrentContext() ?? {}
       );
-      const response = await uploader.finalize();
+      const response = await uploader.finalize(requestAiAnalysis);
       logger.setEnabled(false);
       timelineBuilder.reset();
       editState.reset();

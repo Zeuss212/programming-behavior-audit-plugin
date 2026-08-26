@@ -131,7 +131,7 @@ describe('finish, analyze, and export black-box flow', () => {
     expect(encoder.encode(analysisText).byteLength).toBe(analysisBytes.byteLength);
   });
 
-  it('keeps the generated local analysis when export-folder selection is cancelled', async () => {
+  it('keeps the local classroom brief without starting AI analysis when export-folder selection is cancelled', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'behavior-audit-blind-cancel-storage-'));
     const destinationRoot = await mkdtemp(join(tmpdir(), 'behavior-audit-blind-cancel-export-'));
     const repository = new FileSessionRepository(
@@ -167,12 +167,8 @@ describe('finish, analyze, and export black-box flow', () => {
       chooseDestination: () => Promise.resolve(undefined),
     });
 
-    expect(result).toMatchObject({
-      kind: 'export_cancelled',
-      analysis: { status: 'skipped', reason: { code: 'disabled_by_student' } },
-    });
-    expect(JSON.parse(new TextDecoder().decode(await repository.readArtifact(created.session_id, 'ai_analysis'))))
-      .toMatchObject({ status: 'skipped', reason: { code: 'disabled_by_student' } });
+    expect(result).toEqual({ kind: 'export_cancelled' });
+    expect(await repository.readArtifact(created.session_id, 'ai_analysis')).toBeUndefined();
     expect(await readdir(destinationRoot)).toEqual([]);
   });
 });

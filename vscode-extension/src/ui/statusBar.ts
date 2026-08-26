@@ -8,6 +8,10 @@ export interface StatusBarItemLike {
   dispose(): void;
 }
 
+export interface AuditProgress {
+  readonly message: string;
+}
+
 function elapsed(startedAt: string, now: Date): string {
   const milliseconds = Math.max(0, now.getTime() - new Date(startedAt).getTime());
   const totalSeconds = Math.floor(milliseconds / 1000);
@@ -23,7 +27,13 @@ export class AuditStatusBar {
     private readonly now: () => Date,
   ) {}
 
-  public update(session: SessionState | undefined): void {
+  public update(session: SessionState | undefined, progress?: AuditProgress): void {
+    if (progress !== undefined) {
+      this.item.text = `$(sync~spin) ${progress.message}`;
+      this.item.tooltip = '请勿重复操作，完成后会自动提示。';
+      this.item.show();
+      return;
+    }
     if (session === undefined) {
       this.item.hide();
       return;

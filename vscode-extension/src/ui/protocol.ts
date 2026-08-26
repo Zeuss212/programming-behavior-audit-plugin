@@ -45,6 +45,7 @@ export interface SidebarViewModel {
   readonly selectedPlan?: Readonly<{ planId: string; version: number }>;
   readonly consent: boolean;
   readonly autoAnalyze: boolean;
+  readonly progress?: Readonly<{ message: string }>;
   readonly session?: Readonly<{
     sessionId: string;
     status: 'collecting' | 'interrupted' | 'finalizing' | 'completed' | 'partial' | 'abandoned';

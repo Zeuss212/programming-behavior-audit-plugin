@@ -30,7 +30,12 @@ import {
   type SidebarUri,
   type SidebarWebview,
 } from './ui/sidebarProvider';
-import { AuditStatusBar, type StatusBarItemLike } from './ui/statusBar';
+import {
+  AuditStatusBar,
+  type AuditProgress,
+  type StatusBarItemLike,
+} from './ui/statusBar';
+import { postNonBlockingInformationMessage } from './ui/nonBlockingNotice';
 import {
   PlanWizardPanel,
   type WizardPanel,
@@ -223,7 +228,7 @@ export async function activate(
   const reportService = new FileReportService(sessionRepository, () => new Date());
   const sessionExporter = new FileSessionExporter(
     sessionRepository,
-    '0.1.2',
+    '0.1.5',
     () => new Date(),
   );
   const aiSettings = new FileAiSettingsService(
@@ -260,6 +265,7 @@ export async function activate(
   let consent = false;
   let autoAnalyze = true;
   let sidebarNotice: string | undefined;
+  let progress: AuditProgress | undefined;
   let selectedPlan: PublishedPlan | undefined;
   let interruptedState = await sessionRepository.findActive(workspaceId);
   let lastSessionId: string | undefined;
@@ -285,7 +291,7 @@ export async function activate(
       selectedPlan = plans[0];
     }
     const session = capture.current() ?? interruptedState;
-    statusBar.update(session);
+    statusBar.update(session, progress);
     await sidebar.postState({
       route,
       trusted: vscode.workspace.isTrusted,
@@ -299,6 +305,7 @@ export async function activate(
         : { selectedPlan: { planId: selectedPlan.plan_id, version: selectedPlan.version } }),
       consent,
       autoAnalyze,
+      ...(progress === undefined ? {} : { progress }),
       ...(session === undefined
         ? {}
         : {
@@ -315,6 +322,25 @@ export async function activate(
           ? {}
           : { notice: sidebarNotice }),
     });
+  };
+
+  const setProgress = async (message: string): Promise<void> => {
+    progress = { message };
+    sidebarNotice = undefined;
+    await refreshPresentation();
+  };
+
+  const openTeacherBrief = async (sessionId: string): Promise<void> => {
+    await setProgress('课堂简报已生成，正在打开…');
+    const bytes = await sessionRepository.readArtifact(sessionId, 'teacher_brief');
+    if (bytes === undefined) {
+      throw new Error('课堂简报未写入本地存储。');
+    }
+    const document = await vscode.workspace.openTextDocument({
+      content: new TextDecoder().decode(bytes),
+      language: 'markdown',
+    });
+    await vscode.window.showTextDocument(document, { preview: true, preserveFocus: false });
   };
 
   const onWebviewMessage = async (message: WebviewMessage): Promise<void> => {
@@ -517,14 +543,22 @@ export async function activate(
       analysisService: sessionAnalysisService,
       exporter: sessionExporter,
       chooseDestination: chooseExportDestination,
+      onProgress: async (phase) => {
+        const message = {
+          choosing_destination: '课堂简报已打开，请选择导出位置…',
+          analyzing: '正在生成 AI 建议…',
+          exporting: '正在导出课堂简报与 AI 建议…',
+        }[phase];
+        await setProgress(message);
+      },
     });
     if (result.kind === 'export_cancelled') {
-      sidebarNotice = '课堂简报和 AI 分析已保存在本地；可稍后选择“仅导出上次会话”。';
-      await vscode.window.showInformationMessage(sidebarNotice);
+      sidebarNotice = '课堂简报已保存在本地；AI 建议和导出已取消，可稍后再次导出。';
+      postNonBlockingInformationMessage(vscode.window.showInformationMessage, sidebarNotice);
       return;
     }
     sidebarNotice = analysisNotice(result.analysis, true);
-    await vscode.window.showInformationMessage(sidebarNotice);
+    postNonBlockingInformationMessage(vscode.window.showInformationMessage, sidebarNotice);
   };
 
   const actions: CommandActions = {
@@ -577,19 +611,27 @@ export async function activate(
     registerCommand: (id, handler) =>
       vscode.commands.registerCommand(id, async () => {
         const activeBefore = capture.current()?.session_id;
-        await handler();
-        if (
-          activeBefore !== undefined &&
-          (id === 'behaviorAudit.finishCapture' ||
-            id === 'behaviorAudit.finishAnalyzeExport' ||
-            id === 'behaviorAudit.abandonCapture')
-        ) {
-          lastSessionId = activeBefore;
+        const isFinishingCommand =
+          id === 'behaviorAudit.finishCapture' ||
+          id === 'behaviorAudit.finishAnalyzeExport' ||
+          id === 'behaviorAudit.abandonCapture';
+        if (isFinishingCommand) {
+          await setProgress('正在结束会话并生成课堂简报…');
         }
-        if (id === 'behaviorAudit.resumeCapture') {
-          interruptedState = undefined;
+        try {
+          await handler();
+          if (activeBefore !== undefined && isFinishingCommand) {
+            lastSessionId = activeBefore;
+          }
+          if (id === 'behaviorAudit.resumeCapture') {
+            interruptedState = undefined;
+          }
+        } finally {
+          if (isFinishingCommand) {
+            progress = undefined;
+          }
+          await refreshPresentation();
         }
-        await refreshPresentation();
       }),
     confirm: async (id: AuditCommandId) => {
       const choice = await vscode.window.showWarningMessage(
@@ -611,6 +653,7 @@ export async function activate(
       selectedPlan: () => selectedPlan,
       hasConsent: () => consent,
       interruptedSessionId: () => interruptedState?.session_id,
+      onBriefReady: openTeacherBrief,
       finishAnalyzeExport,
       actions,
     }),
@@ -626,7 +669,10 @@ export async function activate(
     context.subscriptions.push(notebookCollector.start(capture));
   }
 
-  const statusTimer = setInterval(() => statusBar.update(capture.current() ?? interruptedState), 1000);
+  const statusTimer = setInterval(
+    () => statusBar.update(capture.current() ?? interruptedState, progress),
+    1000,
+  );
   context.subscriptions.push({ dispose: () => clearInterval(statusTimer) });
   await refreshPresentation();
 

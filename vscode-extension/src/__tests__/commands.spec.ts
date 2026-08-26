@@ -54,6 +54,7 @@ function setup(overrides: Partial<AuditCommandServices> = {}) {
   );
   const captureCurrent = vi.fn(() => undefined);
   const reportMaterialize = vi.fn(() => Promise.resolve({} as never));
+  const onBriefReady = vi.fn(() => Promise.resolve());
   const finishAnalyzeExport = vi.fn(() => Promise.resolve());
   const services: AuditCommandServices = {
     capture: {
@@ -68,6 +69,7 @@ function setup(overrides: Partial<AuditCommandServices> = {}) {
     selectedPlan: () => plan(),
     hasConsent: () => true,
     interruptedSessionId: () => 'session-command-001',
+    onBriefReady,
     finishAnalyzeExport,
     actions,
     ...overrides,
@@ -86,6 +88,7 @@ function setup(overrides: Partial<AuditCommandServices> = {}) {
       captureFinish,
       captureCurrent,
       reportMaterialize,
+      onBriefReady,
       finishAnalyzeExport,
     },
   };
@@ -187,11 +190,15 @@ describe('registerAuditCommands', () => {
     expect(handlers.has('behaviorAudit.finishAnalyzeExport')).toBe(true);
     expect(spies.captureFinish).toHaveBeenCalledWith('completed');
     expect(spies.reportMaterialize).toHaveBeenCalledWith('session-command-001');
+    expect(spies.onBriefReady).toHaveBeenCalledWith('session-command-001');
     expect(spies.finishAnalyzeExport).toHaveBeenCalledWith('session-command-001');
     expect(spies.captureFinish.mock.invocationCallOrder[0]).toBeLessThan(
       spies.reportMaterialize.mock.invocationCallOrder[0]!,
     );
     expect(spies.reportMaterialize.mock.invocationCallOrder[0]).toBeLessThan(
+      spies.onBriefReady.mock.invocationCallOrder[0]!,
+    );
+    expect(spies.onBriefReady.mock.invocationCallOrder[0]).toBeLessThan(
       spies.finishAnalyzeExport.mock.invocationCallOrder[0]!,
     );
   });

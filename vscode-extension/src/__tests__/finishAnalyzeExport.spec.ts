@@ -32,6 +32,32 @@ function manifest(): ExportManifest {
 }
 
 describe('analyzeAndExport', () => {
+  it('opens the export-folder dialog before waiting for the optional AI analysis', async () => {
+    const materialize = vi.fn(() => Promise.resolve(failedAnalysis()));
+    const analysisService: SessionAnalysisService = { materialize };
+    const exportSession = vi.fn(() => Promise.resolve(manifest()));
+    const exporter: SessionExporter = { exportSession };
+    const chooseDestination = vi.fn(() => Promise.resolve(destination));
+    const onProgress = vi.fn();
+
+    await analyzeAndExport({
+      sessionId,
+      workspaceRoot: '/Users/student/workspace',
+      autoAnalyze: true,
+      analysisService,
+      exporter,
+      chooseDestination,
+      onProgress,
+    });
+
+    expect(chooseDestination.mock.invocationCallOrder[0]).toBeLessThan(
+      materialize.mock.invocationCallOrder[0]!,
+    );
+    expect(onProgress).toHaveBeenNthCalledWith(1, 'choosing_destination');
+    expect(onProgress).toHaveBeenNthCalledWith(2, 'analyzing');
+    expect(onProgress).toHaveBeenNthCalledWith(3, 'exporting');
+  });
+
   it('exports the local package after a non-blocking AI failure', async () => {
     const materialize = vi.fn(() => Promise.resolve(failedAnalysis()));
     const analysisService: SessionAnalysisService = {
@@ -75,11 +101,8 @@ describe('analyzeAndExport', () => {
       chooseDestination: () => Promise.resolve(undefined),
     });
 
-    expect(materialize).toHaveBeenCalledWith(sessionId, {
-      enabled: false,
-      workspaceRoot: '',
-    });
+    expect(materialize).not.toHaveBeenCalled();
     expect(exportSession).not.toHaveBeenCalled();
-    expect(result).toEqual({ kind: 'export_cancelled', analysis: failedAnalysis() });
+    expect(result).toEqual({ kind: 'export_cancelled' });
   });
 });

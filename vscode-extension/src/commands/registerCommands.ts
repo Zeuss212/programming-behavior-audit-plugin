@@ -37,6 +37,7 @@ export interface AuditCommandServices {
   readonly selectedPlan: () => PublishedPlan | undefined;
   readonly hasConsent: () => boolean;
   readonly interruptedSessionId: () => string | undefined;
+  readonly onBriefReady?: (sessionId: string) => Promise<void>;
   readonly finishAnalyzeExport: (sessionId: string) => Promise<void>;
   readonly actions: CommandActions;
 }
@@ -51,9 +52,10 @@ async function materializeWithRetry(
   services: AuditCommandServices,
   sessionId: string,
 ): Promise<boolean> {
+  let materialized = false;
   try {
     await services.reportService.materialize(sessionId);
-    return true;
+    materialized = true;
   } catch (error) {
     const choice = await host.showError(
       error instanceof Error ? error.message : '课堂简报生成失败。',
@@ -61,10 +63,12 @@ async function materializeWithRetry(
     );
     if (choice === '重试生成简报') {
       await services.reportService.materialize(sessionId);
-      return true;
+      materialized = true;
     }
-    return false;
   }
+  if (!materialized) return false;
+  await services.onBriefReady?.(sessionId);
+  return true;
 }
 
 async function startCapture(

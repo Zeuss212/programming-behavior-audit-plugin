@@ -9,6 +9,7 @@
   const notice = document.getElementById('notice');
   const consent = document.getElementById('consent');
   const autoAnalyze = document.getElementById('auto-analyze');
+  const commandButtons = [...document.querySelectorAll('[data-command]')];
 
   function setRoute(route) {
     for (const button of routeButtons) {
@@ -30,7 +31,7 @@
     });
   }
 
-  for (const button of document.querySelectorAll('[data-command]')) {
+  for (const button of commandButtons) {
     button.addEventListener('click', () => {
       vscode.postMessage({ type: 'command', command: button.dataset.command });
     });
@@ -58,7 +59,13 @@
     consent.checked = state.consent === true;
     autoAnalyze.checked = state.autoAnalyze !== false;
     notice.textContent = typeof state.notice === 'string' ? state.notice : '';
-    if (state.session?.status === 'collecting') {
+    const progressMessage = typeof state.progress?.message === 'string' ? state.progress.message : '';
+    for (const button of commandButtons) {
+      button.disabled = progressMessage.length > 0;
+    }
+    if (progressMessage.length > 0) {
+      status.textContent = progressMessage;
+    } else if (state.session?.status === 'collecting') {
       status.textContent = `正在监控，共记录 ${String(state.session.eventCount)} 个事件。`;
     } else if (state.session?.status === 'interrupted') {
       status.textContent = `会话已中断，已保存 ${String(state.session.eventCount)} 个事件，可继续或结束。`;

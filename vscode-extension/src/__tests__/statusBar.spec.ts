@@ -56,4 +56,22 @@ describe('AuditStatusBar', () => {
     statusBar.update(undefined);
     expect(hide).toHaveBeenCalledOnce();
   });
+
+  it('keeps a visible spinner while a completed session is generating AI advice or exporting', () => {
+    const show = vi.fn();
+    const item: StatusBarItemLike = {
+      text: '',
+      tooltip: '',
+      show,
+      hide: vi.fn(),
+      dispose: vi.fn(),
+    };
+    const statusBar = new AuditStatusBar(item, () => new Date());
+
+    statusBar.update(undefined, { message: '正在生成 AI 建议…' });
+
+    expect(item.text).toBe('$(sync~spin) 正在生成 AI 建议…');
+    expect(item.tooltip).toBe('请勿重复操作，完成后会自动提示。');
+    expect(show).toHaveBeenCalledOnce();
+  });
 });

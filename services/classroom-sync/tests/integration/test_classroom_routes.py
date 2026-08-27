@@ -202,7 +202,13 @@ def test_service_error_logs_safe_diagnostic_context(caplog):
     )
 
     assert response.status_code == 503
-    record = next(record for record in caplog.records if record.message == "classroom_service_error")
+    record = next(
+        record for record in caplog.records if record.message.startswith("classroom_service_error")
+    )
+    assert record.message == (
+        "classroom_service_error method=GET path=/failing-route status_code=503 "
+        "error_code=child_workbench_unverified retryable=true request_id=support-123"
+    )
     assert record.method == "GET"
     assert record.path == "/failing-route"
     assert record.status_code == 503

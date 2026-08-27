@@ -38,7 +38,16 @@ def create_app(
         request_id = _request.headers.get("X-Request-ID") or str(uuid4())
         logger.log(
             logging.WARNING if error.status_code >= 500 else logging.INFO,
-            "classroom_service_error",
+            (
+                "classroom_service_error method=%s path=%s status_code=%s "
+                "error_code=%s retryable=%s request_id=%s"
+            ),
+            _request.method,
+            _request.url.path,
+            error.status_code,
+            error.code,
+            str(error.retryable).lower(),
+            request_id,
             extra={
                 "method": _request.method,
                 "path": _request.url.path,

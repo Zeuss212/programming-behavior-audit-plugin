@@ -13,10 +13,47 @@ class Base(DeclarativeBase):
     """Base metadata used by Alembic and all classroom repositories."""
 
 
-class PlanDraft(Base):
-    __tablename__ = "plan_drafts"
+class PlanAuthoringSession(Base):
+    """A teacher-owned plan-authoring flow and its non-circular audit links."""
+
+    __tablename__ = "plan_authoring_sessions"
+    __table_args__ = (
+        UniqueConstraint(
+            "teacher_id",
+            "space_id",
+            "parent_algorithm_id",
+            "active_slot",
+            name="uq_plan_authoring_sessions_open",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    teacher_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    space_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    parent_algorithm_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    active_slot: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    suggestion_job_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
+    published_plan_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class PlanDraft(Base):
+    __tablename__ = "plan_drafts"
+    __table_args__ = (
+        UniqueConstraint(
+            "authoring_session_id",
+            name="uq_plan_drafts_authoring_session",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    authoring_session_id: Mapped[str | None] = mapped_column(
+        ForeignKey("plan_authoring_sessions.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
     profile_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     space_id: Mapped[str] = mapped_column(String(128), nullable=False)
     parent_algorithm_id: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -233,10 +270,18 @@ class ClassroomPlanSuggestionJob(Base):
             "active_slot",
             name="uq_classroom_plan_suggestion_jobs_active_request",
         ),
+        UniqueConstraint(
+            "authoring_session_id",
+            name="uq_classroom_plan_suggestion_jobs_authoring_session",
+        ),
         Index("ix_classroom_plan_suggestion_jobs_status_run_at", "status", "run_at"),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    authoring_session_id: Mapped[str | None] = mapped_column(
+        ForeignKey("plan_authoring_sessions.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
     teacher_id: Mapped[str] = mapped_column(String(128), nullable=False)
     space_id: Mapped[str] = mapped_column(String(200), nullable=False)
     parent_algorithm_id: Mapped[str] = mapped_column(String(200), nullable=False)

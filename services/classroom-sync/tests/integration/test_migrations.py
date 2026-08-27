@@ -284,6 +284,249 @@ def test_plan_suggestion_job_migration_has_owner_scoped_active_request_key(tmp_p
     )
 
 
+def test_plan_authoring_session_migration_preserves_legacy_rows_and_constraints(
+    tmp_path: Path,
+):
+    """Sessions add nullable one-to-one links without weakening request idempotency."""
+    database_url = f"sqlite:///{tmp_path / 'classroom-plan-authoring-sessions.db'}"
+    config = migration_config(database_url)
+    now = datetime(2026, 8, 27, 8, 0, tzinfo=UTC)
+
+    command.upgrade(config, "0007_evidence_analysis_manifest")
+    engine = create_engine(database_url)
+    metadata = Base.metadata
+    with engine.begin() as connection:
+        connection.execute(
+            metadata.tables["plan_drafts"].insert(),
+            {
+                "id": "legacy-draft",
+                "profile_id": "legacy-profile",
+                "space_id": "space-1",
+                "parent_algorithm_id": "parent-1",
+                "title": "Legacy draft",
+                "profile": {"schema_version": 2},
+                "scheduled_start_at": now,
+                "scheduled_end_at": now,
+                "ai_policy": "prohibited",
+                "revision": 0,
+                "teacher_id": "teacher-1",
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+        connection.execute(
+            metadata.tables["classroom_plan_suggestion_jobs"].insert(),
+            {
+                "id": "legacy-job",
+                "teacher_id": "teacher-1",
+                "space_id": "space-1",
+                "parent_algorithm_id": "parent-1",
+                "request_hash": "a" * 64,
+                "suggestion_input": {},
+                "run_at": now,
+                "status": "pending",
+                "active_slot": 1,
+                "attempts": 0,
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+
+    command.upgrade(config, "0008_plan_authoring_sessions")
+    authoring_sessions = inspect(engine).get_table_names()
+    assert "plan_authoring_sessions" in authoring_sessions
+
+    reflected = metadata.__class__()
+    reflected.reflect(engine)
+    sessions = reflected.tables["plan_authoring_sessions"]
+    drafts = reflected.tables["plan_drafts"]
+    suggestion_jobs = reflected.tables["classroom_plan_suggestion_jobs"]
+    inspector = inspect(engine)
+    assert {
+        "id",
+        "teacher_id",
+        "space_id",
+        "parent_algorithm_id",
+        "status",
+        "active_slot",
+        "suggestion_job_id",
+        "published_plan_id",
+        "created_at",
+        "updated_at",
+        "closed_at",
+    } <= {column["name"] for column in inspector.get_columns("plan_authoring_sessions")}
+    assert {"authoring_session_id"} <= {
+        column["name"] for column in inspector.get_columns("plan_drafts")
+    }
+    assert {"authoring_session_id"} <= {
+        column["name"]
+        for column in inspector.get_columns("classroom_plan_suggestion_jobs")
+    }
+    assert not inspector.get_foreign_keys("plan_authoring_sessions")
+    assert {index["column_names"][0] for index in inspector.get_indexes("plan_authoring_sessions")} >= {
+        "suggestion_job_id",
+        "published_plan_id",
+    }
+
+    with engine.connect() as connection:
+        connection.execute(text("PRAGMA foreign_keys = ON"))
+        assert connection.execute(
+            text("SELECT authoring_session_id FROM plan_drafts WHERE id = 'legacy-draft'")
+        ).scalar_one() is None
+        assert connection.execute(
+            text(
+                "SELECT authoring_session_id FROM classroom_plan_suggestion_jobs "
+                "WHERE id = 'legacy-job'"
+            )
+        ).scalar_one() is None
+
+        connection.execute(
+            sessions.insert(),
+            {
+                "id": "authoring-session-1",
+                "teacher_id": "teacher-1",
+                "space_id": "space-1",
+                "parent_algorithm_id": "parent-1",
+                "status": "open",
+                "active_slot": 1,
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+        connection.commit()
+        with pytest.raises(IntegrityError):
+            connection.execute(
+                sessions.insert(),
+                {
+                    "id": "authoring-session-duplicate",
+                    "teacher_id": "teacher-1",
+                    "space_id": "space-1",
+                    "parent_algorithm_id": "parent-1",
+                    "status": "open",
+                    "active_slot": 1,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+        connection.rollback()
+
+        for session_id in ("closed-session-1", "closed-session-2"):
+            connection.execute(
+                sessions.insert(),
+                {
+                    "id": session_id,
+                    "teacher_id": "teacher-1",
+                    "space_id": "space-1",
+                    "parent_algorithm_id": "parent-1",
+                    "status": "closed",
+                    "created_at": now,
+                    "updated_at": now,
+                    "closed_at": now,
+                },
+            )
+        connection.commit()
+
+        connection.execute(
+            suggestion_jobs.update()
+            .where(suggestion_jobs.c.id == "legacy-job")
+            .values(authoring_session_id="authoring-session-1")
+        )
+        connection.commit()
+        with pytest.raises(IntegrityError):
+            connection.execute(
+                suggestion_jobs.insert(),
+                {
+                    "id": "job-duplicate-session",
+                    "teacher_id": "teacher-1",
+                    "space_id": "space-1",
+                    "parent_algorithm_id": "parent-1",
+                    "request_hash": "b" * 64,
+                    "suggestion_input": {},
+                    "run_at": now,
+                    "status": "pending",
+                    "active_slot": 2,
+                    "attempts": 0,
+                    "authoring_session_id": "authoring-session-1",
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+        connection.rollback()
+
+        with pytest.raises(IntegrityError):
+            connection.execute(
+                suggestion_jobs.insert(),
+                {
+                    "id": "job-duplicate-request",
+                    "teacher_id": "teacher-1",
+                    "space_id": "space-1",
+                    "parent_algorithm_id": "parent-1",
+                    "request_hash": "a" * 64,
+                    "suggestion_input": {},
+                    "run_at": now,
+                    "status": "pending",
+                    "active_slot": 1,
+                    "attempts": 0,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+        connection.rollback()
+
+        connection.execute(
+            drafts.update()
+            .where(drafts.c.id == "legacy-draft")
+            .values(authoring_session_id="authoring-session-1")
+        )
+        connection.commit()
+        with pytest.raises(IntegrityError):
+            connection.execute(
+                drafts.insert(),
+                {
+                    "id": "draft-duplicate-session",
+                    "profile_id": "other-profile",
+                    "space_id": "space-1",
+                    "parent_algorithm_id": "parent-1",
+                    "title": "Duplicate session draft",
+                    "profile": {"schema_version": 2},
+                    "scheduled_start_at": now,
+                    "scheduled_end_at": now,
+                    "ai_policy": "prohibited",
+                    "revision": 0,
+                    "teacher_id": "teacher-1",
+                    "authoring_session_id": "authoring-session-1",
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+        connection.rollback()
+
+        with pytest.raises(IntegrityError):
+            connection.execute(sessions.delete().where(sessions.c.id == "authoring-session-1"))
+        connection.rollback()
+
+    command.downgrade(config, "0007_evidence_analysis_manifest")
+    inspector = inspect(engine)
+    assert "plan_authoring_sessions" not in inspector.get_table_names()
+    assert "authoring_session_id" not in {
+        column["name"] for column in inspector.get_columns("plan_drafts")
+    }
+    assert "authoring_session_id" not in {
+        column["name"]
+        for column in inspector.get_columns("classroom_plan_suggestion_jobs")
+    }
+    with engine.connect() as connection:
+        assert (
+            connection.execute(
+                text("SELECT id FROM plan_drafts WHERE id = 'legacy-draft'")
+            ).scalar_one()
+            == "legacy-draft"
+        )
+        assert connection.execute(
+            text("SELECT id FROM classroom_plan_suggestion_jobs WHERE id = 'legacy-job'")
+        ).scalar_one() == "legacy-job"
+
+
 def test_student_brief_migration_has_session_scoped_submission_idempotency_key(
     tmp_path: Path,
 ):

@@ -35,8 +35,8 @@
       "required": ["status", "blocking_count", "warning_count", "issues"],
       "properties": {
         "status": {"const": "blocked"},
-        "blocking_count": {"type": "integer", "minimum": 1, "maximum": 512},
-        "warning_count": {"type": "integer", "minimum": 0, "maximum": 512},
+        "blocking_count": {"type": "integer", "minimum": 1},
+        "warning_count": {"type": "integer", "minimum": 0},
         "issues": {
           "type": "array",
           "maxItems": 512,

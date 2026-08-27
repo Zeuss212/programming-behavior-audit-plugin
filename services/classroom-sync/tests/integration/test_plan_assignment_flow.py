@@ -1,9 +1,10 @@
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from uuid import UUID
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -12,6 +13,7 @@ from classroom_sync.canonical import sha256_json
 from classroom_sync.domain.schemas import ClassroomSchemaRegistry
 from classroom_sync.errors import ConflictError, PublicationGateBlockedError
 from classroom_sync.models import Base, PlanAuthoringSession, PlanVersion, StudentAssignment
+from classroom_sync.services import plans as plans_module
 from classroom_sync.services.assignments import AssignmentService
 from classroom_sync.services.plans import PlanDraftInput, PlanService
 from tests.unit.test_publication_gate import profile_for, real_bundle, reconfirm_profile
@@ -148,6 +150,62 @@ def test_republish_moves_only_unaccepted_assignments_to_the_new_plan_version():
     assert assignments_by_student["student-2"].id == initial_assignments[1].id
     assert repeated_by_student["student-1"].id == initial_assignments[0].id
     assert repeated_by_student["student-2"].id == initial_assignments[1].id
+
+
+def test_publication_hash_canonicalizes_naive_utc_and_aware_offset_schedules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository_root = Path(__file__).resolve().parents[4]
+    schema_registry = ClassroomSchemaRegistry(repository_root / "contracts" / "classroom" / "v1")
+    now = datetime(2026, 8, 28, 7, 0, tzinfo=UTC)
+
+    def publish_with_storage_representation(
+        stored_start: str,
+        stored_end: str,
+    ) -> PlanVersion:
+        engine = create_engine("sqlite://")
+        Base.metadata.create_all(engine)
+        session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+        generated_ids = iter(UUID(int=index) for index in range(1, 10))
+        monkeypatch.setattr(plans_module, "uuid4", lambda: next(generated_ids))
+        service = PlanService(session_factory, schema_registry, clock=lambda: now)
+        draft = service.create_draft(
+            PlanDraftInput(
+                space_id="space-1",
+                parent_algorithm_id="parent-1",
+                title="canonical schedule",
+                profile=profile_draft("canonical schedule"),
+                scheduled_start_at=datetime(2026, 8, 28, 8, 0, tzinfo=UTC),
+                scheduled_end_at=datetime(2026, 8, 28, 8, 30, tzinfo=UTC),
+                ai_policy="prohibited",
+            ),
+            teacher_id="teacher-1",
+        )
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE plan_drafts "
+                    "SET scheduled_start_at = :start, scheduled_end_at = :end "
+                    "WHERE id = :draft_id"
+                ),
+                {
+                    "start": stored_start,
+                    "end": stored_end,
+                    "draft_id": draft.id,
+                },
+            )
+        return service.publish_draft(draft.id, teacher_id="teacher-1")
+
+    naive_utc = publish_with_storage_representation(
+        "2026-08-28 08:00:00",
+        "2026-08-28 08:30:00",
+    )
+    aware_offset = publish_with_storage_representation(
+        "2026-08-28 10:00:00+02:00",
+        "2026-08-28 10:30:00+02:00",
+    )
+
+    assert naive_utc.content_hash == aware_offset.content_hash
 
 
 def test_new_plan_creates_a_fresh_assignment_after_prior_plan_is_submitted():

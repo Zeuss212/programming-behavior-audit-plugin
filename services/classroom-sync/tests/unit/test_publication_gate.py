@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 from copy import deepcopy
+from hashlib import sha256
 from pathlib import Path
 from typing import cast
 
@@ -12,6 +13,7 @@ import pytest
 
 from classroom_sync.auth.fincolab import Principal
 from classroom_sync.canonical import sha256_json
+from classroom_sync.domain.schemas import ClassroomSchemaRegistry
 from classroom_sync.errors import PublicationGateBlockedError
 from classroom_sync.services.assessment_materials import (
     AssessmentMaterialBundle,
@@ -692,3 +694,165 @@ def test_blocked_error_projection_stays_bounded_at_the_material_contract_limit()
     ).encode("utf-8")
     assert len(encoded) <= 32_768
     assert captured.value.details["blocking_count"] == 128
+
+
+def test_contract_valid_combined_issue_space_exceeds_512_but_projects_safely() -> None:
+    raw = cast(
+        dict[str, object],
+        json.loads((MATERIALS / "linked-list" / "bundle.json").read_text("utf-8")),
+    )
+    starter = cast(dict[str, object], raw["starter_source"])
+    source_path = MATERIALS / "linked-list" / cast(str, starter["file_name"])
+    starter["content_base64"] = base64.b64encode(source_path.read_bytes()).decode()
+    requirement_template = cast(list[dict[str, object]], raw["requirements"])[0]
+    raw["requirements"] = [
+        {
+            **requirement_template,
+            "id": f"REQ_BOUND_{index:03d}",
+            "student_responsibility": True,
+            "test_ids": [],
+            "detector_profile_ids": [],
+        }
+        for index in range(128)
+    ]
+    sealed = deepcopy(raw)
+    sealed.pop("bundle_hash")
+    cast(dict[str, object], sealed["starter_source"]).pop("content_base64")
+    raw["bundle_hash"] = sha256(
+        json.dumps(
+            sealed,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+
+    class MaxContractGateway:
+        def get_bundle(
+            self,
+            _principal: Principal,
+            _space_id: str,
+            _parent_algorithm_id: str,
+        ) -> dict[str, object]:
+            return deepcopy(raw)
+
+    materials = AssessmentMaterialService(MaxContractGateway()).get_bundle(
+        Principal("teacher-1", "teacher-a", "teacher-token"),
+        cast(str, raw["space_id"]),
+        cast(str, raw["parent_algorithm_id"]),
+    )
+    profile = profile_for(real_bundle("linked-list"), ())
+    profile_starter = cast(dict[str, object], profile["starter_source"])
+    profile_starter["artifact_id"] = "ART_WRONG"
+    profile["knowledge_points"] = [
+        {
+            "id": f"KP_OWN{index:05d}",
+            "material_requirement_id": f"REQ_UNKNOWN_{index}",
+            "name": f"point {index}",
+            "description": f"description {index}",
+            "source": "teacher",
+            "order": index,
+        }
+        for index in range(10)
+    ]
+    profile["assessment_tests"] = [
+        {
+            "id": f"TEST_MAX{test_index:05d}",
+            "name": f"test {test_index}",
+            "knowledge_point_ids": [
+                f"KP_{test_index * 10 + point_index:08X}"
+                for point_index in range(10)
+            ],
+            "criterion_ids": [
+                f"CRIT_{test_index * 20 + criterion_index:08X}"
+                for criterion_index in range(20)
+            ],
+            "kind": "stdin_stdout",
+            "input": "",
+            "expected_stdout": "",
+            "comparison": "normalized_text_v1",
+            "timeout_ms": 100,
+            "enabled": True,
+            "source": "teacher",
+            "order": test_index,
+            "content_hash": "0" * 64,
+        }
+        for test_index in range(30)
+    ]
+    profile["dimensions"] = [
+        {
+            "knowledge_point_id": f"KP_{index:08X}",
+            "name": f"dimension {index}",
+            "question": f"question {index}",
+            "evidence_criteria": [
+                {
+                    "id": f"CRIT_DIM{index:05d}",
+                    "material_requirement_id": f"REQ_DIM_{index}",
+                    "statement": f"criterion {index}",
+                    "required": True,
+                }
+            ],
+            "verification_bindings": [
+                {
+                    "criterion_id": f"CRIT_DIM{index:05d}",
+                    "kind": "assessment_test",
+                    "assessment_test_id": f"TEST_MAX{index:05d}",
+                }
+            ],
+            "analysis_config": {"mode": "evidence_binding"},
+        }
+        for index in range(10)
+    ]
+    profile["confirmations"] = {
+        "material_bundle_hash": "0" * 64,
+        "starter_source_hash": "0" * 64,
+        "knowledge_points_hash": "0" * 64,
+        "dimensions_hash": "0" * 64,
+        "tests_hash": "0" * 64,
+    }
+    ClassroomSchemaRegistry(ROOT / "contracts" / "classroom" / "v1").validate(
+        "plan-draft",
+        {
+            "schema_version": 1,
+            "draft_id": "09e4e1cc-9155-42dd-a951-632148040bd8",
+            "space_id": materials.space_id,
+            "parent_algorithm_id": materials.parent_algorithm_id,
+            "title": "maximum issue profile",
+            "profile": profile,
+            "scheduled_start_at": "2026-08-28T08:00:00Z",
+            "scheduled_end_at": "2026-08-28T08:30:00Z",
+            "ai_policy": "prohibited",
+            "revision": 0,
+            "updated_at": "2026-08-28T07:00:00Z",
+        },
+    )
+
+    result = PublicationGate().evaluate(profile, materials)
+
+    assert result.status == "blocked"
+    assert result.blocking_count > 512
+    assert len(result.issues) > 512
+    with pytest.raises(PublicationGateBlockedError) as captured:
+        PublicationGate().require_ready(profile, materials)
+    assert captured.value.status_code == 409
+    assert captured.value.details is not None
+    assert captured.value.details["blocking_count"] == result.blocking_count
+    ClassroomSchemaRegistry(ROOT / "contracts" / "classroom" / "v1").validate(
+        "error",
+        {
+            "schema_version": 1,
+            "error": {
+                "code": "publication_gate_blocked",
+                "message": "课堂服务请求未能完成。",
+                "retryable": False,
+                "request_id": "req-max-issues",
+                "details": captured.value.details,
+            },
+        },
+    )
+    encoded = json.dumps(
+        captured.value.details,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode()
+    assert len(encoded) <= 32_768

@@ -78,9 +78,9 @@ class PublicationGateIssue(_FrozenModel):
 
 class PublicationGateResult(_FrozenModel):
     status: Literal["ready", "blocked"]
-    blocking_count: Annotated[int, Field(ge=0, le=512)]
-    warning_count: Annotated[int, Field(ge=0, le=512)]
-    issues: Annotated[tuple[PublicationGateIssue, ...], Field(max_length=512)]
+    blocking_count: Annotated[int, Field(ge=0)]
+    warning_count: Annotated[int, Field(ge=0)]
+    issues: tuple[PublicationGateIssue, ...]
 
     def safe_projection(self, *, max_bytes: int = 30_000) -> dict[str, object]:
         """Project a deterministic issue prefix within the error-envelope bound."""

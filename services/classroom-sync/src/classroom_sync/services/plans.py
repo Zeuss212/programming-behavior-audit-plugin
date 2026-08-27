@@ -210,6 +210,10 @@ class PlanService:
                 "deployment_status": "pilot",
                 "preview_status": "pending_real_samples",
             }
+            scheduled_start_at = self._utc_storage_instant(
+                draft.scheduled_start_at
+            )
+            scheduled_end_at = self._utc_storage_instant(draft.scheduled_end_at)
             plan_content = {
                 "schema_version": 1,
                 "plan_id": draft.id,
@@ -217,8 +221,8 @@ class PlanService:
                 "space_id": draft.space_id,
                 "parent_algorithm_id": draft.parent_algorithm_id,
                 "profile": published_profile,
-                "scheduled_start_at": draft.scheduled_start_at.isoformat(),
-                "scheduled_end_at": draft.scheduled_end_at.isoformat(),
+                "scheduled_start_at": self._utc_rfc3339(scheduled_start_at),
+                "scheduled_end_at": self._utc_rfc3339(scheduled_end_at),
                 "ai_policy": draft.ai_policy,
                 "published_at": now.isoformat(),
             }
@@ -236,8 +240,8 @@ class PlanService:
                 parent_algorithm_id=draft.parent_algorithm_id,
                 profile=published_profile,
                 content_hash=content_hash,
-                scheduled_start_at=draft.scheduled_start_at,
-                scheduled_end_at=draft.scheduled_end_at,
+                scheduled_start_at=scheduled_start_at,
+                scheduled_end_at=scheduled_end_at,
                 ai_policy=draft.ai_policy,
                 published_at=now,
                 teacher_id=teacher_id,
@@ -282,6 +286,16 @@ class PlanService:
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValidationError("plan_schedule_timezone_required")
         return value.astimezone(timezone.utc)
+
+    @staticmethod
+    def _utc_storage_instant(value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    @classmethod
+    def _utc_rfc3339(cls, value: datetime) -> str:
+        return cls._utc_storage_instant(value).isoformat().replace("+00:00", "Z")
 
     @staticmethod
     def _validate_authoring_for_draft(

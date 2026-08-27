@@ -9,7 +9,7 @@ import pytest
 from classroom_sync.config import Settings
 from classroom_sync.domain.schemas import ClassroomSchemaRegistry
 from classroom_sync.errors import AiSuggestionUnavailableError
-from classroom_sync.runtime import contract_directory, s3_client_config
+from classroom_sync.runtime import contract_directory, fincolab_http_client, s3_client_config
 from classroom_sync.services.plan_suggestions import AiProviderSettings, AiSuggestionSettings
 
 
@@ -98,6 +98,18 @@ def test_runtime_uses_bounded_s3_timeouts_for_retryable_storage_outages():
     assert config.retries == {"mode": "standard", "total_max_attempts": 1}
 
 
+def test_runtime_uses_the_existing_ten_second_fincolab_timeout() -> None:
+    """Identity, ownership, and material reads share one bounded upstream policy."""
+    client = fincolab_http_client()
+    try:
+        assert client.timeout.connect == 10.0
+        assert client.timeout.read == 10.0
+        assert client.timeout.write == 10.0
+        assert client.timeout.pool == 10.0
+    finally:
+        client.close()
+
+
 def test_schema_registry_can_use_an_explicit_plugin_schema_directory(tmp_path):
     contract_directory = tmp_path / "contracts" / "classroom" / "v1"
     plugin_directory = tmp_path / "plugin-schemas"
@@ -106,7 +118,12 @@ def test_schema_registry_can_use_an_explicit_plugin_schema_directory(tmp_path):
     source_root = Path(__file__).resolve().parents[3]
     for source in (source_root / "contracts" / "classroom" / "v1").glob("*.schema.json"):
         (contract_directory / source.name).write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
-    for name in ("profile-draft-v2.json", "profile-version-v2.json"):
+    for name in (
+        "profile-draft-v2.json",
+        "profile-version-v2.json",
+        "profile-draft-v3.json",
+        "profile-version-v3.json",
+    ):
         source = source_root / "myextension" / "api_schemas" / name
         (plugin_directory / name).write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
 

@@ -12,6 +12,7 @@ from .application import ClassroomServices
 from .config import Settings
 from .errors import ClassroomServiceError
 from .routers.events import router as events_router
+from .routers.materials import router as materials_router
 from .routers.plans import router as plans_router
 from .routers.plugin import router as plugin_router
 from .routers.student import router as student_router
@@ -88,5 +89,6 @@ def create_app(
         app.include_router(teacher_router)
         app.include_router(suggestions_router)
         app.include_router(events_router)
+        app.include_router(materials_router)
 
     return app

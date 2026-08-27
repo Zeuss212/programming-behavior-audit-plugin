@@ -86,6 +86,7 @@ def test_teacher_material_fixtures_preserve_approved_bytes_and_text_contract():
     assert manifest["schema_version"] == 1
     assert manifest["captured_at"] == "2026-08-27"
     assert len(manifest["materials"]) == len(EXPECTED_MATERIALS)
+    assert {entry["destination"] for entry in manifest["materials"]} == set(EXPECTED_MATERIALS)
     for entry in manifest["materials"]:
         relative_path = entry["destination"]
         assert relative_path in EXPECTED_MATERIALS

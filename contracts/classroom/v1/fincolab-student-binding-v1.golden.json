@@ -1,0 +1,36 @@
+{
+  "version": "fincolab-student-binding-v1",
+  "canonical": [
+    {
+      "binding": {
+        "parent_algorithm_id": "parent-1",
+        "space_id": "space-1",
+        "student_id": "student-1",
+        "student_username": "student-a"
+      },
+      "json": "{\"parent_algorithm_id\":\"parent-1\",\"space_id\":\"space-1\",\"student_id\":\"student-1\",\"student_username\":\"student-a\"}",
+      "payload": "eyJwYXJlbnRfYWxnb3JpdGhtX2lkIjoicGFyZW50LTEiLCJzcGFjZV9pZCI6InNwYWNlLTEiLCJzdHVkZW50X2lkIjoic3R1ZGVudC0xIiwic3R1ZGVudF91c2VybmFtZSI6InN0dWRlbnQtYSJ9"
+    },
+    {
+      "binding": {
+        "parent_algorithm_id": "parent-1",
+        "space_id": "space-1",
+        "student_id": "student-1",
+        "student_username": "Ͽ"
+      },
+      "json": "{\"parent_algorithm_id\":\"parent-1\",\"space_id\":\"space-1\",\"student_id\":\"student-1\",\"student_username\":\"Ͽ\"}",
+      "payload": "eyJwYXJlbnRfYWxnb3JpdGhtX2lkIjoicGFyZW50LTEiLCJzcGFjZV9pZCI6InNwYWNlLTEiLCJzdHVkZW50X2lkIjoic3R1ZGVudC0xIiwic3R1ZGVudF91c2VybmFtZSI6Is-_In0"
+    }
+  ],
+  "rejected_payloads": {
+    "padding": "eyJwYXJlbnRfYWxnb3JpdGhtX2lkIjoicGFyZW50LTEiLCJzcGFjZV9pZCI6InNwYWNlLTEiLCJzdHVkZW50X2lkIjoic3R1ZGVudC0xIiwic3R1ZGVudF91c2VybmFtZSI6InN0dWRlbnQtYSJ9=",
+    "invalid_alphabet": "abc+",
+    "invalid_utf8": "_w",
+    "duplicate_keys": "eyJwYXJlbnRfYWxnb3JpdGhtX2lkIjoicGFyZW50LTEiLCJzcGFjZV9pZCI6InNwYWNlLTEiLCJzdHVkZW50X2lkIjoic3R1ZGVudC0xIiwic3R1ZGVudF9pZCI6Im90aGVyIiwic3R1ZGVudF91c2VybmFtZSI6InN0dWRlbnQtYSJ9",
+    "extra_field": "eyJleHRyYSI6IngiLCJwYXJlbnRfYWxnb3JpdGhtX2lkIjoicGFyZW50LTEiLCJzcGFjZV9pZCI6InNwYWNlLTEiLCJzdHVkZW50X2lkIjoic3R1ZGVudC0xIiwic3R1ZGVudF91c2VybmFtZSI6InN0dWRlbnQtYSJ9",
+    "missing_field": "eyJwYXJlbnRfYWxnb3JpdGhtX2lkIjoicGFyZW50LTEiLCJzcGFjZV9pZCI6InNwYWNlLTEiLCJzdHVkZW50X2lkIjoic3R1ZGVudC0xIn0",
+    "non_string": "eyJwYXJlbnRfYWxnb3JpdGhtX2lkIjoicGFyZW50LTEiLCJzcGFjZV9pZCI6InNwYWNlLTEiLCJzdHVkZW50X2lkIjoxLCJzdHVkZW50X3VzZXJuYW1lIjoic3R1ZGVudC1hIn0",
+    "empty": "eyJwYXJlbnRfYWxnb3JpdGhtX2lkIjoicGFyZW50LTEiLCJzcGFjZV9pZCI6InNwYWNlLTEiLCJzdHVkZW50X2lkIjoiIiwic3R1ZGVudF91c2VybmFtZSI6InN0dWRlbnQtYSJ9",
+    "noncanonical_order": "eyJzcGFjZV9pZCI6InNwYWNlLTEiLCJwYXJlbnRfYWxnb3JpdGhtX2lkIjoicGFyZW50LTEiLCJzdHVkZW50X2lkIjoic3R1ZGVudC0xIiwic3R1ZGVudF91c2VybmFtZSI6InN0dWRlbnQtYSJ9"
+  }
+}

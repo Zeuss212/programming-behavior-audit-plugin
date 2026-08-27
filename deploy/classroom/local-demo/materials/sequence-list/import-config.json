@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "importer_version": "cpp_assessment_material_importer_v1",
+  "space_id": "course-001",
+  "parent_algorithm_id": "sequence-list-experiment-001",
+  "exercise_profile": "sequence_list_v1",
+  "title": "顺序表基本操作",
+  "statement": "完善整型顺序表类定义，实现最小值删除、指定值删除和指定范围删除。",
+  "toolchain_profile": "cpp17_stdio_v1",
+  "source": {
+    "path": "顺序表操作练习01.cpp",
+    "sha256": "44717d0b2e1a9c2fe829db08e0171b2aa86f82b3e0cd0ab97b41512af190eecc",
+    "encoding": "gb18030",
+    "artifact_id": "ART_SEQUENCE_LIST_CPP_01",
+    "editable_symbols": [
+      "SeqArray::SeqArray",
+      "SeqArray::~SeqArray",
+      "SeqArray::insertElement",
+      "SeqArray::deletemin",
+      "SeqArray::deleteSame",
+      "SeqArray::deleteSome",
+      "SeqArray::print"
+    ]
+  },
+  "tests": {
+    "path": "编码习题1-线性表的基本操作(1).txt",
+    "sha256": "2feef3567dd6ce47eda7dda2f14a775fc756684f21de9a8c315ccf91d3bb6cff",
+    "encoding": "utf-8",
+    "parser_profile": "sequence_txt_v1"
+  },
+  "expected_requirement_ids": [
+    "REQ_SEQ_INITIALIZATION",
+    "REQ_SEQ_SPACE_RELEASE",
+    "REQ_SEQ_SEARCH",
+    "REQ_SEQ_DELETE",
+    "REQ_SEQ_MOVE"
+  ]
+}

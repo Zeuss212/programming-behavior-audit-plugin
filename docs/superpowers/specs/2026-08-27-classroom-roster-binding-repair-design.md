@@ -40,7 +40,7 @@ The teacher-authorized gateway reads the complete space roster first and builds 
 
 1. Requires marker space and parent values to equal the request.
 2. Resolves `student_id` in the student roster. This ID is authoritative; absence is 409 and never falls back to username.
-3. Requires the current roster username to exactly equal `student_username`; no trim, case fold, NFC, or legacy fallback is permitted.
+3. Requires the current roster username to exactly equal `student_username`; no trim, case fold, NFC, or legacy fallback is permitted. The frontend writer must therefore preserve the roster API's original username in the marker. It may use `trim()` only to reject an all-whitespace username or for existing non-identity display/name behavior.
 4. Returns the current roster student ID/username, child algorithm ID, and workbench ID only after all checks pass.
 
 Child owner is an ownership check, never a binding. It must exactly equal either the verified parent teacher username or the bound student username. If list output lacks owner, fetch child detail once; if still missing, fail 503. A different owner is a 409 contract conflict. Child ID and workbench ID are required list fields; their absence is 503. Track duplicate student ID, child ID, and workbench ID across candidates; any duplicate is 409. The router receives no roster on error, so it never calls `AssignmentService.sync_assignments` or starts its transaction.

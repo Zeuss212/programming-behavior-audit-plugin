@@ -206,7 +206,7 @@ Expected: any roster exception occurs before a database transaction write.
 
 - [ ] **Step 1: Write TypeScript RED tests**
 
-Copy canonical vectors byte-for-byte and assert exact first-line output. Require `TextEncoder`, sorted insertion order, UTF-8 byte Base64 conversion, URL-safe substitutions, and no `=`; prohibit raw-Unicode `btoa`. In `AdminProjectsView` test give each student an `id`, trigger creation, assert child payload has paired marker/human lines and parent payload has no binding marker.
+Copy canonical vectors byte-for-byte and assert exact first-line output. Require `TextEncoder`, sorted insertion order, UTF-8 byte Base64 conversion, URL-safe substitutions, and no `=`; prohibit raw-Unicode `btoa`. In `AdminProjectsView` tests give each student an `id`, trigger creation, assert the child payload has paired marker/human lines and the parent payload has no binding marker. Include a username whose original value differs from its trimmed value and assert the identity marker preserves the exact roster value.
 
 - [ ] **Step 2: Run RED**
 
@@ -219,7 +219,7 @@ Expected: codec import and child-description assertions fail.
 
 - [ ] **Step 3: Implement, verify, and commit in that worktree**
 
-At the existing per-student loop, build the marker with course ID, parent project ID, student ID, and trimmed username; reject an empty ID locally. Keep `buildStudentExperimentName()` unchanged and parent creation untouched.
+At the existing per-student loop, build the marker with course ID, parent project ID, student ID, and the exact unmodified roster `student.username`; reject an empty ID or an all-whitespace username locally. Existing trimmed/display/name behavior may remain, but it must not alter the identity snapshot. Keep `buildStudentExperimentName()` and parent creation otherwise untouched.
 
 ```bash
 npm test -- --run src/modules/student-binding/__tests__/codec.test.ts src/views/admin/__tests__/AdminProjectsView.test.ts

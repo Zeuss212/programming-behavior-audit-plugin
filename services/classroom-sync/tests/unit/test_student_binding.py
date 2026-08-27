@@ -17,7 +17,6 @@ from classroom_sync.auth.student_binding import (
 )
 from classroom_sync.errors import RosterConflictError
 
-
 GOLDEN_PATH = (
     Path(__file__).resolve().parents[4]
     / "contracts/classroom/v1/fincolab-student-binding-v1.golden.json"
@@ -33,6 +32,10 @@ def binding_description(payload: str) -> str:
 def encoded_json(value: object) -> str:
     raw = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def encoded_raw_json(value: str) -> str:
+    return base64.urlsafe_b64encode(value.encode("ascii")).rstrip(b"=").decode("ascii")
 
 
 @pytest.mark.parametrize("vector", GOLDEN["canonical"])
@@ -86,6 +89,33 @@ def test_rejects_invalid_decoded_field_bounds(binding: dict[str, str]) -> None:
         parse_student_binding_description(binding_description(encoded_json(binding)))
 
 
+@pytest.mark.parametrize(
+    "binding",
+    [
+        StudentBindingV1("space-1", "parent-1", "student-1", ""),
+        StudentBindingV1("space-1", "parent-1", "x" * 257, "student-a"),
+        StudentBindingV1("space-1", "parent-1", "student-1", "A\ud800B"),
+    ],
+)
+def test_encoder_rejects_fields_that_cannot_form_canonical_utf8(binding: StudentBindingV1) -> None:
+    """An encoder leak of UnicodeEncodeError would bypass the stable error contract."""
+
+    with pytest.raises(RosterConflictError, match="student_binding_marker_malformed"):
+        encode_student_binding_v1(binding)
+
+
+def test_parser_rejects_lone_surrogate_decoded_from_json() -> None:
+    """Re-canonicalization must reject JSON strings that cannot be encoded as UTF-8."""
+
+    payload = encoded_raw_json(
+        '{"parent_algorithm_id":"parent-1","space_id":"space-1","student_id":"student-1",'
+        '"student_username":"\\ud800"}'
+    )
+
+    with pytest.raises(RosterConflictError, match="student_binding_marker_malformed"):
+        parse_student_binding_description(binding_description(payload))
+
+
 def test_rejects_oversized_payload_and_description() -> None:
     """Removing transport bounds would permit unbounded metadata to reach JSON parsing."""
 
@@ -128,6 +158,25 @@ def test_marker_family_never_falls_back_when_first_line_is_not_the_exact_pair(
     """A malformed or future marker is distinct from an unmarked legacy description."""
 
     with pytest.raises(RosterConflictError, match=code):
+        parse_student_binding_description(description)
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        f"{PARENT_MARKER}\n[FINCOLAB_STUDENT_BINDING_V1:{GOLDEN['canonical'][0]['payload']}]",
+        f"{PARENT_MARKER}\n[FINCOLAB_STUDENT_BINDING_V2:abc]",
+        (
+            f"{PARENT_MARKER}[FINCOLAB_STUDENT_BINDING_V1:{GOLDEN['canonical'][0]['payload']}]"
+            f"[FINCOLAB_STUDENT_BINDING_V1:{GOLDEN['canonical'][0]['payload']}]"
+        ),
+        f"{PARENT_MARKER}[FINCOLAB_STUDENT_BINDING_V1:{GOLDEN['canonical'][0]['payload']}]\r\n",
+    ],
+)
+def test_marker_family_outside_one_exact_lf_first_line_is_malformed(description: str) -> None:
+    """A repeated, non-first-line, or CRLF marker must never enter the legacy branch."""
+
+    with pytest.raises(RosterConflictError, match="student_binding_marker_malformed"):
         parse_student_binding_description(description)
 
 

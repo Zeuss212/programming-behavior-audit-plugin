@@ -47,6 +47,7 @@ _STORED_VERSION_V2_KEYS = _STORED_VERSION_V1_KEYS | {
     "assessment_tests",
     "confirmations",
 }
+_STORED_VERSION_V3_KEYS = _STORED_VERSION_V2_KEYS | {"starter_source"}
 _PROJECTION_KEYS = {
     "profile_id",
     "version",
@@ -179,6 +180,12 @@ class DimensionProfileStore:
                     raise ProfileConfirmationError(
                         "Every knowledge point requires an enabled test."
                     )
+            elif draft["schema_version"] == 3:
+                confirmations = draft["confirmations"]
+                if any(value is None for value in confirmations.values()):
+                    raise ProfileConfirmationError(
+                        "Current material, source, knowledge points, dimensions, and tests must be confirmed."
+                    )
 
             content = {
                 "schema_version": draft["schema_version"],
@@ -192,6 +199,16 @@ class DimensionProfileStore:
                 content.update(
                     {
                         "problem_context": draft["problem_context"],
+                        "knowledge_points": draft["knowledge_points"],
+                        "assessment_tests": draft["assessment_tests"],
+                        "confirmations": draft["confirmations"],
+                    }
+                )
+            elif draft["schema_version"] == 3:
+                content.update(
+                    {
+                        "problem_context": draft["problem_context"],
+                        "starter_source": draft["starter_source"],
                         "knowledge_points": draft["knowledge_points"],
                         "assessment_tests": draft["assessment_tests"],
                         "confirmations": draft["confirmations"],
@@ -283,6 +300,8 @@ class DimensionProfileStore:
             if schema_version == 1
             else _STORED_VERSION_V2_KEYS
             if schema_version == 2
+            else _STORED_VERSION_V3_KEYS
+            if schema_version == 3
             else None
         )
         if expected_keys is None or set(stored) != expected_keys:

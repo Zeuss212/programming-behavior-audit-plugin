@@ -11,6 +11,7 @@ from myextension.dimension_profile_store import (
 )
 from myextension.profile_validator import ProfileValidationError
 from myextension.schema_registry import validate_schema
+from myextension.tests.profile_v3_fixtures import profile_v3_draft
 
 
 def _dimension():
@@ -298,3 +299,226 @@ def test_v2_preserves_exact_test_input_and_expected_whitespace(tmp_path):
     assert created["assessment_tests"][0]["input"] == "  [[78, 85, 92, 66, 88]]\n"
     assert created["assessment_tests"][0]["expected"] == "\n81.8  "
     assert published["assessment_tests"] == created["assessment_tests"]
+
+
+def _add_duplicate_material_requirement_mapping(payload):
+    payload["knowledge_points"].append(
+        {
+            "id": "KP_ABCDEFGH",
+            "material_requirement_id": "REQ_LINK_TAIL_INSERT",
+            "name": "重复材料职责",
+            "description": "两个知识点不能指向同一材料要求。",
+            "source": "teacher",
+            "order": 1,
+        }
+    )
+    payload["dimensions"].append(
+        {
+            "knowledge_point_id": "KP_ABCDEFGH",
+            "name": "重复材料职责",
+            "question": "该维度使测试聚焦于材料要求唯一性。",
+            "evidence_criteria": [
+                {
+                    "id": "CRIT_ABCDEFGH",
+                    "material_requirement_id": "REQ_LINK_TAIL_INSERT",
+                    "statement": "此条件仅用于验证重复职责拒绝。",
+                    "required": False,
+                }
+            ],
+            "verification_bindings": [
+                {
+                    "criterion_id": "CRIT_ABCDEFGH",
+                    "kind": "detector_profile",
+                    "detector_profile_id": "address_undefined_leak_v1",
+                }
+            ],
+            "analysis_config": {"mode": "evidence_binding"},
+        }
+    )
+
+
+def _set_test_field_and_rehash(payload, field, value):
+    assessment_test = payload["assessment_tests"][0]
+    assessment_test[field] = value
+    assessment_test["content_hash"] = sha256_json(
+        {
+            key: item
+            for key, item in assessment_test.items()
+            if key != "content_hash"
+        }
+    )
+
+
+def _add_test_knowledge_mismatch(payload):
+    payload["knowledge_points"].append(
+        {
+            "id": "KP_ABCDEFGH",
+            "material_requirement_id": "REQ_SECOND",
+            "name": "第二知识点",
+            "description": "需要独立的测评维度。",
+            "source": "teacher",
+            "order": 1,
+        }
+    )
+    _set_test_field_and_rehash(payload, "knowledge_point_ids", ["KP_ABCDEFGH"])
+    payload["dimensions"].append(
+        {
+            "knowledge_point_id": "KP_ABCDEFGH",
+            "name": "第二知识点",
+            "question": "此维度让测试聚焦于知识点绑定。",
+            "evidence_criteria": [
+                {
+                    "id": "CRIT_ABCDEFGH",
+                    "material_requirement_id": "REQ_SECOND",
+                    "statement": "第二知识点只由检测器证明。",
+                    "required": False,
+                }
+            ],
+            "verification_bindings": [
+                {
+                    "criterion_id": "CRIT_ABCDEFGH",
+                    "kind": "detector_profile",
+                    "detector_profile_id": "address_undefined_leak_v1",
+                }
+            ],
+            "analysis_config": {"mode": "evidence_binding"},
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutate", "code"),
+    [
+        (
+            lambda payload: payload["knowledge_points"].append(
+                {**copy.deepcopy(payload["knowledge_points"][0]), "order": 1}
+            ),
+            "duplicate_knowledge_point_id",
+        ),
+        (
+            lambda payload: payload["assessment_tests"][1].update(
+                {"id": payload["assessment_tests"][0]["id"]}
+            ),
+            "duplicate_assessment_test_id",
+        ),
+        (
+            lambda payload: payload["assessment_tests"][1].update({"order": 2}),
+            "invalid_assessment_test_order",
+        ),
+        (
+            lambda payload: _add_test_knowledge_mismatch(payload),
+            "assessment_test_knowledge_point_mismatch",
+        ),
+        (
+            lambda payload: _set_test_field_and_rehash(
+                payload, "criterion_ids", ["CRIT_ABCDEFGH"]
+            ),
+            "assessment_test_criterion_mismatch",
+        ),
+        (
+            lambda payload: payload["knowledge_points"].append(
+                {
+                    "id": "KP_ABCDEFGH",
+                    "material_requirement_id": "REQ_SECOND",
+                    "name": "第二知识点",
+                    "description": "需要独立的测评维度。",
+                    "source": "teacher",
+                    "order": 1,
+                }
+            ),
+            "missing_knowledge_point_dimension",
+        ),
+        (
+            lambda payload: _add_duplicate_material_requirement_mapping(payload),
+            "duplicate_material_requirement_mapping",
+        ),
+        (
+            lambda payload: payload["dimensions"][0]["evidence_criteria"].append(
+                {
+                    "id": "CRIT_ABCDEFGH",
+                    "material_requirement_id": "REQ_LINK_TAIL_INSERT",
+                    "statement": "逆置后输出顺序正确。",
+                    "required": True,
+                }
+            ),
+            "missing_verification_binding",
+        ),
+        (
+            lambda payload: payload["confirmations"].update({"tests_hash": "0" * 64}),
+            "stale_tests_confirmation",
+        ),
+        (
+            lambda payload: payload["assessment_tests"][0].update(
+                {"content_hash": "0" * 64}
+            ),
+            "stale_assessment_test_content_hash",
+        ),
+    ],
+    ids=[
+        "duplicate-knowledge-point-id",
+        "duplicate-assessment-test-id",
+        "non-continuous-test-order",
+        "test-knowledge-mismatch",
+        "test-criterion-mismatch",
+        "missing-dimension",
+        "duplicate-material-requirement",
+        "missing-required-criterion-binding",
+        "stale-tests-confirmation",
+        "stale-test-content-hash",
+    ],
+)
+def test_v3_rejects_semantic_draft_contract_violations(mutate, code):
+    """Each case catches a broken v3 relationship schema alone cannot express."""
+    payload = profile_v3_draft()
+    mutate(payload)
+
+    with pytest.raises(ProfileValidationError) as caught:
+        DimensionProfileStore("/unused").create_draft(payload)
+
+    assert caught.value.code == code
+
+
+def test_v3_normalizes_teacher_prose_but_preserves_exact_test_io_bytes(tmp_path):
+    """Whitespace in executable input/output is content, unlike teacher prose."""
+    payload = profile_v3_draft()
+    payload["title"] = "  链表尾插与逆置  "
+    payload["assessment_tests"][0]["input"] = "  6\n1 2 3 4 5 6\n"
+    payload["assessment_tests"][0]["expected_stdout"] = "\n倒置前为：1 2 3 4 5 6 \n"
+    test_without_hash = {
+        key: value
+        for key, value in payload["assessment_tests"][0].items()
+        if key != "content_hash"
+    }
+    payload["assessment_tests"][0]["content_hash"] = sha256_json(test_without_hash)
+    payload["confirmations"] = {
+        key: None for key in payload["confirmations"]
+    }
+
+    created = DimensionProfileStore(tmp_path).create_draft(payload)
+
+    assert created["title"] == "链表尾插与逆置"
+    assert created["assessment_tests"][0]["input"] == "  6\n1 2 3 4 5 6\n"
+    assert created["assessment_tests"][0]["expected_stdout"] == "\n倒置前为：1 2 3 4 5 6 \n"
+
+
+def test_v3_publish_and_reload_preserves_the_complete_immutable_contract(tmp_path):
+    """A confirmed, linked C++ profile can become an immutable version."""
+    store = DimensionProfileStore(tmp_path)
+
+    created = store.create_draft(profile_v3_draft())
+    published = store.publish(created["profile_id"])
+
+    assert published["schema_version"] == 3
+    assert published["starter_source"] == created["starter_source"]
+    assert store.get_version(created["profile_id"], published["version"]) == published
+
+
+def test_v3_publish_requires_all_confirmation_hashes(tmp_path):
+    """Publishing cannot turn a partially confirmed C++ draft immutable."""
+    payload = profile_v3_draft()
+    payload["confirmations"]["material_bundle_hash"] = None
+    store = DimensionProfileStore(tmp_path)
+    created = store.create_draft(payload)
+
+    with pytest.raises(ProfileConfirmationError):
+        store.publish(created["profile_id"])

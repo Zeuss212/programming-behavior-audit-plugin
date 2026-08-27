@@ -1,16 +1,30 @@
 from __future__ import annotations
 
+import base64
 import importlib.util
 import json
 import sys
 from copy import deepcopy
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 SMOKE_PATH = ROOT / "scripts" / "cpp_classroom_phase1_smoke.py"
 MATERIALS = ROOT / "deploy" / "classroom" / "local-demo" / "materials"
+SERVICE_SRC = ROOT / "services" / "classroom-sync" / "src"
+sys.path.insert(0, str(SERVICE_SRC))
+
+from classroom_sync.auth.fincolab import Principal  # noqa: E402
+from classroom_sync.services.assessment_materials import (  # noqa: E402
+    AssessmentMaterialBundle,
+    AssessmentMaterialService,
+)
+from classroom_sync.services.publication_gate import (  # noqa: E402
+    PublicationGate,
+    PublicationGateResult,
+)
 
 
 def _load_smoke(name: str = "cpp_classroom_phase1_smoke"):
@@ -22,20 +36,45 @@ def _load_smoke(name: str = "cpp_classroom_phase1_smoke"):
     return module
 
 
-def _public_material(name: str, public_hash: str) -> dict[str, object]:
-    payload = json.loads((MATERIALS / name / "bundle.json").read_text(encoding="utf-8"))
-    payload.pop("importer_version")
-    payload.pop("toolchain_profile")
-    payload["bundle_hash"] = public_hash
-    return payload
+def _real_material(name: str) -> AssessmentMaterialBundle:
+    payload = cast(
+        dict[str, object],
+        json.loads((MATERIALS / name / "bundle.json").read_text(encoding="utf-8")),
+    )
+    starter = cast(dict[str, object], payload["starter_source"])
+    source_path = MATERIALS / name / cast(str, starter["file_name"])
+    starter["content_base64"] = base64.b64encode(source_path.read_bytes()).decode("ascii")
+
+    class StaticGateway:
+        def get_bundle(
+            self,
+            principal: Principal,
+            space_id: str,
+            parent_algorithm_id: str,
+        ) -> dict[str, object]:
+            assert principal.user_id == "teacher-1"
+            assert space_id == payload["space_id"]
+            assert parent_algorithm_id == payload["parent_algorithm_id"]
+            return deepcopy(payload)
+
+    return AssessmentMaterialService(StaticGateway()).get_bundle(
+        Principal("teacher-1", "teacher001", "teacher-token"),
+        cast(str, payload["space_id"]),
+        cast(str, payload["parent_algorithm_id"]),
+    )
 
 
 class FixtureBackend:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
-        self.sequence = _public_material("sequence-list", "a" * 64)
-        self.linked = _public_material("linked-list", "b" * 64)
+        self.sequence_materials = _real_material("sequence-list")
+        self.linked_materials = _real_material("linked-list")
+        self.sequence = self.sequence_materials.model_dump(mode="json")
+        self.linked = self.linked_materials.model_dump(mode="json")
         self.saved_profile: dict[str, object] | None = None
+        self.saved_gate: PublicationGateResult | None = None
+        self.draft_reload_calls = 0
+        self.published = False
 
     def facade_request(
         self,
@@ -82,39 +121,44 @@ class FixtureBackend:
             return 200, self._authoring("open")
         if path == "/v1/classroom/plans/drafts":
             assert method == "POST" and payload is not None
-            self.saved_profile = deepcopy(payload["profile"])  # type: ignore[assignment]
+            candidate = cast(dict[str, object], deepcopy(payload["profile"]))
+            gate = PublicationGate().evaluate(candidate, self.linked_materials)
+            self.saved_gate = gate
+            if gate.status != "ready":
+                return 409, {
+                    "detail": "publication_gate_blocked",
+                    "publication_gate": gate.safe_projection(),
+                }
+            self.saved_profile = candidate
             return 201, {
                 "draft_id": "draft-linked-v3",
                 "authoring_session_id": "authoring-linked",
                 "profile": deepcopy(self.saved_profile),
                 "revision": 0,
-                "publication_gate": {
-                    "status": "ready",
-                    "blocking_count": 0,
-                    "warning_count": 1,
-                    "issues": [{"code": "boundary_coverage_incomplete"}],
-                },
+                "publication_gate": gate.safe_projection(),
             }
         if path == "/v1/classroom/plans/drafts/draft-linked-v3":
             assert method == "GET" and payload is None
             assert self.saved_profile is not None
+            assert self.saved_gate is not None
+            self.draft_reload_calls += 1
             return 200, {
                 "draft_id": "draft-linked-v3",
                 "authoring_session_id": "authoring-linked",
                 "profile": deepcopy(self.saved_profile),
                 "revision": 0,
-                "publication_gate": {
-                    "status": "ready",
-                    "blocking_count": 0,
-                    "warning_count": 1,
-                    "issues": [{"code": "boundary_coverage_incomplete"}],
-                },
+                "publication_gate": self.saved_gate.safe_projection(),
             }
         if path == "/v1/classroom/plans/drafts/draft-linked-v3/publish":
             assert method == "POST" and payload is None
+            assert self.saved_profile is not None
+            gate = PublicationGate().evaluate(self.saved_profile, self.linked_materials)
+            assert gate.status == "ready"
+            self.published = True
             return 200, {"plan_version_id": "linked-plan-v1", "version": 1}
         if path == "/v1/classroom/plan-authoring-sessions/authoring-linked/plan-suggestion":
             assert method == "GET" and payload is None
+            assert self.published
             return 200, self._authoring("published")
         raise AssertionError(f"unexpected smoke call: {method} {path}")
 
@@ -194,6 +238,11 @@ def test_phase_one_smoke_completes_seven_steps_without_student_side_effects() ->
     )
 
     assert backend.saved_profile is not None
+    assert backend.saved_gate is not None
+    assert backend.saved_gate.status == "ready"
+    assert backend.saved_gate.blocking_count == 0
+    assert backend.draft_reload_calls == 1
+    assert backend.published is True
     assert backend.saved_profile["schema_version"] == 3
     assert [
         point["material_requirement_id"]
@@ -203,7 +252,38 @@ def test_phase_one_smoke_completes_seven_steps_without_student_side_effects() ->
         test["id"]
         for test in backend.saved_profile["assessment_tests"]  # type: ignore[index]
     ] == ["TEST_LINK0001", "TEST_LINK0002"]
-    assert backend.saved_profile["confirmations"]["material_bundle_hash"] == "b" * 64  # type: ignore[index]
+    assert (
+        backend.saved_profile["confirmations"]["material_bundle_hash"]  # type: ignore[index]
+        == backend.linked_materials.bundle_hash
+    )
+
+
+def test_phase_one_smoke_rejects_an_unvalidated_schema_only_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    smoke = _load_smoke("cpp_classroom_phase1_smoke_invalid_profile")
+    backend = FixtureBackend()
+    monkeypatch.setattr(
+        smoke,
+        "_corrected_linked_profile",
+        lambda _materials: {"schema_version": 3},
+    )
+
+    with pytest.raises(smoke.PhaseOneSmokeFailure, match="unexpected status"):
+        smoke.run_phase_one_smoke(
+            facade_request=backend.facade_request,
+            sync_request=backend.sync_request,
+        )
+
+    assert backend.saved_gate is not None
+    assert backend.saved_gate.status == "blocked"
+    assert backend.saved_gate.blocking_count > 0
+    assert backend.saved_profile is None
+    assert backend.draft_reload_calls == 0
+    assert backend.published is False
+    assert not any(path.endswith("/publish") for _, path in backend.calls)
+    assert not any(path.endswith("/assignments/sync") for _, path in backend.calls)
+    assert not any("/student/" in path or "/plugin/" in path for _, path in backend.calls)
 
 
 @pytest.mark.parametrize(

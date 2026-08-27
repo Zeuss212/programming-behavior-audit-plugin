@@ -4,12 +4,16 @@ import base64
 import hashlib
 import importlib.util
 import json
+import os
+import shutil
+import subprocess
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from http import HTTPStatus
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from threading import Thread
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -19,6 +23,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 FACADE_PATH = ROOT / "deploy" / "classroom" / "local-demo" / "fincolab_demo.py"
 DOCKERFILE_PATH = ROOT / "deploy" / "classroom" / "local-demo" / "Dockerfile"
+DOCKERIGNORE_PATH = ROOT / ".dockerignore"
 MATERIALS_ROOT = ROOT / "deploy" / "classroom" / "local-demo" / "materials"
 CPP_MATERIALS = {
     "sequence-list-experiment-001": MATERIALS_ROOT / "sequence-list" / "bundle.json",
@@ -241,6 +246,142 @@ def test_demo_image_packages_only_the_two_sealed_material_resources() -> None:
         source.casefold().endswith((".cpp", ".txt")) or "import-config.json" in source
         for source in copy_sources
     )
+
+
+def _dockerignore_includes(relative_path: str, patterns: list[str]) -> bool:
+    """Apply Docker's ordered ignore rules for this repository's closed pattern subset."""
+
+    path_parts = Path(relative_path).parts
+    candidates = ["/".join(path_parts[:index]) for index in range(1, len(path_parts) + 1)]
+    for candidate in candidates:
+        included = True
+        for raw_pattern in patterns:
+            pattern = raw_pattern.strip()
+            if not pattern or pattern.startswith("#"):
+                continue
+            negated = pattern.startswith("!")
+            if negated:
+                pattern = pattern[1:]
+            directory_pattern = pattern.endswith("/")
+            normalized = pattern.strip("/")
+            assert normalized == "*" or normalized.endswith("/**") or "*" not in normalized
+            prefix = normalized.removesuffix("/**")
+            matched = (
+                (normalized == "*" and "/" not in candidate)
+                or candidate == normalized
+                or (normalized.endswith("/**") and candidate.startswith(f"{prefix}/"))
+                or (directory_pattern and candidate.startswith(f"{normalized}/"))
+            )
+            if matched:
+                included = negated
+        if not included:
+            return False
+    return True
+
+
+def _local_demo_context_from_ignore_rules() -> set[str]:
+    patterns = DOCKERIGNORE_PATH.read_text(encoding="utf-8").splitlines()
+    return {
+        path.relative_to(ROOT).as_posix()
+        for path in (ROOT / "deploy" / "classroom" / "local-demo").rglob("*")
+        if path.is_file()
+        and "__pycache__" not in path.parts
+        and _dockerignore_includes(path.relative_to(ROOT).as_posix(), patterns)
+    }
+
+
+def _local_demo_context_from_docker() -> set[str] | None:
+    docker = shutil.which("docker")
+    if docker is None:
+        return None
+    available = subprocess.run(
+        [docker, "info", "--format", "{{.ServerVersion}}"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if available.returncode != 0:
+        return None
+    with TemporaryDirectory() as temporary_directory:
+        temporary = Path(temporary_directory)
+        dockerfile = temporary / "Dockerfile.context-check"
+        dockerfile.write_text(
+            "FROM scratch\nCOPY deploy/classroom/local-demo /context\n",
+            encoding="utf-8",
+        )
+        output = temporary / "output"
+        environment = {**os.environ, "DOCKER_BUILDKIT": "1"}
+        completed = subprocess.run(
+            [
+                docker,
+                "build",
+                "--network=none",
+                "--pull=false",
+                "--output",
+                f"type=local,dest={output}",
+                "--file",
+                str(dockerfile),
+                str(ROOT),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=environment,
+        )
+        assert completed.returncode == 0, completed.stderr
+        return {
+            f"deploy/classroom/local-demo/{path.relative_to(output / 'context').as_posix()}"
+            for path in (output / "context").rglob("*")
+            if path.is_file()
+        }
+
+
+def test_repository_docker_context_includes_copy_sources_and_excludes_private_assets() -> None:
+    copy_sources = {
+        line.split()[1]
+        for line in DOCKERFILE_PATH.read_text(encoding="utf-8").splitlines()
+        if line.startswith("COPY ")
+    }
+    expected_context = {
+        "deploy/classroom/local-demo/Dockerfile",
+        "deploy/classroom/local-demo/fincolab_demo.py",
+        "deploy/classroom/local-demo/materials/sequence-list/bundle.json",
+        "deploy/classroom/local-demo/materials/linked-list/bundle.json",
+    }
+    patterns = DOCKERIGNORE_PATH.read_text(encoding="utf-8").splitlines()
+    context_files = _local_demo_context_from_ignore_rules()
+
+    assert copy_sources <= context_files
+    assert context_files == expected_context
+    assert not any(
+        path.casefold().endswith((".cpp", ".txt"))
+        or path.endswith("import-config.json")
+        or path.endswith("source-manifest.json")
+        or path.endswith("README.md")
+        or path.endswith("docker-compose.yml")
+        or path.endswith(".env.ai.example")
+        for path in context_files
+    )
+
+    docker_context_files = _local_demo_context_from_docker()
+    if docker_context_files is not None:
+        assert docker_context_files == context_files
+
+    guard_cases = {
+        "deploy/classroom/local-demo/**": "deploy/classroom/local-demo/README.md",
+        "deploy/classroom/local-demo/materials/**": (
+            "deploy/classroom/local-demo/materials/source-manifest.json"
+        ),
+        "deploy/classroom/local-demo/materials/sequence-list/**": (
+            "deploy/classroom/local-demo/materials/sequence-list/顺序表操作练习01.cpp"
+        ),
+    }
+    for guard, forbidden_path in guard_cases.items():
+        assert guard in patterns
+        without_guard = [pattern for pattern in patterns if pattern != guard]
+        assert _dockerignore_includes(forbidden_path, without_guard)
 
 
 def test_facade_keeps_request_logging_silent(capsys: pytest.CaptureFixture[str]) -> None:

@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-27",
+  "materials": [
+    {
+      "destination": "sequence-list/顺序表操作练习01.cpp",
+      "original_basename": "顺序表操作练习01.cpp",
+      "location_class": "teacher_provided_local_material",
+      "sha256": "44717d0b2e1a9c2fe829db08e0171b2aa86f82b3e0cd0ab97b41512af190eecc",
+      "encoding": "gb18030",
+      "media_type": "text/x-c++src"
+    },
+    {
+      "destination": "sequence-list/编码习题1-线性表的基本操作(1).txt",
+      "original_basename": "编码习题1-线性表的基本操作(1).txt",
+      "location_class": "teacher_provided_local_material",
+      "sha256": "2feef3567dd6ce47eda7dda2f14a775fc756684f21de9a8c315ccf91d3bb6cff",
+      "encoding": "utf-8",
+      "media_type": "text/plain"
+    },
+    {
+      "destination": "linked-list/链表操作练习02.cpp",
+      "original_basename": "链表操作练习02.cpp",
+      "location_class": "teacher_provided_local_material",
+      "sha256": "6468a373fbf602c7c8d5012fca2a5ead4973bb8daf54714c7ef22d84bbd68cb0",
+      "encoding": "utf-8",
+      "media_type": "text/x-c++src"
+    },
+    {
+      "destination": "linked-list/编码习题2-链表的逆置操作.txt",
+      "original_basename": "编码习题2-链表的逆置操作.txt",
+      "location_class": "teacher_provided_local_material",
+      "sha256": "78c32919dc9bcbf2cf1477f44faf1cda649f5c2c93aa160788ffa8ad2a2d8afd",
+      "encoding": "utf-8",
+      "media_type": "text/plain"
+    }
+  ]
+}

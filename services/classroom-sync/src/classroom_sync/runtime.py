@@ -110,6 +110,7 @@ def create_runtime_services(settings: Settings) -> ClassroomServices:
     identity_gateway = FincolabIdentityGateway(
         base_url=settings.fincolab_base_url,
         organization_id=settings.fincolab_organization_id,
+        student_project_name_prefix=settings.fincolab_student_project_prefix,
         client=httpx.Client(timeout=10.0),
     )
     plan_service = PlanService(session_factory, schema_registry, clock=utc_now)

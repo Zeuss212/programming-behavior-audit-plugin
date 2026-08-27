@@ -8,6 +8,7 @@ outside the private Compose network.
 from __future__ import annotations
 
 import json
+import base64
 import os
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -27,6 +28,12 @@ def student_count() -> int:
 
 def student_id(index: int) -> str:
     return f"student{index:03d}"
+
+
+def student_binding_description(student: str) -> str:
+    binding = {"parent_algorithm_id": "parent-experiment-001", "space_id": "course-001", "student_id": student, "student_username": student}
+    payload = base64.urlsafe_b64encode(json.dumps(binding, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")).rstrip(b"=").decode("ascii")
+    return f"[FINCOLAB_PARENT_PROJECT_ID:parent-experiment-001][FINCOLAB_STUDENT_BINDING_V1:{payload}]"
 
 
 def users() -> dict[str, dict[str, str]]:
@@ -54,7 +61,7 @@ def student_children() -> list[dict[str, str]]:
         {
             "id": f"child-experiment-{index:03d}",
             "username": student_id(index),
-            "description": "[FINCOLAB_PARENT_PROJECT_ID:parent-experiment-001]",
+            "description": student_binding_description(student_id(index)),
             "workbench_id": f"workbench-{student_id(index)}",
         }
         for index in range(1, student_count() + 1)

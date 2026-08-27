@@ -3,7 +3,8 @@ from collections.abc import Callable
 import httpx
 import pytest
 
-from classroom_sync.auth.fincolab import FincolabIdentityGateway
+from classroom_sync.auth.fincolab import FincolabIdentityGateway, Principal, StudentChildExperiment
+from classroom_sync.auth.student_binding import StudentBindingV1, encode_student_binding_v1
 from classroom_sync.errors import (
     AuthenticationError,
     AuthorizationError,
@@ -28,6 +29,11 @@ def user_response(username: str, user_id: str, platform_role: str = "student") -
 
 def member_response(*members: dict[str, object], total_page: int = 1) -> dict[str, object]:
     return {"data": list(members), "current_page": 1, "total_page": total_page}
+
+
+def binding_description(*, space_id: str = "space-1", parent_id: str = "parent-1", username: str = "student-a") -> str:
+    payload = encode_student_binding_v1(StudentBindingV1(space_id, parent_id, "student-1", username))
+    return f"[FINCOLAB_PARENT_PROJECT_ID:{parent_id}][FINCOLAB_STUDENT_BINDING_V1:{payload}]"
 
 
 def test_student_cannot_forge_teacher_role_from_client_claim():
@@ -189,12 +195,14 @@ def test_duplicate_child_projects_are_quarantined_instead_of_auto_assigned():
                     "data": [
                         {
                             "id": "child-1",
+                            "name": "exp-student-a-a1b2",
                             "username": "student-a",
                             "description": "[FINCOLAB_PARENT_PROJECT_ID:parent-1]",
                             "workbench_id": "workbench-1",
                         },
                         {
                             "id": "child-2",
+                            "name": "exp-student-a-a1b3",
                             "username": "student-a",
                             "description": "[FINCOLAB_PARENT_PROJECT_ID:parent-1]",
                             "workbench_id": "workbench-2",
@@ -211,3 +219,54 @@ def test_duplicate_child_projects_are_quarantined_instead_of_auto_assigned():
 
     with pytest.raises(RosterConflictError, match="duplicate_student_child"):
         identity_gateway.list_student_children(principal, "space-1", "parent-1")
+
+
+def test_teacher_owned_v1_child_binds_the_marker_student_not_its_owner():
+    def responder(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/users"):
+            return httpx.Response(200, json=member_response(
+                {"id": "teacher-1", "username": "teacher-a", "role_name": "teacher"},
+                {"id": "student-1", "username": "student-a", "role_name": "student"},
+            ))
+        if request.url.path.endswith("/algorithm_development"):
+            return httpx.Response(200, json=member_response({
+                "id": "child-1", "username": "teacher-a", "description": binding_description(), "workbench_id": "workbench-1"
+            }))
+        raise AssertionError(request.url)
+
+    roster = gateway(responder).list_student_children(Principal("teacher-1", "teacher-a", "token"), "space-1", "parent-1")
+
+    assert roster == (StudentChildExperiment("student-1", "student-a", "child-1", "workbench-1"),)
+
+
+@pytest.mark.parametrize(
+    ("description", "code"),
+    [
+        (binding_description(space_id="space-2"), "student_binding_space_mismatch"),
+        (
+            "[FINCOLAB_PARENT_PROJECT_ID:parent-1][FINCOLAB_STUDENT_BINDING_V1:"
+            + encode_student_binding_v1(StudentBindingV1("space-1", "parent-2", "student-1", "student-a"))
+            + "]",
+            "student_binding_parent_mismatch",
+        ),
+        (binding_description(username="student-b"), "student_binding_username_mismatch"),
+        ("[FINCOLAB_PARENT_PROJECT_ID:parent-1][FINCOLAB_STUDENT_BINDING_V1:bad=]", "student_binding_marker_malformed"),
+    ],
+)
+def test_current_parent_v1_marker_conflicts_fail_closed(description: str, code: str):
+    def responder(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/users"):
+            return httpx.Response(200, json=member_response({"id":"student-1","username":"student-a","role_name":"student"}))
+        return httpx.Response(200, json=member_response({"id":"child-1","username":"teacher-a","description":description,"workbench_id":"workbench-1"}))
+
+    with pytest.raises(RosterConflictError, match=code):
+        gateway(responder).list_student_children(Principal("teacher-1", "teacher-a", "token"), "space-1", "parent-1")
+
+
+def test_other_parent_malformed_marker_is_not_a_current_parent_candidate():
+    def responder(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/users"):
+            return httpx.Response(200, json=member_response({"id":"student-1","username":"student-a","role_name":"student"}))
+        return httpx.Response(200, json=member_response({"id":"child-1","description":"[FINCOLAB_PARENT_PROJECT_ID:other][FINCOLAB_STUDENT_BINDING_V1:bad=]"}))
+
+    assert gateway(responder).list_student_children(Principal("teacher-1", "teacher-a", "token"), "space-1", "parent-1") == ()

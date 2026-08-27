@@ -49,6 +49,30 @@ def test_runtime_configuration_reads_explicit_test_dependencies_from_environment
     assert settings.ai_max_attempts == 1
 
 
+@pytest.mark.parametrize("value", ["", "   ", "x" * 65, "exp name", "实验"])
+def test_runtime_rejects_invalid_literal_legacy_project_prefix(value: str) -> None:
+    with pytest.raises(RuntimeError, match="CLASSROOM_FINCOLAB_STUDENT_PROJECT_PREFIX"):
+        Settings.from_env(
+            {
+                "CLASSROOM_DATABASE_URL": "sqlite://",
+                "CLASSROOM_FINCOLAB_STUDENT_PROJECT_PREFIX": value,
+            }
+        )
+
+
+def test_runtime_defaults_and_preserves_a_literal_legacy_project_prefix() -> None:
+    assert Settings.from_env({"CLASSROOM_DATABASE_URL": "sqlite://"}).fincolab_student_project_prefix == "exp"
+    assert (
+        Settings.from_env(
+            {
+                "CLASSROOM_DATABASE_URL": "sqlite://",
+                "CLASSROOM_FINCOLAB_STUDENT_PROJECT_PREFIX": "lesson_x-1",
+            }
+        ).fincolab_student_project_prefix
+        == "lesson_x-1"
+    )
+
+
 def test_ai_settings_require_all_three_server_values() -> None:
     """AI suggestions are optional, but partial provider credentials are never usable."""
     settings = Settings(

@@ -4,7 +4,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
-from sqlalchemy import create_engine
+import pytest
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -12,8 +13,9 @@ from classroom_sync.application import ClassroomServices
 from classroom_sync.auth.fincolab import Principal, StudentChildExperiment
 from classroom_sync.config import Settings
 from classroom_sync.domain.schemas import ClassroomSchemaRegistry
+from classroom_sync.errors import RosterConflictError, UpstreamContractError
 from classroom_sync.main import create_app
-from classroom_sync.models import Base
+from classroom_sync.models import AuditEvent, Base, ExperimentPlanBinding, StudentAssignment
 from classroom_sync.services.assignments import AssignmentService
 from classroom_sync.services.plans import PlanDraftInput, PlanService
 from classroom_sync.services.sessions import PluginSessionService
@@ -55,6 +57,20 @@ class RecordingStorage:
     def put_bytes(self, key: str, body: bytes, *, content_type: str) -> None:
         assert content_type == "application/gzip"
         self.objects[key] = body
+
+
+class RaisingRosterGateway(FakeIdentityGateway):
+    def __init__(self, error: Exception) -> None:
+        super().__init__()
+        self.error = error
+
+    def list_student_children(self, principal: Principal, space_id: str, parent_algorithm_id: str):
+        raise self.error
+
+
+class FailingAssignmentService:
+    def sync_assignments(self, plan_version, roster):
+        raise AssertionError("assignment sync must not run after roster failure")
 
 
 def request(app, method: str, path: str, **kwargs: object) -> httpx.Response:
@@ -139,6 +155,33 @@ def test_teacher_publish_sync_and_student_acceptance_use_trusted_router_boundari
         ("teacher-1", "space-1", "parent-1"),
     ]
     assert identity_gateway.student_checks == [("student-1", "space-1")]
+
+
+@pytest.mark.parametrize(
+    ("error", "status", "retryable"),
+    [
+        (RosterConflictError("student_binding_username_mismatch"), 409, False),
+        (UpstreamContractError("child_workbench_unverified"), 503, True),
+    ],
+)
+def test_roster_failure_returns_before_assignment_sync_or_any_assignment_write(error, status, retryable):
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    root = Path(__file__).resolve().parents[4]
+    plan_service = PlanService(session_factory, ClassroomSchemaRegistry(root / "contracts" / "classroom" / "v1"), clock=lambda: datetime(2026, 8, 12, tzinfo=UTC))
+    draft = plan_service.create_draft(PlanDraftInput("space-1", "parent-1", "t", profile_draft("q"), datetime(2026, 8, 12, tzinfo=UTC), datetime(2026, 8, 12, 1, tzinfo=UTC), "prohibited"), teacher_id="teacher-1")
+    version = plan_service.publish_draft(draft.id, teacher_id="teacher-1")
+    with session_factory() as session:
+        audit_count_before = len(session.scalars(select(AuditEvent)).all())
+    app = create_app(Settings(database_url="sqlite://"), classroom_services=ClassroomServices(identity_gateway=RaisingRosterGateway(error), plan_service=plan_service, assignment_service=FailingAssignmentService()))
+    response = request(app, "POST", f"/v1/classroom/plans/{version.id}/assignments/sync", headers={"Authorization":"Bearer teacher-token", "X-Request-ID":"request-1"})
+    assert response.status_code == status
+    assert response.json()["error"] == {"code": error.code, "message": "课堂服务请求未能完成。", "retryable": retryable, "request_id":"request-1"}
+    with session_factory() as session:
+        assert session.scalars(select(ExperimentPlanBinding)).all() == []
+        assert session.scalars(select(StudentAssignment)).all() == []
+        assert len(session.scalars(select(AuditEvent)).all()) == audit_count_before
 
 
 def test_student_launches_plugin_with_one_time_ticket_and_uploads_evidence():

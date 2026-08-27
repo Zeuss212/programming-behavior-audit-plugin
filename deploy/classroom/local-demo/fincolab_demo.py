@@ -7,6 +7,7 @@ demo.  All identities, passwords and tokens are disposable local fixtures.
 from __future__ import annotations
 
 import json
+import base64
 import os
 from dataclasses import asdict, dataclass
 from http import HTTPStatus
@@ -179,12 +180,18 @@ def _student_project(student_id: str = "student001") -> dict[str, object]:
         "id": child_algorithm_id,
         "name": f"exp-{student_id}-a1b2",
         "username": student_id,
-        "description": f"[FINCOLAB_PARENT_PROJECT_ID:{PARENT_ALGORITHM_ID}] 本地课堂学生任务",
+        "description": _student_binding_description(student_id) + "\n本地课堂学生任务",
         "project_type": "notebook",
         "workbench_id": workbench_id,
         "workbench_status": "RUNNING",
         "jupyter_url": "http://127.0.0.1:8888/lab",
     }
+
+
+def _student_binding_description(student_id: str) -> str:
+    binding = {"parent_algorithm_id": PARENT_ALGORITHM_ID, "space_id": COURSE_ID, "student_id": student_id, "student_username": student_id}
+    payload = base64.urlsafe_b64encode(json.dumps(binding, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")).rstrip(b"=").decode("ascii")
+    return f"[FINCOLAB_PARENT_PROJECT_ID:{PARENT_ALGORITHM_ID}][FINCOLAB_STUDENT_BINDING_V1:{payload}]"
 
 
 def _pagination(rows: list[dict[str, object]]) -> dict[str, object]:

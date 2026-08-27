@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
@@ -23,6 +24,7 @@ class Settings:
     s3_secret_key: str | None = field(default=None, repr=False)
     fincolab_base_url: str | None = None
     fincolab_organization_id: str | None = None
+    fincolab_student_project_prefix: str = "exp"
     plugin_jwt_secret: str | None = field(default=None, repr=False)
     ai_base_url: str | None = None
     ai_model: str | None = None
@@ -46,6 +48,7 @@ class Settings:
             fincolab_organization_id=cls._optional(
                 values, "CLASSROOM_FINCOLAB_ORGANIZATION_ID"
             ),
+            fincolab_student_project_prefix=cls._legacy_project_prefix(values),
             plugin_jwt_secret=cls._optional(values, "CLASSROOM_PLUGIN_JWT_SECRET"),
             ai_base_url=cls._optional(values, "CLASSROOM_AI_BASE_URL"),
             ai_model=cls._optional(values, "CLASSROOM_AI_MODEL"),
@@ -106,3 +109,13 @@ class Settings:
         if not minimum <= parsed <= maximum:
             raise RuntimeError(f"{name} must be an integer between {minimum} and {maximum}.")
         return parsed
+
+    @staticmethod
+    def _legacy_project_prefix(values: Mapping[str, str]) -> str:
+        name = "CLASSROOM_FINCOLAB_STUDENT_PROJECT_PREFIX"
+        if name not in values:
+            return "exp"
+        value = values[name]
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", value):
+            raise RuntimeError(f"{name} must be 1-64 ASCII letters, digits, hyphens, or underscores.")
+        return value

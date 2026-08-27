@@ -1,5 +1,6 @@
 import asyncio
 import gzip
+import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -182,6 +183,33 @@ def test_roster_failure_returns_before_assignment_sync_or_any_assignment_write(e
         assert session.scalars(select(ExperimentPlanBinding)).all() == []
         assert session.scalars(select(StudentAssignment)).all() == []
         assert len(session.scalars(select(AuditEvent)).all()) == audit_count_before
+
+
+def test_service_error_logs_safe_diagnostic_context(caplog):
+    error = UpstreamContractError("child_workbench_unverified")
+    app = create_app(Settings(database_url="sqlite://"))
+
+    @app.get("/failing-route")
+    def failing_route():
+        raise error
+
+    caplog.set_level(logging.WARNING, logger="classroom_sync.main")
+    response = request(
+        app,
+        "GET",
+        "/failing-route",
+        headers={"Authorization": "Bearer must-not-be-logged", "X-Request-ID": "support-123"},
+    )
+
+    assert response.status_code == 503
+    record = next(record for record in caplog.records if record.message == "classroom_service_error")
+    assert record.method == "GET"
+    assert record.path == "/failing-route"
+    assert record.status_code == 503
+    assert record.error_code == "child_workbench_unverified"
+    assert record.retryable is True
+    assert record.request_id == "support-123"
+    assert "must-not-be-logged" not in caplog.text
 
 
 def test_student_launches_plugin_with_one_time_ticket_and_uploads_evidence():

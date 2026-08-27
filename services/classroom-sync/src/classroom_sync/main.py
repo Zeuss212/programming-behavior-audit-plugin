@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
@@ -18,6 +19,8 @@ from .routers.student import router as student_router
 from .routers.suggestions import router as suggestions_router
 from .routers.teacher import router as teacher_router
 
+logger = logging.getLogger(__name__)
+
 
 def create_app(
     settings: Settings,
@@ -32,6 +35,19 @@ def create_app(
     def classroom_service_error(
         _request: Request, error: ClassroomServiceError
     ) -> JSONResponse:
+        request_id = _request.headers.get("X-Request-ID") or str(uuid4())
+        logger.log(
+            logging.WARNING if error.status_code >= 500 else logging.INFO,
+            "classroom_service_error",
+            extra={
+                "method": _request.method,
+                "path": _request.url.path,
+                "status_code": error.status_code,
+                "error_code": error.code,
+                "retryable": error.retryable,
+                "request_id": request_id,
+            },
+        )
         return JSONResponse(
             status_code=error.status_code,
             content={
@@ -40,7 +56,7 @@ def create_app(
                     "code": error.code,
                     "message": "课堂服务请求未能完成。",
                     "retryable": error.retryable,
-                    "request_id": _request.headers.get("X-Request-ID") or str(uuid4()),
+                    "request_id": request_id,
                 }
             },
         )

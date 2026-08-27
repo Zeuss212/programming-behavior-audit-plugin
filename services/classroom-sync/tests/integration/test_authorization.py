@@ -239,6 +239,44 @@ def test_teacher_owned_v1_child_binds_the_marker_student_not_its_owner():
     assert roster == (StudentChildExperiment("student-1", "student-a", "child-1", "workbench-1"),)
 
 
+def test_teacher_owned_legacy_child_matches_the_production_name_shape():
+    """Existing exp-student001-xxxx children remain assignable after the owner fix."""
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/users"):
+            return httpx.Response(
+                200,
+                json=member_response(
+                    {"id": "teacher-1", "username": "teacher001", "role_name": "teacher"},
+                    {"id": "student-1", "username": "student001", "role_name": "student"},
+                ),
+            )
+        if request.url.path.endswith("/algorithm_development"):
+            return httpx.Response(
+                200,
+                json=member_response(
+                    {
+                        "id": "child-1",
+                        "name": "exp-student001-1j1k",
+                        "username": "teacher001",
+                        "description": "[FINCOLAB_PARENT_PROJECT_ID:parent-1]",
+                        "workbench_id": "workbench-1",
+                    }
+                ),
+            )
+        raise AssertionError(request.url)
+
+    roster = gateway(responder).list_student_children(
+        Principal("teacher-1", "teacher001", "token"),
+        "space-1",
+        "parent-1",
+    )
+
+    assert roster == (
+        StudentChildExperiment("student-1", "student001", "child-1", "workbench-1"),
+    )
+
+
 @pytest.mark.parametrize(
     ("description", "code"),
     [

@@ -57,6 +57,35 @@ def test_canonical_vector_exercises_urlsafe_dash_and_underscore_alphabet() -> No
     assert "_" in payload
 
 
+def test_rejects_noncanonical_base64url_pad_bits_even_when_decoded_json_matches() -> None:
+    """A decoder alone accepts alternate pad bits, so re-encoding is a required validation."""
+
+    binding = StudentBindingV1("space-1", "parent-1", "student-1", "x")
+    raw_json = json.dumps(
+        {
+            "parent_algorithm_id": binding.parent_algorithm_id,
+            "space_id": binding.space_id,
+            "student_id": binding.student_id,
+            "student_username": binding.student_username,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    canonical_payload = encode_student_binding_v1(binding)
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    mutated_last_sextet = alphabet[alphabet.index(canonical_payload[-1]) | 1]
+    mutated_payload = canonical_payload[:-1] + mutated_last_sextet
+
+    assert len(raw_json) % 3 == 1
+    assert mutated_payload != canonical_payload
+    assert base64.urlsafe_b64decode(canonical_payload + "==") == raw_json
+    assert base64.urlsafe_b64decode(mutated_payload + "==") == raw_json
+    assert StudentBindingV1(**json.loads(raw_json)) == binding
+    with pytest.raises(RosterConflictError, match="student_binding_marker_malformed"):
+        parse_student_binding_description(binding_description(mutated_payload))
+
+
 @pytest.mark.parametrize("payload", GOLDEN["rejected_payloads"].values())
 def test_rejects_noncanonical_or_invalid_payloads(payload: str) -> None:
     """Any malformed, lossy, or noncanonical payload must fail closed."""

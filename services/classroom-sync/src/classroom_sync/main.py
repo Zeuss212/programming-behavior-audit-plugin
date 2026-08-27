@@ -52,16 +52,19 @@ def create_app(
     def classroom_service_error(
         _request: Request, error: ClassroomServiceError
     ) -> JSONResponse:
+        error_payload: dict[str, object] = {
+            "code": error.code,
+            "message": "课堂服务请求未能完成。",
+            "retryable": error.retryable,
+            "request_id": _request.headers.get("X-Request-ID") or str(uuid4()),
+        }
+        if error.details is not None:
+            error_payload["details"] = error.details
         return JSONResponse(
             status_code=error.status_code,
             content={
                 "schema_version": 1,
-                "error": {
-                    "code": error.code,
-                    "message": "课堂服务请求未能完成。",
-                    "retryable": error.retryable,
-                    "request_id": _request.headers.get("X-Request-ID") or str(uuid4()),
-                }
+                "error": error_payload,
             },
         )
 

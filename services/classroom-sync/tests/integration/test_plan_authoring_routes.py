@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import cast
 
 import httpx
@@ -16,6 +17,7 @@ from sqlalchemy.pool import StaticPool
 from classroom_sync.application import ClassroomServices
 from classroom_sync.auth.fincolab import Principal, StudentChildExperiment
 from classroom_sync.config import Settings
+from classroom_sync.domain.schemas import ClassroomSchemaRegistry
 from classroom_sync.errors import AuthorizationError, UpstreamUnavailableError
 from classroom_sync.main import create_app
 from classroom_sync.models import Base, ClassroomPlanSuggestionJob
@@ -28,6 +30,7 @@ from classroom_sync.services.plan_suggestions import (
     SuggestedKnowledgePoint,
 )
 from classroom_sync.services.plans import PlanService
+from tests.integration.test_plan_assignment_flow import profile_draft
 
 TEACHER_HEADERS = {"Authorization": "Bearer teacher-token"}
 OTHER_TEACHER_HEADERS = {"Authorization": "Bearer other-teacher-token"}
@@ -108,9 +111,18 @@ class AuthoringHarness:
             self.jobs if ai_configured else None,
             clock=lambda: datetime(2026, 8, 28, 9, 0, tzinfo=UTC),
         )
+        repository_root = Path(__file__).resolve().parents[4]
+        schema_registry = ClassroomSchemaRegistry(
+            repository_root / "contracts" / "classroom" / "v1"
+        )
+        self.plans = PlanService(
+            self.session_factory,
+            schema_registry,
+            clock=lambda: datetime(2026, 8, 28, 9, 0, tzinfo=UTC),
+        )
         services = ClassroomServices(
             identity_gateway=self.identity,
-            plan_service=cast(PlanService, object()),
+            plan_service=self.plans,
             assignment_service=cast(AssignmentService, object()),
             plan_authoring_service=self.authoring,
             plan_suggestion_job_service=self.jobs if ai_configured else None,
@@ -564,3 +576,67 @@ def test_every_authoring_request_rechecks_current_parent_ownership_before_use(
     )
     assert recovered.status == "open"
     assert recovered.suggestion.status == "not_requested"
+
+
+def test_draft_creation_links_the_owned_open_authoring_session_for_recovery(
+    harness: AuthoringHarness,
+) -> None:
+    authoring = harness.create_session()
+    authoring_session_id = cast(str, authoring["authoring_session_id"])
+    now = datetime(2026, 8, 28, 9, 0, tzinfo=UTC)
+
+    response = harness.request(
+        "POST",
+        "/v1/classroom/plans/drafts",
+        headers=TEACHER_HEADERS,
+        json={
+            "authoring_session_id": authoring_session_id,
+            "space_id": "space-1",
+            "parent_algorithm_id": "parent-1",
+            "title": "recoverable draft",
+            "profile": profile_draft("recoverable question"),
+            "scheduled_start_at": now.isoformat(),
+            "scheduled_end_at": now.replace(hour=10).isoformat(),
+            "ai_policy": "prohibited",
+        },
+    )
+
+    assert response.status_code == 201
+    recovered = harness.authoring.get_current(
+        teacher_id="teacher-1",
+        space_id="space-1",
+        parent_algorithm_id="parent-1",
+    )
+    assert recovered.draft_id == response.json()["draft_id"]
+
+
+def test_draft_creation_rejects_an_authoring_session_owned_by_another_teacher(
+    harness: AuthoringHarness,
+) -> None:
+    authoring = harness.create_session()
+    now = datetime(2026, 8, 28, 9, 0, tzinfo=UTC)
+
+    response = harness.request(
+        "POST",
+        "/v1/classroom/plans/drafts",
+        headers=OTHER_TEACHER_HEADERS,
+        json={
+            "authoring_session_id": authoring["authoring_session_id"],
+            "space_id": "space-1",
+            "parent_algorithm_id": "parent-1",
+            "title": "stolen draft",
+            "profile": profile_draft("stolen question"),
+            "scheduled_start_at": now.isoformat(),
+            "scheduled_end_at": now.replace(hour=10).isoformat(),
+            "ai_policy": "prohibited",
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "plan_authoring_session_not_owned"
+    recovered = harness.authoring.get_current(
+        teacher_id="teacher-1",
+        space_id="space-1",
+        parent_algorithm_id="parent-1",
+    )
+    assert recovered.draft_id is None

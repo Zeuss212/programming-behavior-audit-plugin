@@ -11,9 +11,16 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from classroom_sync.canonical import sha256_json
 from classroom_sync.domain.schemas import ClassroomSchemaRegistry
-from classroom_sync.errors import AuthorizationError, NotFoundError
-from classroom_sync.models import AuditEvent, PlanDraft, PlanVersion
+from classroom_sync.errors import (
+    AuthorizationError,
+    ConflictError,
+    NotFoundError,
+    UpstreamUnavailableError,
+)
+from classroom_sync.models import AuditEvent, PlanAuthoringSession, PlanDraft, PlanVersion
 from classroom_sync.repositories import ClassroomRepository
+from classroom_sync.services.assessment_materials import AssessmentMaterialBundle
+from classroom_sync.services.publication_gate import PublicationGate
 
 
 @dataclass(frozen=True)
@@ -25,6 +32,7 @@ class PlanDraftInput:
     scheduled_start_at: datetime
     scheduled_end_at: datetime
     ai_policy: str
+    authoring_session_id: str | None = None
 
 
 class PlanService:
@@ -36,15 +44,18 @@ class PlanService:
         schema_registry: ClassroomSchemaRegistry,
         *,
         clock: Callable[[], datetime],
+        publication_gate: PublicationGate | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._schema_registry = schema_registry
         self._clock = clock
+        self._publication_gate = publication_gate or PublicationGate()
 
     def create_draft(self, draft_input: PlanDraftInput, *, teacher_id: str) -> PlanDraft:
         now = self._clock()
         draft = PlanDraft(
             id=str(uuid4()),
+            authoring_session_id=draft_input.authoring_session_id,
             profile_id=str(uuid4()),
             space_id=draft_input.space_id,
             parent_algorithm_id=draft_input.parent_algorithm_id,
@@ -61,7 +72,20 @@ class PlanService:
         )
         self._validate_draft(draft)
         with self._session_factory.begin() as session:
+            if draft_input.authoring_session_id is not None:
+                repository = ClassroomRepository(session)
+                authoring = repository.get_authoring_session(
+                    draft_input.authoring_session_id,
+                    for_update=True,
+                )
+                self._validate_authoring_for_draft(
+                    repository,
+                    authoring,
+                    draft=draft,
+                    teacher_id=teacher_id,
+                )
             session.add(draft)
+            session.flush()
             self._audit(session, teacher_id, "plan_draft_created", "plan_draft", draft.id, now)
         return draft
 
@@ -71,6 +95,11 @@ class PlanService:
         *,
         profile: dict[str, object],
         teacher_id: str,
+        title: str | None = None,
+        scheduled_start_at: datetime | None = None,
+        scheduled_end_at: datetime | None = None,
+        ai_policy: str | None = None,
+        expected_revision: int | None = None,
     ) -> PlanDraft:
         now = self._clock()
         with self._session_factory.begin() as session:
@@ -80,23 +109,46 @@ class PlanService:
                 raise NotFoundError("plan_draft_not_found")
             if draft.teacher_id != teacher_id:
                 raise AuthorizationError("plan_draft_owner_mismatch")
+            if expected_revision is not None and draft.revision != expected_revision:
+                raise ConflictError("plan_draft_revision_conflict")
+            if title is not None:
+                draft.title = title
             draft.profile = profile
+            if scheduled_start_at is not None:
+                draft.scheduled_start_at = scheduled_start_at
+            if scheduled_end_at is not None:
+                draft.scheduled_end_at = scheduled_end_at
+            if ai_policy is not None:
+                draft.ai_policy = ai_policy
             draft.revision += 1
             draft.updated_at = now
             self._validate_draft(draft)
             self._audit(session, teacher_id, "plan_draft_updated", "plan_draft", draft.id, now)
         return draft
 
-    def get_draft(self, draft_id: str) -> PlanDraft:
+    def get_draft(
+        self,
+        draft_id: str,
+        *,
+        teacher_id: str | None = None,
+    ) -> PlanDraft:
         """Read a draft for router-side ownership verification."""
 
         with self._session_factory() as session:
             draft = ClassroomRepository(session).get_plan_draft(draft_id)
             if draft is None:
                 raise NotFoundError("plan_draft_not_found")
+            if teacher_id is not None and draft.teacher_id != teacher_id:
+                raise AuthorizationError("plan_draft_owner_mismatch")
             return draft
 
-    def publish_draft(self, draft_id: str, *, teacher_id: str) -> PlanVersion:
+    def publish_draft(
+        self,
+        draft_id: str,
+        *,
+        teacher_id: str,
+        materials: AssessmentMaterialBundle | None = None,
+    ) -> PlanVersion:
         now = self._clock()
         with self._session_factory.begin() as session:
             repository = ClassroomRepository(session)
@@ -106,9 +158,43 @@ class PlanService:
             if draft.teacher_id != teacher_id:
                 raise AuthorizationError("plan_draft_owner_mismatch")
 
+            is_v3 = draft.profile.get("schema_version") == 3
+            authoring: PlanAuthoringSession | None = None
+            if is_v3:
+                if materials is None:
+                    raise UpstreamUnavailableError(
+                        "assessment_materials_not_configured",
+                        retryable=False,
+                    )
+                if (
+                    materials.space_id != draft.space_id
+                    or materials.parent_algorithm_id != draft.parent_algorithm_id
+                ):
+                    raise UpstreamUnavailableError(
+                        "assessment_materials_scope_invalid",
+                        retryable=False,
+                    )
+                if draft.authoring_session_id is None:
+                    raise ConflictError("plan_authoring_session_required")
+                authoring = repository.get_authoring_session(
+                    draft.authoring_session_id,
+                    for_update=True,
+                )
+                self._validate_authoring_for_publish(
+                    authoring,
+                    draft=draft,
+                    teacher_id=teacher_id,
+                )
+                self._publication_gate.require_ready(draft.profile, materials)
+
             latest = repository.latest_plan_version(draft.id)
             if latest is not None and latest.source_draft_revision == draft.revision:
+                if authoring is not None and authoring.status == "open":
+                    self._close_authoring(authoring, draft=draft, now=now)
                 return latest
+
+            if authoring is not None and authoring.status != "open":
+                raise ConflictError("plan_authoring_session_closed")
 
             version = 1 if latest is None else latest.version + 1
             profile_content = {
@@ -156,7 +242,10 @@ class PlanService:
                 teacher_id=teacher_id,
             )
             session.add(plan_version)
+            session.flush()
             draft.published_revision = draft.revision
+            if authoring is not None:
+                self._close_authoring(authoring, draft=draft, now=now)
             self._audit(session, teacher_id, "plan_published", "plan_version", plan_version.id, now)
         return plan_version
 
@@ -186,6 +275,65 @@ class PlanService:
                 "updated_at": draft.updated_at.isoformat(),
             },
         )
+
+    @staticmethod
+    def _validate_authoring_for_draft(
+        repository: ClassroomRepository,
+        authoring: PlanAuthoringSession | None,
+        *,
+        draft: PlanDraft,
+        teacher_id: str,
+    ) -> None:
+        if authoring is None:
+            raise NotFoundError("plan_authoring_session_not_found")
+        if authoring.teacher_id != teacher_id:
+            raise AuthorizationError("plan_authoring_session_not_owned")
+        if authoring.status != "open" or authoring.active_slot != 1:
+            raise ConflictError("plan_authoring_session_closed")
+        if (
+            authoring.space_id != draft.space_id
+            or authoring.parent_algorithm_id != draft.parent_algorithm_id
+        ):
+            raise ConflictError("plan_authoring_session_scope_mismatch")
+        if repository.get_plan_draft_for_authoring_session(authoring.id) is not None:
+            raise ConflictError("plan_authoring_draft_exists")
+
+    @staticmethod
+    def _validate_authoring_for_publish(
+        authoring: PlanAuthoringSession | None,
+        *,
+        draft: PlanDraft,
+        teacher_id: str,
+    ) -> None:
+        if authoring is None:
+            raise NotFoundError("plan_authoring_session_not_found")
+        if authoring.teacher_id != teacher_id:
+            raise AuthorizationError("plan_authoring_session_not_owned")
+        if (
+            authoring.space_id != draft.space_id
+            or authoring.parent_algorithm_id != draft.parent_algorithm_id
+        ):
+            raise ConflictError("plan_authoring_session_scope_mismatch")
+        if authoring.status not in {"open", "published"}:
+            raise ConflictError("plan_authoring_session_closed")
+        if (
+            authoring.status == "published"
+            and authoring.published_plan_id != draft.id
+        ):
+            raise ConflictError("plan_authoring_session_publish_mismatch")
+
+    @staticmethod
+    def _close_authoring(
+        authoring: PlanAuthoringSession,
+        *,
+        draft: PlanDraft,
+        now: datetime,
+    ) -> None:
+        authoring.status = "published"
+        authoring.active_slot = None
+        authoring.published_plan_id = draft.id
+        authoring.closed_at = now
+        authoring.updated_at = now
 
     @staticmethod
     def _audit(

@@ -201,6 +201,35 @@ def profile_for(
     }
 
 
+def reconfirm_profile(profile: dict[str, object]) -> None:
+    """Recompute teacher confirmations after a schema-valid test mutation."""
+
+    knowledge_points = cast(list[dict[str, object]], profile["knowledge_points"])
+    dimensions = cast(list[dict[str, object]], profile["dimensions"])
+    assessment_tests = cast(list[dict[str, object]], profile["assessment_tests"])
+    knowledge_points_hash = sha256_json({"knowledge_points": knowledge_points})
+    confirmations = cast(dict[str, object], profile["confirmations"])
+    confirmations["knowledge_points_hash"] = knowledge_points_hash
+    confirmations["dimensions_hash"] = sha256_json(
+        {
+            "knowledge_points_hash": knowledge_points_hash,
+            "dimensions": dimensions,
+        }
+    )
+    confirmations["tests_hash"] = sha256_json(
+        {
+            "assessment_tests": [
+                {
+                    key: value
+                    for key, value in assessment_test.items()
+                    if key != "content_hash"
+                }
+                for assessment_test in assessment_tests
+            ]
+        }
+    )
+
+
 def issue_codes(result: object) -> list[str]:
     return [issue.code for issue in result.issues]  # type: ignore[attr-defined]
 
@@ -519,6 +548,95 @@ def test_duplicate_stable_id_aliases_cannot_share_one_evidence_path(
 
     assert result.status == "blocked"
     assert "criterion_binding_missing" in issue_codes(result)
+
+
+@pytest.mark.parametrize(
+    "invalid_relation",
+    (
+        "criterion_material_owner",
+        "duplicate_test_id",
+        "duplicate_criterion_id",
+        "unknown_test_criterion",
+        "misowned_test_criterion",
+    ),
+)
+def test_criterion_and_test_relations_cannot_bypass_stable_ownership(
+    invalid_relation: str,
+) -> None:
+    materials = real_bundle("linked-list")
+    profile = profile_for(
+        materials,
+        ("REQ_LINK_TAIL_INSERT", "REQ_LINK_REVERSE"),
+    )
+    dimensions = cast(list[dict[str, object]], profile["dimensions"])
+    assessment_tests = cast(list[dict[str, object]], profile["assessment_tests"])
+
+    if invalid_relation == "criterion_material_owner":
+        criteria = cast(
+            list[dict[str, object]],
+            dimensions[0]["evidence_criteria"],
+        )
+        criteria[0]["material_requirement_id"] = "REQ_LINK_REVERSE"
+    elif invalid_relation == "duplicate_test_id":
+        assessment_tests.append(deepcopy(assessment_tests[0]))
+    elif invalid_relation == "duplicate_criterion_id":
+        first_criterion = cast(
+            list[dict[str, object]], dimensions[0]["evidence_criteria"]
+        )[0]["id"]
+        second_criteria = cast(
+            list[dict[str, object]], dimensions[1]["evidence_criteria"]
+        )
+        second_criteria[0]["id"] = first_criterion
+        second_bindings = cast(
+            list[dict[str, object]], dimensions[1]["verification_bindings"]
+        )
+        second_bindings[0]["criterion_id"] = first_criterion
+        second_test = next(
+            assessment_test
+            for assessment_test in assessment_tests
+            if dimensions[1]["knowledge_point_id"]
+            in cast(list[object], assessment_test["knowledge_point_ids"])
+        )
+        second_test["criterion_ids"] = [first_criterion]
+        second_test["content_hash"] = sha256_json(
+            {
+                key: value
+                for key, value in second_test.items()
+                if key != "content_hash"
+            }
+        )
+    elif invalid_relation == "unknown_test_criterion":
+        assessment_tests[0]["criterion_ids"] = [
+            *cast(list[object], assessment_tests[0]["criterion_ids"]),
+            "CRIT_UNKNOWN1",
+        ]
+        assessment_tests[0]["content_hash"] = sha256_json(
+            {
+                key: value
+                for key, value in assessment_tests[0].items()
+                if key != "content_hash"
+            }
+        )
+    else:
+        assessment_tests[-1]["knowledge_point_ids"] = [
+            dimensions[0]["knowledge_point_id"]
+        ]
+        assessment_tests[-1]["content_hash"] = sha256_json(
+            {
+                key: value
+                for key, value in assessment_tests[-1].items()
+                if key != "content_hash"
+            }
+        )
+    reconfirm_profile(profile)
+
+    result = PublicationGate().evaluate(profile, materials)
+
+    assert result.status == "blocked"
+    assert set(issue_codes(result)) & {
+        "criterion_binding_missing",
+        "unknown_test_reference",
+    }
 
 
 def test_require_ready_returns_only_the_bounded_safe_gate_projection() -> None:

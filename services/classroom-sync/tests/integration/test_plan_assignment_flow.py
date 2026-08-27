@@ -14,7 +14,7 @@ from classroom_sync.errors import ConflictError, PublicationGateBlockedError
 from classroom_sync.models import Base, PlanAuthoringSession, PlanVersion, StudentAssignment
 from classroom_sync.services.assignments import AssignmentService
 from classroom_sync.services.plans import PlanDraftInput, PlanService
-from tests.unit.test_publication_gate import profile_for, real_bundle
+from tests.unit.test_publication_gate import profile_for, real_bundle, reconfirm_profile
 
 
 def profile_draft(question: str) -> dict[str, object]:
@@ -316,6 +316,11 @@ def test_v3_publish_requires_the_draft_to_be_linked_to_an_authoring_session():
         "duplicate_dimension",
         "duplicate_point_id",
         "duplicate_requirement",
+        "criterion_material_owner",
+        "duplicate_test_id",
+        "duplicate_criterion_id",
+        "unknown_test_criterion",
+        "misowned_test_criterion",
     ),
 )
 def test_v3_publish_blocks_invalid_evidence_bindings_and_keeps_session_open(
@@ -352,6 +357,62 @@ def test_v3_publish_blocks_invalid_evidence_bindings_and_keeps_session_open(
         materials,
         ("REQ_LINK_TAIL_INSERT", "REQ_LINK_REVERSE"),
     )
+    if invalid_binding in {
+        "criterion_material_owner",
+        "duplicate_test_id",
+        "duplicate_criterion_id",
+        "unknown_test_criterion",
+        "misowned_test_criterion",
+    }:
+        dimensions = profile["dimensions"]
+        assessment_tests = profile["assessment_tests"]
+        if invalid_binding == "criterion_material_owner":
+            dimensions[0]["evidence_criteria"][0][
+                "material_requirement_id"
+            ] = "REQ_LINK_REVERSE"
+        elif invalid_binding == "duplicate_test_id":
+            assessment_tests.append(deepcopy(assessment_tests[0]))
+        elif invalid_binding == "duplicate_criterion_id":
+            first_criterion_id = dimensions[0]["evidence_criteria"][0]["id"]
+            dimensions[1]["evidence_criteria"][0]["id"] = first_criterion_id
+            dimensions[1]["verification_bindings"][0][
+                "criterion_id"
+            ] = first_criterion_id
+            second_test = next(
+                assessment_test
+                for assessment_test in assessment_tests
+                if dimensions[1]["knowledge_point_id"]
+                in assessment_test["knowledge_point_ids"]
+            )
+            second_test["criterion_ids"] = [first_criterion_id]
+            second_test["content_hash"] = sha256_json(
+                {
+                    key: value
+                    for key, value in second_test.items()
+                    if key != "content_hash"
+                }
+            )
+        elif invalid_binding == "unknown_test_criterion":
+            assessment_tests[0]["criterion_ids"].append("CRIT_UNKNOWN1")
+            assessment_tests[0]["content_hash"] = sha256_json(
+                {
+                    key: value
+                    for key, value in assessment_tests[0].items()
+                    if key != "content_hash"
+                }
+            )
+        else:
+            assessment_tests[-1]["knowledge_point_ids"] = [
+                dimensions[0]["knowledge_point_id"]
+            ]
+            assessment_tests[-1]["content_hash"] = sha256_json(
+                {
+                    key: value
+                    for key, value in assessment_tests[-1].items()
+                    if key != "content_hash"
+                }
+            )
+        reconfirm_profile(profile)
     if invalid_binding in {"duplicate_point_id", "duplicate_requirement"}:
         knowledge_points = profile["knowledge_points"]
         dimensions = profile["dimensions"]
@@ -456,7 +517,10 @@ def test_v3_publish_blocks_invalid_evidence_bindings_and_keeps_session_open(
     issue_codes = {
         issue["code"] for issue in captured.value.details["issues"]
     }
-    assert "criterion_binding_missing" in issue_codes
+    if invalid_binding == "duplicate_test_id":
+        assert "unknown_test_reference" in issue_codes
+    else:
+        assert "criterion_binding_missing" in issue_codes
     if invalid_binding in {"unknown", "disabled"}:
         assert "unknown_test_reference" in issue_codes
     with session_factory() as session:

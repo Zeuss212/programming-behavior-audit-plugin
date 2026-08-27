@@ -15,7 +15,74 @@
         "code": {"type": "string", "pattern": "^[a-z][a-z0-9_]{2,63}$"},
         "message": {"type": "string", "minLength": 1, "maxLength": 500},
         "retryable": {"type": "boolean"},
-        "request_id": {"type": "string", "minLength": 1, "maxLength": 128}
+        "request_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "details": {"$ref": "#/$defs/publication_gate_details"}
+      },
+      "dependentSchemas": {
+        "details": {
+          "properties": {
+            "code": {"const": "publication_gate_blocked"},
+            "retryable": {"const": false}
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "publication_gate_details": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "blocking_count", "warning_count", "issues"],
+      "properties": {
+        "status": {"const": "blocked"},
+        "blocking_count": {"type": "integer", "minimum": 1, "maximum": 512},
+        "warning_count": {"type": "integer", "minimum": 0, "maximum": 512},
+        "issues": {
+          "type": "array",
+          "maxItems": 512,
+          "items": {"$ref": "#/$defs/publication_gate_issue"}
+        }
+      }
+    },
+    "publication_gate_issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "severity",
+        "scope",
+        "knowledge_point_id",
+        "requirement_id",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "enum": [
+            "material_bundle_changed",
+            "starter_source_non_utf8_confirmation_required",
+            "starter_source_protected_compile_error",
+            "starter_source_mismatch",
+            "stale_profile_confirmation",
+            "unknown_material_requirement",
+            "requirement_not_student_responsibility",
+            "missing_required_requirement",
+            "unknown_test_reference",
+            "criterion_binding_missing",
+            "detector_binding_unavailable",
+            "boundary_coverage_incomplete"
+          ]
+        },
+        "severity": {"enum": ["blocking", "warning"]},
+        "scope": {"enum": ["classroom", "source", "requirement", "test"]},
+        "knowledge_point_id": {
+          "type": ["string", "null"],
+          "maxLength": 200
+        },
+        "requirement_id": {
+          "type": ["string", "null"],
+          "maxLength": 200
+        },
+        "message": {"type": "string", "minLength": 1, "maxLength": 500}
       }
     }
   }

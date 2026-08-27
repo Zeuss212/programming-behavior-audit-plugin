@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from sqlalchemy.orm import Session, sessionmaker
@@ -16,6 +16,7 @@ from classroom_sync.errors import (
     ConflictError,
     NotFoundError,
     UpstreamUnavailableError,
+    ValidationError,
 )
 from classroom_sync.models import AuditEvent, PlanAuthoringSession, PlanDraft, PlanVersion
 from classroom_sync.repositories import ClassroomRepository
@@ -61,8 +62,8 @@ class PlanService:
             parent_algorithm_id=draft_input.parent_algorithm_id,
             title=draft_input.title,
             profile=draft_input.profile,
-            scheduled_start_at=draft_input.scheduled_start_at,
-            scheduled_end_at=draft_input.scheduled_end_at,
+            scheduled_start_at=self._utc_schedule(draft_input.scheduled_start_at),
+            scheduled_end_at=self._utc_schedule(draft_input.scheduled_end_at),
             ai_policy=draft_input.ai_policy,
             revision=0,
             published_revision=None,
@@ -115,9 +116,9 @@ class PlanService:
                 draft.title = title
             draft.profile = profile
             if scheduled_start_at is not None:
-                draft.scheduled_start_at = scheduled_start_at
+                draft.scheduled_start_at = self._utc_schedule(scheduled_start_at)
             if scheduled_end_at is not None:
-                draft.scheduled_end_at = scheduled_end_at
+                draft.scheduled_end_at = self._utc_schedule(scheduled_end_at)
             if ai_policy is not None:
                 draft.ai_policy = ai_policy
             draft.revision += 1
@@ -275,6 +276,12 @@ class PlanService:
                 "updated_at": draft.updated_at.isoformat(),
             },
         )
+
+    @staticmethod
+    def _utc_schedule(value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValidationError("plan_schedule_timezone_required")
+        return value.astimezone(timezone.utc)
 
     @staticmethod
     def _validate_authoring_for_draft(

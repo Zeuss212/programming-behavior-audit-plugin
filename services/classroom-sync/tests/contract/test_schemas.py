@@ -282,6 +282,41 @@ def test_plan_contracts_accept_both_profile_v2_and_v3(
     schema_registry.validate(schema_name, valid_v3_plan_payloads()[schema_name])
 
 
+def test_error_contract_accepts_only_safe_publication_gate_details(
+    schema_registry: ClassroomSchemaRegistry,
+):
+    payload = deepcopy(valid_contract_payloads()["error"])
+    error = payload["error"]
+    assert isinstance(error, dict)
+    error["code"] = "publication_gate_blocked"
+    error["details"] = {
+        "status": "blocked",
+        "blocking_count": 1,
+        "warning_count": 0,
+        "issues": [
+            {
+                "code": "criterion_binding_missing",
+                "severity": "blocking",
+                "scope": "requirement",
+                "knowledge_point_id": "KP_LINKTAL1",
+                "requirement_id": "REQ_LINK_TAIL_INSERT",
+                "message": "必需证据标准缺少可验证绑定。",
+            }
+        ],
+    }
+
+    schema_registry.validate("error", payload)
+
+    error["code"] = "assignment_not_found"
+    with pytest.raises(ValidationError):
+        schema_registry.validate("error", payload)
+
+    error["code"] = "publication_gate_blocked"
+    error["details"] = {"profile": {"title": "must not leak"}}
+    with pytest.raises(ValidationError):
+        schema_registry.validate("error", payload)
+
+
 def test_student_brief_rejects_unknown_mastery_status(
     schema_registry: ClassroomSchemaRegistry,
 ):

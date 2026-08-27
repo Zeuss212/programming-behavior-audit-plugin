@@ -10,7 +10,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from classroom_sync.application import ClassroomServices
 from classroom_sync.auth.fincolab import Principal
-from classroom_sync.errors import AuthenticationError, UpstreamUnavailableError
+from classroom_sync.errors import (
+    AuthenticationError,
+    ConflictError,
+    UpstreamUnavailableError,
+)
 from classroom_sync.models import PlanDraft
 from classroom_sync.services.assessment_materials import AssessmentMaterialBundle
 from classroom_sync.services.plans import PlanDraftInput
@@ -37,7 +41,7 @@ class CreatePlanDraftRequest(BaseModel):
 class UpdatePlanDraftRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    expected_revision: int = Field(ge=0)
+    expected_revision: int = Field(strict=True, ge=0)
     title: str
     profile: dict[str, object]
     scheduled_start_at: datetime
@@ -83,7 +87,16 @@ def _latest_materials(
             "assessment_materials_not_configured",
             retryable=False,
         )
-    return material_service.get_bundle(principal, space_id, parent_algorithm_id)
+    materials = material_service.get_bundle(principal, space_id, parent_algorithm_id)
+    if (
+        materials.space_id != space_id
+        or materials.parent_algorithm_id != parent_algorithm_id
+    ):
+        raise UpstreamUnavailableError(
+            "assessment_materials_scope_invalid",
+            retryable=False,
+        )
+    return materials
 
 
 def _gate_for_draft(
@@ -127,9 +140,11 @@ def _draft_response(
 
 
 def _wire_datetime(value: datetime) -> datetime:
-    """Keep draft recovery timestamps stable with timezone-poor test databases."""
+    """Serialize normalized storage instants despite timezone-poor databases."""
 
-    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 @router.get("/experiments/{space_id}/{parent_algorithm_id}")
@@ -158,6 +173,21 @@ def create_plan_draft(
     services.identity_gateway.require_teacher_owner(
         principal, payload.space_id, payload.parent_algorithm_id
     )
+    gate = PublicationGateResult(
+        status="ready",
+        blocking_count=0,
+        warning_count=0,
+        issues=(),
+    )
+    if payload.profile.get("schema_version") == 3:
+        materials = _latest_materials(
+            services,
+            principal,
+            space_id=payload.space_id,
+            parent_algorithm_id=payload.parent_algorithm_id,
+        )
+        publication_gate.require_ready(payload.profile, materials)
+        gate = publication_gate.evaluate(payload.profile, materials)
     draft = services.plan_service.create_draft(
         PlanDraftInput(
             authoring_session_id=payload.authoring_session_id,
@@ -171,7 +201,7 @@ def create_plan_draft(
         ),
         teacher_id=principal.user_id,
     )
-    return _draft_response(draft, _gate_for_draft(services, principal, draft))
+    return _draft_response(draft, gate)
 
 
 @router.get("/drafts/{draft_id}")
@@ -212,6 +242,8 @@ def update_plan_draft(
         current.space_id,
         current.parent_algorithm_id,
     )
+    if current.revision != payload.expected_revision:
+        raise ConflictError("plan_draft_revision_conflict")
     materials = None
     if payload.profile.get("schema_version") == 3:
         materials = _latest_materials(

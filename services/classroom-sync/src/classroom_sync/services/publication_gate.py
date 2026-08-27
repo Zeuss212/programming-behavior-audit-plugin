@@ -292,14 +292,62 @@ class PublicationGate:
                     message=message,
                 )
 
+        dimensions = self._mapping_sequence(profile.get("dimensions"))
+        dimension_counts: dict[str, int] = {}
+        criterion_owners: dict[str, tuple[str, str]] = {}
+        for dimension in dimensions:
+            point_id = self._string(dimension.get("knowledge_point_id"))
+            if point_id is not None:
+                dimension_counts[point_id] = dimension_counts.get(point_id, 0) + 1
+            requirement_id = (
+                point_requirement_ids.get(point_id) if point_id is not None else None
+            )
+            for criterion in self._mapping_sequence(
+                dimension.get("evidence_criteria")
+            ):
+                criterion_id = self._string(criterion.get("id"))
+                if (
+                    point_id is None
+                    or requirement_id is None
+                    or criterion_id is None
+                ):
+                    continue
+                if criterion.get("material_requirement_id") != requirement_id:
+                    self._add(
+                        issues,
+                        "criterion_binding_missing",
+                        "blocking",
+                        "requirement",
+                        knowledge_point_id=point_id,
+                        requirement_id=requirement_id,
+                    )
+                previous_owner = criterion_owners.get(criterion_id)
+                if previous_owner is not None:
+                    self._add(
+                        issues,
+                        "criterion_binding_missing",
+                        "blocking",
+                        "requirement",
+                        knowledge_point_id=previous_owner[0],
+                        requirement_id=previous_owner[1],
+                    )
+                    self._add(
+                        issues,
+                        "criterion_binding_missing",
+                        "blocking",
+                        "requirement",
+                        knowledge_point_id=point_id,
+                        requirement_id=requirement_id,
+                    )
+                else:
+                    criterion_owners[criterion_id] = (point_id, requirement_id)
+
         material_tests = {item.id: item for item in materials.assessment_tests}
         profile_tests = self._mapping_sequence(profile.get("assessment_tests"))
         profile_tests_by_id: dict[str, Mapping[str, object]] = {}
         valid_profile_test_ids: set[str] = set()
         for assessment_test in profile_tests:
             test_id = self._string(assessment_test.get("id"))
-            if test_id is not None:
-                profile_tests_by_id[test_id] = assessment_test
             linked_points = self._string_sequence(
                 assessment_test.get("knowledge_point_ids")
             )
@@ -309,6 +357,49 @@ class PublicationGate:
                 if knowledge_point_id is not None
                 else None
             )
+            if test_id is not None:
+                if test_id in profile_tests_by_id:
+                    self._add(
+                        issues,
+                        "unknown_test_reference",
+                        "blocking",
+                        "test",
+                        knowledge_point_id=knowledge_point_id,
+                        requirement_id=requirement_id,
+                    )
+                else:
+                    profile_tests_by_id[test_id] = assessment_test
+            for linked_point_id in linked_points:
+                if linked_point_id not in point_requirement_ids:
+                    self._add(
+                        issues,
+                        "unknown_test_reference",
+                        "blocking",
+                        "test",
+                        knowledge_point_id=linked_point_id,
+                    )
+            for criterion_id in self._string_sequence(
+                assessment_test.get("criterion_ids")
+            ):
+                criterion_owner = criterion_owners.get(criterion_id)
+                if criterion_owner is None:
+                    self._add(
+                        issues,
+                        "criterion_binding_missing",
+                        "blocking",
+                        "test",
+                        knowledge_point_id=knowledge_point_id,
+                        requirement_id=requirement_id,
+                    )
+                elif criterion_owner[0] not in linked_points:
+                    self._add(
+                        issues,
+                        "criterion_binding_missing",
+                        "blocking",
+                        "test",
+                        knowledge_point_id=criterion_owner[0],
+                        requirement_id=criterion_owner[1],
+                    )
             material_test = material_tests.get(test_id) if test_id is not None else None
             profile_hash_valid = assessment_test.get("content_hash") == sha256_json(
                 {
@@ -350,14 +441,6 @@ class PublicationGate:
             ):
                 valid_profile_test_ids.add(test_id)
 
-        dimensions = self._mapping_sequence(profile.get("dimensions"))
-        dimension_counts: dict[str, int] = {}
-        for dimension in dimensions:
-            dimension_point_id = self._string(dimension.get("knowledge_point_id"))
-            if dimension_point_id is not None:
-                dimension_counts[dimension_point_id] = (
-                    dimension_counts.get(dimension_point_id, 0) + 1
-                )
         for point_id, requirement_id in point_requirement_ids.items():
             requirement = requirements_by_id.get(requirement_id)
             if (
@@ -414,6 +497,8 @@ class PublicationGate:
                     binding_valid = (
                         assessment_test_id in valid_profile_test_ids
                         and bound_assessment_test is not None
+                        and criterion_owners.get(criterion_id)
+                        == (point_id, requirement_id)
                         and point_id
                         in self._string_sequence(
                             bound_assessment_test.get("knowledge_point_ids")
@@ -439,7 +524,11 @@ class PublicationGate:
                     binding_detector_id = self._string(
                         binding.get("detector_profile_id")
                     )
-                    if binding_detector_id in requirement.detector_profile_ids:
+                    if (
+                        criterion_owners.get(criterion_id)
+                        == (point_id, requirement_id)
+                        and binding_detector_id in requirement.detector_profile_ids
+                    ):
                         bound_criteria.add(criterion_id)
             for criterion in self._mapping_sequence(
                 dimension.get("evidence_criteria")

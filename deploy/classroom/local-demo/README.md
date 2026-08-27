@@ -69,6 +69,16 @@ cp deploy/classroom/local-demo/.env.ai.example deploy/classroom/local-demo/.env.
 
 ## 自动验证
 
+启动本地 demo 后，可先执行 C++ 课堂第一阶段后端门禁：
+
+~~~sh
+python3 scripts/cpp_classroom_phase1_smoke.py
+~~~
+
+该命令登录本地教师，核对顺序表阻断项与链表原始维度问题，两次恢复同一个链表备课会话，保存经过修正的 v3 方案并发布，最后确认会话已关闭。它默认不请求 AI，不同步作业，不调用学生运行或插件端点；标准输出只包含状态、标识符和调用计数，不包含材料源文、教师测试内容或任何提供方输出。
+
+完整的 Python 教师—学生交互闭环仍使用：
+
 在课堂服务 worktree 执行：
 
 ~~~sh

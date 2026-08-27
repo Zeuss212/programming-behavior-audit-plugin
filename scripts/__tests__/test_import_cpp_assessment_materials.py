@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
+import sys
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -14,14 +16,50 @@ MATERIALS = ROOT / "deploy" / "classroom" / "local-demo" / "materials"
 SEQUENCE_CONFIG = MATERIALS / "sequence-list" / "import-config.json"
 LINKED_CONFIG = MATERIALS / "linked-list" / "import-config.json"
 
+SEQUENCE_LIVE_PREFLIGHT = {
+    "status": "blocked",
+    "accepted_editable_symbols": [
+        "SeqArray::SeqArray",
+        "SeqArray::~SeqArray",
+        "SeqArray::insertElement",
+        "SeqArray::deletemin",
+        "SeqArray::deleteSame",
+        "SeqArray::deleteSome",
+        "SeqArray::print",
+    ],
+    "diagnostics": [
+        {
+            "line": 72,
+            "column": 16,
+            "code": "compiler_error",
+            "message": "use of undeclared identifier 'value'",
+        }
+    ],
+}
+LINKED_LIVE_PREFLIGHT = {
+    "status": "ready",
+    "accepted_editable_symbols": ["MList::insertToTail", "MList::Reverse"],
+    "diagnostics": [],
+}
 
-@pytest.fixture(scope="module")
-def sequence_bundle() -> dict[str, object]:
+
+@pytest.fixture
+def sequence_bundle(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    monkeypatch.setattr(
+        importer,
+        "_preflight_source",
+        lambda _source, _symbols: deepcopy(SEQUENCE_LIVE_PREFLIGHT),
+    )
     return importer.import_material_bundle(SEQUENCE_CONFIG)
 
 
-@pytest.fixture(scope="module")
-def linked_bundle() -> dict[str, object]:
+@pytest.fixture
+def linked_bundle(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    monkeypatch.setattr(
+        importer,
+        "_preflight_source",
+        lambda _source, _symbols: deepcopy(LINKED_LIVE_PREFLIGHT),
+    )
     return importer.import_material_bundle(LINKED_CONFIG)
 
 
@@ -121,7 +159,8 @@ def test_sequence_preflight_reports_protected_value_error_without_rewriting_sour
     assert preflight["status"] == "blocked"
     assert any(
         diagnostic["line"] == 72
-        and diagnostic["code"] == "compiler_error"
+        and diagnostic["column"] == 0
+        and diagnostic["code"] == "undeclared_identifier"
         and "value" in diagnostic["message"]
         for diagnostic in preflight["diagnostics"]
     )
@@ -393,6 +432,24 @@ def test_importer_rejects_unknown_numbered_heading_inside_output(
         importer.import_material_bundle(config_path)
 
 
+def test_importer_rejects_compact_numbered_heading_inside_output(
+    tmp_path: Path,
+) -> None:
+    config_path, config = _copy_config_fixture(tmp_path, LINKED_CONFIG)
+    tests_path = tmp_path / config["tests"]["path"]
+    text = tests_path.read_text(encoding="utf-8").replace(
+        "倒置前为：1 2 3 4 5 6 ",
+        "4.评分说明\n倒置前为：1 2 3 4 5 6 ",
+        1,
+    )
+    tests_path.write_text(text, encoding="utf-8")
+    config["tests"]["sha256"] = hashlib.sha256(tests_path.read_bytes()).hexdigest()
+    _write_config(config_path, config)
+
+    with pytest.raises(importer.MaterialImportError, match="heading"):
+        importer.import_material_bundle(config_path)
+
+
 def test_compiler_is_allowlisted_bounded_and_diagnostics_are_sanitized(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -435,12 +492,95 @@ def test_compiler_is_allowlisted_bounded_and_diagnostics_are_sanitized(
     diagnostic = bundle["starter_source"]["preflight"]["diagnostics"][0]
     assert diagnostic == {
         "line": 72,
-        "column": 16,
-        "code": "compiler_error",
-        "message": "use of undeclared identifier 'value' (see <path>)",
+        "column": 0,
+        "code": "undeclared_identifier",
+        "message": "protected main references undeclared identifier value",
     }
+    raw_diagnostic = importer._sanitize_diagnostics(
+        "/private/host/probe.cpp:72:16: error: use of undeclared identifier "
+        "'value' (see /private/host/include/header.hpp)\n"
+    )[0]
+    assert raw_diagnostic["message"] == (
+        "use of undeclared identifier 'value' (see <path>)"
+    )
     assert "/tool/clang++" not in json.dumps(bundle, ensure_ascii=False)
     assert "/private/" not in json.dumps(bundle, ensure_ascii=False)
+
+
+def test_clang_and_gpp_diagnostics_seal_to_same_semantic_preflight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def import_with(compiler_name: str, diagnostic_message: str) -> dict[str, object]:
+        monkeypatch.setattr(
+            importer.shutil,
+            "which",
+            lambda name: f"/tool/{compiler_name}" if name == compiler_name else None,
+        )
+
+        def fake_run(
+            argv: list[str], **_kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            probe_path = argv[-1]
+            return subprocess.CompletedProcess(
+                argv,
+                1,
+                "",
+                f"{probe_path}:72:16: error: {diagnostic_message}\n",
+            )
+
+        monkeypatch.setattr(importer.subprocess, "run", fake_run)
+        return importer.import_material_bundle(SEQUENCE_CONFIG)
+
+    clang_bundle = import_with("clang++", "use of undeclared identifier 'value'")
+    gpp_bundle = import_with("g++", "‘value’ was not declared in this scope")
+    expected_preflight = {
+        "status": "blocked",
+        "accepted_editable_symbols": [
+            "SeqArray::SeqArray",
+            "SeqArray::~SeqArray",
+            "SeqArray::insertElement",
+            "SeqArray::deletemin",
+            "SeqArray::deleteSame",
+            "SeqArray::deleteSome",
+            "SeqArray::print",
+        ],
+        "diagnostics": [
+            {
+                "line": 72,
+                "column": 0,
+                "code": "undeclared_identifier",
+                "message": "protected main references undeclared identifier value",
+            }
+        ],
+    }
+
+    assert clang_bundle["starter_source"]["preflight"] == expected_preflight
+    assert gpp_bundle["starter_source"]["preflight"] == expected_preflight
+    assert clang_bundle["bundle_hash"] == gpp_bundle["bundle_hash"]
+
+
+def test_real_compiler_preflight_integrates_with_both_approved_probes() -> None:
+    if importer._discover_compiler() is None:
+        pytest.skip("no allowlisted compiler installed")
+
+    sequence_bundle = importer.import_material_bundle(SEQUENCE_CONFIG)
+    linked_bundle = importer.import_material_bundle(LINKED_CONFIG)
+
+    assert sequence_bundle["starter_source"]["preflight"] == {
+        "status": "blocked",
+        "accepted_editable_symbols": SEQUENCE_LIVE_PREFLIGHT[
+            "accepted_editable_symbols"
+        ],
+        "diagnostics": [
+            {
+                "line": 72,
+                "column": 0,
+                "code": "undeclared_identifier",
+                "message": "protected main references undeclared identifier value",
+            }
+        ],
+    }
+    assert linked_bundle["starter_source"]["preflight"] == LINKED_LIVE_PREFLIGHT
 
 
 def test_compiler_diagnostic_overflow_fails_closed(
@@ -520,9 +660,22 @@ def test_importer_rejects_teacher_controlled_compiler_flags(tmp_path: Path) -> N
     ],
 )
 def test_committed_bundle_is_the_deterministic_cli_projection(
-    config_path: Path, bundle_path: Path, tmp_path: Path
+    config_path: Path,
+    bundle_path: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     output_path = tmp_path / "bundle.json"
+    live_preflight = (
+        SEQUENCE_LIVE_PREFLIGHT
+        if config_path == SEQUENCE_CONFIG
+        else LINKED_LIVE_PREFLIGHT
+    )
+    monkeypatch.setattr(
+        importer,
+        "_preflight_source",
+        lambda _source, _symbols: deepcopy(live_preflight),
+    )
 
     assert importer.main([str(config_path), "--output", str(output_path)]) == 0
     assert json.loads(output_path.read_text(encoding="utf-8")) == json.loads(
@@ -545,4 +698,36 @@ def test_cli_returns_controlled_error_without_traceback(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err.startswith("material import failed: source_encoding")
+    assert "Traceback" not in captured.err
+
+
+def test_cli_rejects_oversized_json_integer_without_traceback_or_path_leak(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config_text = LINKED_CONFIG.read_text(encoding="utf-8").replace(
+        '"schema_version": 1',
+        '"schema_version": ' + ("9" * 5_000),
+        1,
+    )
+    config_path = tmp_path / "oversized-integer.json"
+    config_path.write_text(config_text, encoding="utf-8")
+
+    get_digit_limit = getattr(sys, "get_int_max_str_digits", None)
+    set_digit_limit = getattr(sys, "set_int_max_str_digits", None)
+    previous_digit_limit = get_digit_limit() if get_digit_limit else None
+    try:
+        if set_digit_limit:
+            set_digit_limit(0)
+        exit_code = importer.main(
+            [str(config_path), "--output", str(tmp_path / "bundle.json")]
+        )
+    finally:
+        if set_digit_limit and previous_digit_limit is not None:
+            set_digit_limit(previous_digit_limit)
+
+    assert exit_code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "material import failed: config must be valid UTF-8 JSON\n"
+    assert str(config_path) not in captured.err
     assert "Traceback" not in captured.err

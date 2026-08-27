@@ -19,6 +19,7 @@ from pathlib import Path, PurePath
 
 IMPORTER_VERSION = "cpp_assessment_material_importer_v1"
 MAX_INPUT_BYTES = 256 * 1024
+MAX_JSON_INTEGER_DIGITS = 1_000
 COMPILER_TIMEOUT_SECONDS = 10
 MAX_COMPILER_DIAGNOSTIC_BYTES = 64 * 1024
 COMPILER_NAMES = ("clang++", "g++")
@@ -27,6 +28,12 @@ COMPILER_ARGUMENTS = ("-std=c++17", "-fsyntax-only", "-Wall", "-Wextra", "-Wpeda
 
 class MaterialImportError(ValueError):
     """The material cannot be imported without weakening the sealed contract."""
+
+
+def _parse_bounded_json_int(value: str) -> int:
+    if len(value.lstrip("-")) > MAX_JSON_INTEGER_DIGITS:
+        raise ValueError("JSON integer exceeds importer limit")
+    return int(value)
 
 
 _CONFIG_KEYS = {
@@ -342,7 +349,7 @@ def _heading_set(parser_profile: str) -> set[str]:
 
 def _looks_like_heading(line: str) -> bool:
     stripped = line.strip()
-    return stripped.endswith((":", "：")) or re.match(r"^\d+\.\s", stripped) is not None
+    return stripped.endswith((":", "：")) or re.match(r"^\d+\.", stripped) is not None
 
 
 def _trim_block(lines: list[str]) -> str:
@@ -594,6 +601,46 @@ def _preflight_source(source: str, editable_symbols: list[str]) -> dict[str, obj
     }
 
 
+def _seal_preflight(
+    profile_name: str, live_preflight: dict[str, object]
+) -> dict[str, object]:
+    """Project host diagnostics into stable importer-version semantics."""
+
+    status = live_preflight["status"]
+    diagnostics: list[dict[str, object]] = []
+    if status == "blocked":
+        live_diagnostics = live_preflight["diagnostics"]
+        has_sequence_value_error = profile_name == "sequence_list_v1" and any(
+            diagnostic["line"] in {72, 73}
+            and diagnostic["code"] == "compiler_error"
+            and "value" in diagnostic["message"]
+            for diagnostic in live_diagnostics
+        )
+        if has_sequence_value_error:
+            diagnostics.append(
+                {
+                    "line": 72,
+                    "column": 0,
+                    "code": "undeclared_identifier",
+                    "message": "protected main references undeclared identifier value",
+                }
+            )
+        else:
+            diagnostics.append(
+                {
+                    "line": 0,
+                    "column": 0,
+                    "code": "protected_source_compile_error",
+                    "message": "protected source failed compiler preflight",
+                }
+            )
+    return {
+        "status": status,
+        "accepted_editable_symbols": list(live_preflight["accepted_editable_symbols"]),
+        "diagnostics": diagnostics,
+    }
+
+
 def _limit_compiler_output() -> None:
     resource.setrlimit(
         resource.RLIMIT_FSIZE,
@@ -722,10 +769,12 @@ def import_material_bundle(config_path: Path) -> dict[str, object]:
     """Import one versioned teacher-material bundle without network access."""
 
     config_path = Path(config_path)
+    config_bytes = _read_bounded_regular_file(config_path, None, "config")
     try:
-        config_bytes = _read_bounded_regular_file(config_path, None, "config")
-        config = json.loads(config_bytes.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        config = json.loads(
+            config_bytes.decode("utf-8"), parse_int=_parse_bounded_json_int
+        )
+    except (UnicodeDecodeError, ValueError) as exc:
         raise MaterialImportError("config must be valid UTF-8 JSON") from exc
     config = _require_object(config, "config")
     source_config, tests_config, profile = _validate_config(config)
@@ -745,7 +794,8 @@ def import_material_bundle(config_path: Path) -> dict[str, object]:
     assessment_tests, _teacher_dimensions = _parse_teacher_tests(
         tests_text, tests_config["parser_profile"], profile
     )
-    preflight = _preflight_source(source_text, source_config["editable_symbols"])
+    live_preflight = _preflight_source(source_text, source_config["editable_symbols"])
+    preflight = _seal_preflight(config["exercise_profile"], live_preflight)
     issues = _base_issues(config["exercise_profile"])
     if preflight["status"] == "unavailable":
         issues.insert(
@@ -759,12 +809,8 @@ def import_material_bundle(config_path: Path) -> dict[str, object]:
             },
         )
     elif preflight["status"] == "blocked":
-        has_expected_value_error = config[
-            "exercise_profile"
-        ] == "sequence_list_v1" and any(
-            diagnostic["line"] == 72
-            and diagnostic["code"] == "compiler_error"
-            and "value" in diagnostic["message"]
+        has_expected_value_error = any(
+            diagnostic["code"] == "undeclared_identifier"
             for diagnostic in preflight["diagnostics"]
         )
         issues.insert(

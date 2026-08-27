@@ -27,7 +27,7 @@
       "timeout_ms": 2000
     }
   ],
-  "bundle_hash": "d58891d77e0639162d94fbd31dd379dcf062f07ca76a9426ced730aed2fa00fb",
+  "bundle_hash": "ade473cf6c2fa7055074d88c4e2cb8ff66812f11c442f5c94cf8d98dd45e7302",
   "detector_profiles": [
     {
       "available": false,
@@ -141,16 +141,10 @@
       ],
       "diagnostics": [
         {
-          "code": "compiler_error",
-          "column": 16,
+          "code": "undeclared_identifier",
+          "column": 0,
           "line": 72,
-          "message": "use of undeclared identifier 'value'"
-        },
-        {
-          "code": "compiler_error",
-          "column": 25,
-          "line": 73,
-          "message": "use of undeclared identifier 'value'"
+          "message": "protected main references undeclared identifier value"
         }
       ],
       "status": "blocked"

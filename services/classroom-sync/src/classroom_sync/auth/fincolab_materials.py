@@ -59,6 +59,12 @@ class FincolabAssessmentMaterialGateway:
                 },
             ) as response:
                 self._raise_for_status(response)
+                content_encoding = response.headers.get("Content-Encoding")
+                if (
+                    content_encoding is not None
+                    and content_encoding.strip().casefold() != "identity"
+                ):
+                    raise UpstreamContractError("assessment_materials_contract_invalid")
                 content_length = response.headers.get("Content-Length")
                 if content_length is not None:
                     try:
@@ -72,7 +78,7 @@ class FincolabAssessmentMaterialGateway:
 
                 body = bytearray()
                 chunk_size = min(64 * 1024, self._max_response_bytes + 1)
-                for chunk in response.iter_bytes(chunk_size=chunk_size):
+                for chunk in response.iter_raw(chunk_size=chunk_size):
                     if len(chunk) > self._max_response_bytes - len(body):
                         raise UpstreamContractError("assessment_materials_contract_invalid")
                     body.extend(chunk)
@@ -83,7 +89,7 @@ class FincolabAssessmentMaterialGateway:
 
         try:
             decoded: object = json.loads(body)
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        except (ValueError, RecursionError) as error:
             raise UpstreamContractError("assessment_materials_contract_invalid") from error
         if not isinstance(decoded, dict) or not all(isinstance(key, str) for key in decoded):
             raise UpstreamContractError("assessment_materials_contract_invalid")

@@ -178,6 +178,7 @@ def create_runtime_services(settings: Settings) -> ClassroomServices:
         plan_suggestion_job_service=plan_suggestion_job_service,
         brief_analysis_service=brief_analysis_service,
         assessment_material_service=assessment_material_service,
+        shutdown=fincolab_client.close,
     )
 
 

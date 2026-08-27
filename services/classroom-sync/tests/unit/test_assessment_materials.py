@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import gzip
 import json
 from copy import deepcopy
 from hashlib import sha256
@@ -44,6 +45,27 @@ def private_payload(bundle_path: Path, source_path: Path) -> dict[str, object]:
     starter = cast(dict[str, object], payload["starter_source"])
     starter["content_base64"] = base64.b64encode(source_path.read_bytes()).decode("ascii")
     return payload
+
+
+def importer_private_hash(payload: dict[str, object]) -> str:
+    sealed = deepcopy(payload)
+    sealed.pop("bundle_hash")
+    starter = cast(dict[str, object] | None, sealed.get("starter_source"))
+    if starter is not None:
+        starter.pop("content_base64", None)
+    encoded = json.dumps(
+        sealed, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return sha256(encoded).hexdigest()
+
+
+def streamed_json_response(value: object, *, status_code: int = 200) -> httpx.Response:
+    body = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return httpx.Response(
+        status_code,
+        headers={"Content-Type": "application/json"},
+        stream=httpx.ByteStream(body),
+    )
 
 
 class StaticGateway:
@@ -122,6 +144,20 @@ def test_service_rejects_artifact_or_test_hash_drift(corruption: str) -> None:
     else:
         tests = cast(list[dict[str, object]], payload["assessment_tests"])
         tests[0]["expected_stdout"] = "tampered"
+        payload["bundle_hash"] = importer_private_hash(payload)
+
+    with pytest.raises(UpstreamContractError, match="assessment_materials_contract_invalid"):
+        AssessmentMaterialService(StaticGateway(payload)).get_bundle(
+            Principal("teacher-1", "teacher-a", "teacher-token"),
+            "course-001",
+            "linked-list-experiment-002",
+        )
+
+
+def test_service_rejects_private_bundle_seal_drift() -> None:
+    bundle_path, source_path = MATERIAL_FIXTURES[1]
+    payload = private_payload(bundle_path, source_path)
+    payload["title"] = "tampered after importer sealing"
 
     with pytest.raises(UpstreamContractError, match="assessment_materials_contract_invalid"):
         AssessmentMaterialService(StaticGateway(payload)).get_bundle(
@@ -149,6 +185,7 @@ def test_service_bounds_and_sanitizes_public_diagnostic_messages() -> None:
         "C:\\private\\source.cpp s3://private-bucket/source ``` "
         "char password[] = \"plain-secret\";"
     )
+    payload["bundle_hash"] = importer_private_hash(payload)
 
     bundle = AssessmentMaterialService(StaticGateway(payload)).get_bundle(
         Principal("teacher-1", "teacher-a", "teacher-token"),
@@ -160,9 +197,9 @@ def test_service_bounds_and_sanitizes_public_diagnostic_messages() -> None:
     assert bundle.starter_source is not None
     messages.extend(item.message for item in bundle.starter_source.preflight.diagnostics)
     assert all(1 <= len(message) <= 500 for message in messages)
+    public_json = json.dumps(bundle.model_dump(mode="json"), ensure_ascii=False).lower()
     assert all(
-        marker not in message.lower()
-        for message in messages
+        marker not in public_json
         for marker in (
             "```",
             "http://",
@@ -180,6 +217,23 @@ def test_service_bounds_and_sanitizes_public_diagnostic_messages() -> None:
     )
 
 
+def test_service_rejects_unapproved_diagnostic_code_before_public_projection() -> None:
+    bundle_path, source_path = MATERIAL_FIXTURES[0]
+    payload = private_payload(bundle_path, source_path)
+    starter = cast(dict[str, object], payload["starter_source"])
+    preflight = cast(dict[str, object], starter["preflight"])
+    diagnostics = cast(list[dict[str, object]], preflight["diagnostics"])
+    diagnostics[0]["code"] = "sk-private-credential-in-code"
+    payload["bundle_hash"] = importer_private_hash(payload)
+
+    with pytest.raises(UpstreamContractError, match="assessment_materials_contract_invalid"):
+        AssessmentMaterialService(StaticGateway(payload)).get_bundle(
+            Principal("teacher-1", "teacher-a", "teacher-token"),
+            "course-001",
+            "sequence-list-experiment-001",
+        )
+
+
 def test_fincolab_gateway_uses_only_the_approved_encoded_endpoint_and_bearer() -> None:
     bundle_path, source_path = MATERIAL_FIXTURES[1]
     payload = private_payload(bundle_path, source_path)
@@ -187,7 +241,7 @@ def test_fincolab_gateway_uses_only_the_approved_encoded_endpoint_and_bearer() -
 
     def responder(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        return httpx.Response(200, json={"data": payload})
+        return streamed_json_response({"data": payload})
 
     gateway = FincolabAssessmentMaterialGateway(
         base_url="https://fincolab.example/root?ignored=never",
@@ -204,6 +258,7 @@ def test_fincolab_gateway_uses_only_the_approved_encoded_endpoint_and_bearer() -
         "algorithm_development/parent%2Fone/assessment_materials"
     )
     assert requests[0].headers["Authorization"] == "Bearer resolved-token"
+    assert requests[0].headers["Accept-Encoding"] == "identity"
 
 
 @pytest.mark.parametrize("unsafe_segment", [".", ".."])
@@ -214,7 +269,7 @@ def test_fincolab_gateway_rejects_rfc_dot_segments_before_request(
 
     def responder(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        return httpx.Response(200, json={"schema_version": 1})
+        return streamed_json_response({"schema_version": 1})
 
     gateway = FincolabAssessmentMaterialGateway(
         base_url="https://fincolab.example",
@@ -236,7 +291,7 @@ def test_fincolab_gateway_caps_response_before_json_validation() -> None:
     class RecordingChunkResponse(httpx.Response):
         requested_chunk_size: int | None = None
 
-        def iter_bytes(self, chunk_size: int | None = None):  # type: ignore[no-untyped-def]
+        def iter_raw(self, chunk_size: int | None = None):  # type: ignore[no-untyped-def]
             self.requested_chunk_size = chunk_size
             yield response_body
 
@@ -258,6 +313,88 @@ def test_fincolab_gateway_caps_response_before_json_validation() -> None:
     assert upstream_response.requested_chunk_size == 1025
 
 
+def test_fincolab_gateway_rejects_encoded_response_before_decoding() -> None:
+    requests: list[httpx.Request] = []
+    encoded = gzip.compress(b'{"schema_version":1}')
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            headers={"Content-Encoding": "gzip"},
+            stream=httpx.ByteStream(encoded),
+        )
+
+    gateway = FincolabAssessmentMaterialGateway(
+        base_url="https://fincolab.example",
+        client=httpx.Client(transport=httpx.MockTransport(responder)),
+        max_response_bytes=1024,
+    )
+
+    with pytest.raises(UpstreamContractError, match="assessment_materials_contract_invalid"):
+        gateway.get_bundle(
+            Principal("teacher-1", "teacher-a", "resolved-token"),
+            "space-1",
+            "parent-1",
+        )
+    assert requests[0].headers["Accept-Encoding"] == "identity"
+
+
+@pytest.mark.parametrize(
+    "body",
+    (
+        b'{"schema_version":1,"value":' + (b"9" * 5_000) + b"}",
+        (b"[" * 1_500) + b"0" + (b"]" * 1_500),
+    ),
+    ids=("huge_integer", "excessive_depth"),
+)
+def test_fincolab_gateway_maps_bounded_json_parser_failures(body: bytes) -> None:
+    gateway = FincolabAssessmentMaterialGateway(
+        base_url="https://fincolab.example",
+        client=httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(200, stream=httpx.ByteStream(body))
+            )
+        ),
+        max_response_bytes=10_000,
+    )
+
+    with pytest.raises(UpstreamContractError, match="assessment_materials_contract_invalid"):
+        gateway.get_bundle(
+            Principal("teacher-1", "teacher-a", "resolved-token"),
+            "space-1",
+            "parent-1",
+        )
+
+
+def test_fincolab_gateway_maps_json_recursion_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_at_parser_boundary(_body: object) -> object:
+        raise RecursionError("private parser detail")
+
+    monkeypatch.setattr(
+        "classroom_sync.auth.fincolab_materials.json.loads",
+        fail_at_parser_boundary,
+    )
+    gateway = FincolabAssessmentMaterialGateway(
+        base_url="https://fincolab.example",
+        client=httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(
+                    200,
+                    stream=httpx.ByteStream(b'{"schema_version":1}'),
+                )
+            )
+        ),
+    )
+
+    with pytest.raises(UpstreamContractError, match="assessment_materials_contract_invalid"):
+        gateway.get_bundle(
+            Principal("teacher-1", "teacher-a", "resolved-token"),
+            "space-1",
+            "parent-1",
+        )
+
+
 @pytest.mark.parametrize(
     ("responder", "error_type", "code"),
     (
@@ -267,7 +404,7 @@ def test_fincolab_gateway_caps_response_before_json_validation() -> None:
             "assessment_materials_upstream_unavailable",
         ),
         (
-            lambda _request: httpx.Response(200, json={"schema_version": 2}),
+            lambda _request: streamed_json_response({"schema_version": 2}),
             UpstreamContractError,
             "assessment_materials_contract_invalid",
         ),

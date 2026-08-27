@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -53,3 +54,4 @@ class ClassroomServices:
     plan_suggestion_job_service: PlanSuggestionJobService | None = None
     brief_analysis_service: BriefAnalysisJobService | None = None
     assessment_material_service: AssessmentMaterialService | None = None
+    shutdown: Callable[[], None] | None = None

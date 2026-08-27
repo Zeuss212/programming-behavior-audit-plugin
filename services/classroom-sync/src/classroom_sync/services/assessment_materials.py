@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import base64
 import binascii
+import json
 from collections.abc import Mapping
 from hashlib import sha256
-from typing import Annotated, Literal, Protocol
+from typing import Annotated, Literal, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic import ValidationError as PydanticValidationError
@@ -20,6 +21,7 @@ Hash = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$", strict=True)]
 Identifier = Annotated[str, Field(min_length=1, max_length=200, strict=True)]
 DisplayName = Annotated[str, Field(min_length=1, max_length=500, strict=True)]
 PublicMessage = Annotated[str, Field(min_length=1, max_length=500, strict=True)]
+MaterialDiagnosticCode = Literal["undeclared_identifier", "protected_source_compile_error"]
 
 _MAX_PRIVATE_MESSAGE_LENGTH = 10_000
 _ISSUE_PUBLIC_MESSAGES = {
@@ -48,7 +50,7 @@ class _StrictImmutableModel(BaseModel):
 
 
 class MaterialDiagnostic(_StrictImmutableModel):
-    code: Identifier
+    code: MaterialDiagnosticCode
     line: Annotated[int, Field(ge=0, le=1_000_000, strict=True)]
     column: Annotated[int, Field(ge=0, le=1_000_000, strict=True)]
     message: PublicMessage
@@ -140,7 +142,7 @@ class AssessmentMaterialBundle(_StrictImmutableModel):
 
 
 class _PrivateMaterialDiagnostic(_StrictImmutableModel):
-    code: Identifier
+    code: MaterialDiagnosticCode
     line: Annotated[int, Field(ge=0, le=1_000_000, strict=True)]
     column: Annotated[int, Field(ge=0, le=1_000_000, strict=True)]
     message: Annotated[
@@ -249,6 +251,19 @@ class AssessmentMaterialService:
 
     @staticmethod
     def _validate_hashes(bundle: _PrivateAssessmentMaterialBundle) -> None:
+        sealed_payload = bundle.model_dump(mode="json", exclude={"bundle_hash"})
+        sealed_starter = cast(dict[str, object] | None, sealed_payload.get("starter_source"))
+        if sealed_starter is not None:
+            sealed_starter.pop("content_base64")
+        sealed_bytes = json.dumps(
+            sealed_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        if sha256(sealed_bytes).hexdigest() != bundle.bundle_hash:
+            raise ValueError("private material bundle hash mismatch")
+
         starter = bundle.starter_source
         if starter is not None:
             source_bytes = base64.b64decode(starter.content_base64, validate=True)

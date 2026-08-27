@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
+from typing import cast
 
 import pytest
 
+from classroom_sync.application import ClassroomIdentityGateway, ClassroomServices
 from classroom_sync.config import Settings
 from classroom_sync.domain.schemas import ClassroomSchemaRegistry
 from classroom_sync.errors import AiSuggestionUnavailableError
+from classroom_sync.main import create_app
 from classroom_sync.runtime import contract_directory, fincolab_http_client, s3_client_config
+from classroom_sync.services.assignments import AssignmentService
 from classroom_sync.services.plan_suggestions import AiProviderSettings, AiSuggestionSettings
+from classroom_sync.services.plans import PlanService
 
 
 def test_runtime_configuration_requires_all_trusted_dependencies():
@@ -108,6 +114,34 @@ def test_runtime_uses_the_existing_ten_second_fincolab_timeout() -> None:
         assert client.timeout.pool == 10.0
     finally:
         client.close()
+
+
+def test_app_shutdown_closes_shared_runtime_client_once() -> None:
+    close_calls = 0
+
+    def close_shared_client() -> None:
+        nonlocal close_calls
+        close_calls += 1
+
+    app = create_app(
+        Settings(database_url="sqlite://"),
+        classroom_services=ClassroomServices(
+            identity_gateway=cast(ClassroomIdentityGateway, object()),
+            plan_service=cast(PlanService, object()),
+            assignment_service=cast(AssignmentService, object()),
+            shutdown=close_shared_client,
+        ),
+    )
+
+    async def exercise_lifespan_twice() -> None:
+        async with app.router.lifespan_context(app):
+            pass
+        async with app.router.lifespan_context(app):
+            pass
+
+    asyncio.run(exercise_lifespan_twice())
+
+    assert close_calls == 1
 
 
 def test_schema_registry_can_use_an_explicit_plugin_schema_directory(tmp_path):

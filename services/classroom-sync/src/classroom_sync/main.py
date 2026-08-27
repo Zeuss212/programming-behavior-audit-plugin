@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
@@ -27,7 +29,23 @@ def create_app(
 ) -> FastAPI:
     """Build an app whose readiness is safe to expose to a load balancer."""
 
-    app = FastAPI(title="Classroom Sync", version="0.1.0")
+    services_closed = False
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        nonlocal services_closed
+        try:
+            yield
+        finally:
+            if (
+                not services_closed
+                and classroom_services is not None
+                and classroom_services.shutdown is not None
+            ):
+                services_closed = True
+                classroom_services.shutdown()
+
+    app = FastAPI(title="Classroom Sync", version="0.1.0", lifespan=lifespan)
 
     @app.exception_handler(ClassroomServiceError)
     def classroom_service_error(

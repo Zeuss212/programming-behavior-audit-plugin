@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from classroom_sync.errors import (
+    AiSuggestionUnavailableError,
     AuthorizationError,
     ConflictError,
     NotFoundError,
@@ -54,7 +55,7 @@ class PlanAuthoringService:
     def __init__(
         self,
         session_factory: sessionmaker[Session],
-        suggestion_jobs: PlanSuggestionJobService,
+        suggestion_jobs: PlanSuggestionJobService | None,
         *,
         clock: Callable[[], datetime],
     ) -> None:
@@ -130,6 +131,9 @@ class PlanAuthoringService:
             if authoring.suggestion_job_id is not None:
                 return self._snapshot(repository, authoring)
 
+            if self._suggestion_jobs is None:
+                raise AiSuggestionUnavailableError("ai_suggestion_not_configured")
+
             job = self._suggestion_jobs.submit(
                 authoring_session_id=authoring.id,
                 teacher_id=teacher_id,
@@ -142,6 +146,55 @@ class PlanAuthoringService:
             authoring.updated_at = self._clock()
             return self._snapshot(repository, authoring, suggestion_job=job)
 
+    def get_current(
+        self,
+        *,
+        teacher_id: str,
+        space_id: str,
+        parent_algorithm_id: str,
+    ) -> PlanAuthoringSnapshot:
+        """Return the existing open session without creating one during a read."""
+
+        with self._session_factory() as session:
+            repository = ClassroomRepository(session)
+            authoring = repository.find_open_authoring_session(
+                teacher_id=teacher_id,
+                space_id=space_id,
+                parent_algorithm_id=parent_algorithm_id,
+            )
+            if authoring is None:
+                raise NotFoundError("plan_authoring_session_not_found")
+            return self._snapshot(repository, authoring)
+
+    def get_owned(
+        self, authoring_session_id: str, *, teacher_id: str
+    ) -> PlanAuthoringSnapshot:
+        """Read one session only after checking its durable teacher owner."""
+
+        with self._session_factory() as session:
+            repository = ClassroomRepository(session)
+            authoring = repository.get_authoring_session(authoring_session_id)
+            if authoring is None:
+                raise NotFoundError("plan_authoring_session_not_found")
+            if authoring.teacher_id != teacher_id:
+                raise AuthorizationError("plan_authoring_session_not_owned")
+            return self._snapshot(repository, authoring)
+
+    def get_owned_parent_scope(
+        self, authoring_session_id: str, *, teacher_id: str
+    ) -> tuple[str, str]:
+        """Return only the owned parent key needed for current authorization."""
+
+        with self._session_factory() as session:
+            authoring = ClassroomRepository(session).get_authoring_session(
+                authoring_session_id
+            )
+            if authoring is None:
+                raise NotFoundError("plan_authoring_session_not_found")
+            if authoring.teacher_id != teacher_id:
+                raise AuthorizationError("plan_authoring_session_not_owned")
+            return authoring.space_id, authoring.parent_algorithm_id
+
     def abandon(
         self, authoring_session_id: str, *, teacher_id: str
     ) -> PlanAuthoringSnapshot:
@@ -153,19 +206,40 @@ class PlanAuthoringService:
             )
             if authoring.status == "open":
                 if authoring.suggestion_job_id is not None:
-                    self._linked_job(repository, authoring, for_update=True)
-                    self._suggestion_jobs.cancel_for_authoring_session(
-                        authoring.id,
-                        teacher_id=teacher_id,
-                        space_id=authoring.space_id,
-                        parent_algorithm_id=authoring.parent_algorithm_id,
-                        session=session,
-                    )
+                    linked_job = self._linked_job(repository, authoring, for_update=True)
+                    if self._suggestion_jobs is None:
+                        self._cancel_linked_job_without_provider(linked_job, now=now)
+                    else:
+                        self._suggestion_jobs.cancel_for_authoring_session(
+                            authoring.id,
+                            teacher_id=teacher_id,
+                            space_id=authoring.space_id,
+                            parent_algorithm_id=authoring.parent_algorithm_id,
+                            session=session,
+                        )
                 authoring.status = "abandoned"
                 authoring.active_slot = None
                 authoring.closed_at = now
                 authoring.updated_at = now
             return self._snapshot(repository, authoring)
+
+    @staticmethod
+    def _cancel_linked_job_without_provider(
+        job: ClassroomPlanSuggestionJob, *, now: datetime
+    ) -> None:
+        """Keep abandon available if optional AI configuration is later removed."""
+
+        if job.status in {"ready", "failed"}:
+            return
+        job.suggestion_input = {}
+        job.result = None
+        job.status = "failed"
+        job.active_slot = None
+        job.lease_owner = None
+        job.lease_expires_at = None
+        job.failure_code = "ai_suggestion_authoring_abandoned"
+        job.completed_at = now
+        job.updated_at = now
 
     @staticmethod
     def _owned_locked_session(

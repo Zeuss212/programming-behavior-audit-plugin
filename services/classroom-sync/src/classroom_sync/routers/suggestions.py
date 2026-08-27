@@ -1,4 +1,4 @@
-"""Teacher-authorized, transient AI suggestions for classroom plan authoring."""
+"""Legacy profile-v2 AI suggestion routes retained for client compatibility."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ def create_plan_suggestion(
     request: Request,
     authorization: Annotated[str | None, Header()] = None,
 ) -> dict[str, object]:
-    """Queue an owner-scoped suggestion instead of holding a provider request open."""
+    """Legacy v2: queue a suggestion without holding a provider request open."""
 
     services = get_services(request)
     principal = resolve_bearer_principal(services, authorization)
@@ -74,7 +74,7 @@ def get_plan_suggestion(
     request: Request,
     authorization: Annotated[str | None, Header()] = None,
 ) -> dict[str, object]:
-    """Poll a previously authorized task without re-sending the teacher prompt."""
+    """Legacy v2: poll an authorized task without re-sending teacher input."""
 
     services = get_services(request)
     principal = resolve_bearer_principal(services, authorization)

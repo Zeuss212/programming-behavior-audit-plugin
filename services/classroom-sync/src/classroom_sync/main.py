@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from .application import ClassroomServices
 from .config import Settings
 from .errors import ClassroomServiceError
+from .routers.authoring import router as authoring_router
 from .routers.events import router as events_router
 from .routers.materials import router as materials_router
 from .routers.plans import router as plans_router
@@ -101,6 +102,7 @@ def create_app(
 
     if classroom_services is not None:
         app.state.classroom_services = classroom_services
+        app.include_router(authoring_router)
         app.include_router(plans_router)
         app.include_router(plugin_router)
         app.include_router(student_router)

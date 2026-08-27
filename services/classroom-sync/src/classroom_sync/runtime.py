@@ -31,6 +31,7 @@ from classroom_sync.services.brief_analysis import (
 )
 from classroom_sync.services.briefs import BriefService
 from classroom_sync.services.deadlines import DeadlineService
+from classroom_sync.services.plan_authoring import PlanAuthoringService
 from classroom_sync.services.plan_suggestion_jobs import PlanSuggestionJobService
 from classroom_sync.services.plan_suggestions import (
     AiProviderSettings,
@@ -166,6 +167,11 @@ def create_runtime_services(settings: Settings) -> ClassroomServices:
             clock=utc_now,
             max_attempts=settings.ai_max_attempts,
         )
+    plan_authoring_service = PlanAuthoringService(
+        session_factory,
+        plan_suggestion_job_service,
+        clock=utc_now,
+    )
     return ClassroomServices(
         identity_gateway=identity_gateway,
         plan_service=plan_service,
@@ -174,6 +180,7 @@ def create_runtime_services(settings: Settings) -> ClassroomServices:
         brief_service=brief_service,
         deadline_service=deadline_service,
         read_service=ClassroomReadService(session_factory),
+        plan_authoring_service=plan_authoring_service,
         plan_suggestion_service=plan_suggestion_service,
         plan_suggestion_job_service=plan_suggestion_job_service,
         brief_analysis_service=brief_analysis_service,

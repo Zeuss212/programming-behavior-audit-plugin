@@ -7,8 +7,10 @@ from sqlalchemy.orm import Session
 
 from classroom_sync.models import (
     AuditEvent,
+    ClassroomPlanSuggestionJob,
     ExperimentPlanBinding,
     MonitorSession,
+    PlanAuthoringSession,
     PlanDraft,
     PlanVersion,
     StudentAssignment,
@@ -24,6 +26,53 @@ class ClassroomRepository:
 
     def get_plan_draft(self, draft_id: str, *, for_update: bool = False) -> PlanDraft | None:
         statement = select(PlanDraft).where(PlanDraft.id == draft_id)
+        if for_update:
+            statement = statement.with_for_update()
+        return self.session.scalar(statement)
+
+    def find_open_authoring_session(
+        self,
+        *,
+        teacher_id: str,
+        space_id: str,
+        parent_algorithm_id: str,
+        for_update: bool = False,
+    ) -> PlanAuthoringSession | None:
+        statement = select(PlanAuthoringSession).where(
+            PlanAuthoringSession.teacher_id == teacher_id,
+            PlanAuthoringSession.space_id == space_id,
+            PlanAuthoringSession.parent_algorithm_id == parent_algorithm_id,
+            PlanAuthoringSession.active_slot == 1,
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        return self.session.scalar(statement)
+
+    def get_authoring_session(
+        self, authoring_session_id: str, *, for_update: bool = False
+    ) -> PlanAuthoringSession | None:
+        statement = select(PlanAuthoringSession).where(
+            PlanAuthoringSession.id == authoring_session_id
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        return self.session.scalar(statement)
+
+    def get_plan_draft_for_authoring_session(
+        self, authoring_session_id: str
+    ) -> PlanDraft | None:
+        return self.session.scalar(
+            select(PlanDraft).where(
+                PlanDraft.authoring_session_id == authoring_session_id
+            )
+        )
+
+    def get_plan_suggestion_job(
+        self, job_id: str, *, for_update: bool = False
+    ) -> ClassroomPlanSuggestionJob | None:
+        statement = select(ClassroomPlanSuggestionJob).where(
+            ClassroomPlanSuggestionJob.id == job_id
+        )
         if for_update:
             statement = statement.with_for_update()
         return self.session.scalar(statement)

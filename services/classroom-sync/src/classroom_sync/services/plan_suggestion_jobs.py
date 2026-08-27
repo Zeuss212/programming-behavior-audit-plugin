@@ -44,6 +44,7 @@ class PlanSuggestionJobSnapshot:
     status: PlanSuggestionJobStatus
     failure_code: str | None
     suggestion: PlanSuggestion | None
+    input_hash: str | None = None
 
 
 class PlanSuggestionJobService:
@@ -73,69 +74,121 @@ class PlanSuggestionJobService:
     def submit(
         self,
         *,
+        authoring_session_id: str | None = None,
+        teacher_id: str,
+        space_id: str,
+        parent_algorithm_id: str,
+        suggestion_input: PlanSuggestionInput,
+        session: Session | None = None,
+    ) -> PlanSuggestionJobSnapshot:
+        """Create one active job, or reuse an identical active request safely."""
+
+        if session is not None:
+            return self._submit_in_session(
+                session,
+                authoring_session_id=authoring_session_id,
+                teacher_id=teacher_id,
+                space_id=space_id,
+                parent_algorithm_id=parent_algorithm_id,
+                suggestion_input=suggestion_input,
+            )
+        with self._session_factory.begin() as owned_session:
+            return self._submit_in_session(
+                owned_session,
+                authoring_session_id=authoring_session_id,
+                teacher_id=teacher_id,
+                space_id=space_id,
+                parent_algorithm_id=parent_algorithm_id,
+                suggestion_input=suggestion_input,
+            )
+
+    def _submit_in_session(
+        self,
+        session: Session,
+        *,
+        authoring_session_id: str | None,
         teacher_id: str,
         space_id: str,
         parent_algorithm_id: str,
         suggestion_input: PlanSuggestionInput,
     ) -> PlanSuggestionJobSnapshot:
-        """Create one active job, or reuse an identical active request safely."""
+        """Insert inside the caller's locked authoring transaction when supplied."""
 
         now = self._utc_now()
         source = suggestion_input.model_dump(mode="json")
-        request_hash = self._request_hash(source)
-        with self._session_factory.begin() as session:
-            existing = session.scalar(
-                select(ClassroomPlanSuggestionJob)
-                .where(
+        request_hash = self.input_hash(suggestion_input)
+        existing_statement = select(ClassroomPlanSuggestionJob)
+        if authoring_session_id is not None:
+            existing_statement = existing_statement.where(
+                ClassroomPlanSuggestionJob.authoring_session_id == authoring_session_id
+            )
+        else:
+            existing_statement = existing_statement.where(
+                ClassroomPlanSuggestionJob.teacher_id == teacher_id,
+                ClassroomPlanSuggestionJob.space_id == space_id,
+                ClassroomPlanSuggestionJob.parent_algorithm_id == parent_algorithm_id,
+                ClassroomPlanSuggestionJob.request_hash == request_hash,
+                ClassroomPlanSuggestionJob.active_slot == 1,
+            )
+        existing = session.scalar(existing_statement.with_for_update())
+        if existing is not None:
+            self._verify_owner_scope(
+                existing,
+                teacher_id=teacher_id,
+                space_id=space_id,
+                parent_algorithm_id=parent_algorithm_id,
+            )
+            return self._snapshot(existing)
+
+        job = ClassroomPlanSuggestionJob(
+            id=str(uuid4()),
+            authoring_session_id=authoring_session_id,
+            teacher_id=teacher_id,
+            space_id=space_id,
+            parent_algorithm_id=parent_algorithm_id,
+            request_hash=request_hash,
+            suggestion_input=source,
+            result=None,
+            run_at=now,
+            status="pending",
+            active_slot=1,
+            lease_owner=None,
+            lease_expires_at=None,
+            attempts=0,
+            failure_code=None,
+            completed_at=None,
+            created_at=now,
+            updated_at=now,
+        )
+        try:
+            with session.begin_nested():
+                session.add(job)
+                session.flush()
+        except IntegrityError:
+            winner_statement = select(ClassroomPlanSuggestionJob)
+            if authoring_session_id is not None:
+                winner_statement = winner_statement.where(
+                    ClassroomPlanSuggestionJob.authoring_session_id == authoring_session_id
+                )
+            else:
+                winner_statement = winner_statement.where(
                     ClassroomPlanSuggestionJob.teacher_id == teacher_id,
                     ClassroomPlanSuggestionJob.space_id == space_id,
                     ClassroomPlanSuggestionJob.parent_algorithm_id == parent_algorithm_id,
                     ClassroomPlanSuggestionJob.request_hash == request_hash,
                     ClassroomPlanSuggestionJob.active_slot == 1,
                 )
-                .with_for_update()
-            )
-            if existing is not None:
-                return self._snapshot(existing)
-
-            job = ClassroomPlanSuggestionJob(
-                id=str(uuid4()),
+            winner = session.scalar(winner_statement)
+            if winner is None:
+                raise
+            self._verify_owner_scope(
+                winner,
                 teacher_id=teacher_id,
                 space_id=space_id,
                 parent_algorithm_id=parent_algorithm_id,
-                request_hash=request_hash,
-                suggestion_input=source,
-                result=None,
-                run_at=now,
-                status="pending",
-                active_slot=1,
-                lease_owner=None,
-                lease_expires_at=None,
-                attempts=0,
-                failure_code=None,
-                completed_at=None,
-                created_at=now,
-                updated_at=now,
             )
-            try:
-                with session.begin_nested():
-                    session.add(job)
-                    session.flush()
-            except IntegrityError:
-                winner = session.scalar(
-                    select(ClassroomPlanSuggestionJob).where(
-                        ClassroomPlanSuggestionJob.teacher_id == teacher_id,
-                        ClassroomPlanSuggestionJob.space_id == space_id,
-                        ClassroomPlanSuggestionJob.parent_algorithm_id
-                        == parent_algorithm_id,
-                        ClassroomPlanSuggestionJob.request_hash == request_hash,
-                        ClassroomPlanSuggestionJob.active_slot == 1,
-                    )
-                )
-                if winner is None:
-                    raise
-                return self._snapshot(winner)
-            return self._snapshot(job)
+            return self._snapshot(winner)
+        return self._snapshot(job)
 
     def get_for_teacher(self, job_id: str, *, teacher_id: str) -> PlanSuggestionJobSnapshot:
         with self._session_factory() as session:
@@ -145,6 +198,60 @@ class PlanSuggestionJobService:
             if job.teacher_id != teacher_id:
                 raise AuthorizationError("plan_suggestion_job_not_owned")
             return self._snapshot(job)
+
+    def cancel_for_authoring_session(
+        self,
+        authoring_session_id: str,
+        *,
+        teacher_id: str,
+        session: Session,
+    ) -> None:
+        """Make an abandoned session's unfinished job terminal and source-free."""
+
+        job = session.scalar(
+            select(ClassroomPlanSuggestionJob)
+            .where(ClassroomPlanSuggestionJob.authoring_session_id == authoring_session_id)
+            .with_for_update()
+        )
+        if job is None:
+            return
+        if job.teacher_id != teacher_id:
+            raise AuthorizationError("plan_suggestion_job_not_owned")
+        if job.status in {"ready", "failed"}:
+            return
+        now = self._utc_now()
+        job.suggestion_input = {}
+        job.result = None
+        job.status = "failed"
+        job.active_slot = None
+        job.lease_owner = None
+        job.lease_expires_at = None
+        job.failure_code = "ai_suggestion_authoring_abandoned"
+        job.completed_at = now
+        job.updated_at = now
+
+    @classmethod
+    def snapshot_for_model(
+        cls, job: ClassroomPlanSuggestionJob
+    ) -> PlanSuggestionJobSnapshot:
+        """Project one already-loaded job without opening a second transaction."""
+
+        return cls._snapshot(job)
+
+    @staticmethod
+    def _verify_owner_scope(
+        job: ClassroomPlanSuggestionJob,
+        *,
+        teacher_id: str,
+        space_id: str,
+        parent_algorithm_id: str,
+    ) -> None:
+        if (
+            job.teacher_id != teacher_id
+            or job.space_id != space_id
+            or job.parent_algorithm_id != parent_algorithm_id
+        ):
+            raise AuthorizationError("plan_suggestion_job_not_owned")
 
     def claim_due_jobs(
         self, worker_id: str, now: datetime | None = None
@@ -327,6 +434,7 @@ class PlanSuggestionJobService:
                 ) from error
             return PlanSuggestionJobSnapshot(
                 job_id=job.id,
+                input_hash=job.request_hash,
                 status="ready",
                 failure_code=None,
                 suggestion=PlanSuggestion(
@@ -337,12 +445,14 @@ class PlanSuggestionJobService:
         if job.status == "failed":
             return PlanSuggestionJobSnapshot(
                 job_id=job.id,
+                input_hash=job.request_hash,
                 status="failed",
                 failure_code=job.failure_code or "ai_suggestion_upstream_unavailable",
                 suggestion=None,
             )
         return PlanSuggestionJobSnapshot(
             job_id=job.id,
+            input_hash=job.request_hash,
             status="pending",
             failure_code=None,
             suggestion=None,
@@ -354,7 +464,13 @@ class PlanSuggestionJobService:
         return self._RETRY_DELAYS[attempts - 1]
 
     @staticmethod
-    def _request_hash(value: dict[str, object]) -> str:
+    def input_hash(suggestion_input: PlanSuggestionInput) -> str:
+        value: dict[str, object] = {
+            "profile_kind": suggestion_input.profile_kind,
+            "title": suggestion_input.title,
+            "statement": suggestion_input.statement,
+            "material_bundle_hash": suggestion_input.material_bundle_hash,
+        }
         canonical = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 

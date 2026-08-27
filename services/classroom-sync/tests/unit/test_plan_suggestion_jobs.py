@@ -78,13 +78,100 @@ def test_submit_is_idempotent_while_matching_teacher_request_is_active() -> None
     with session_factory() as session:
         jobs = list(session.scalars(select(ClassroomPlanSuggestionJob)))
     assert len(jobs) == 1
-    assert jobs[0].suggestion_input == {"title": "", "statement": "实现字典查询"}
+    assert jobs[0].suggestion_input == {
+        "profile_kind": "python_v2",
+        "title": "",
+        "statement": "实现字典查询",
+        "material_bundle_hash": None,
+        "material_requirements": [],
+    }
+
+
+def test_submit_binds_the_job_to_its_authoring_session_and_exposes_only_the_input_hash() -> None:
+    now = datetime(2026, 8, 19, 10, 0, tzinfo=UTC)
+    service, _generator, session_factory = build_service(now)
+
+    submitted = service.submit(
+        authoring_session_id="authoring-1",
+        teacher_id="teacher-1",
+        space_id="space-1",
+        parent_algorithm_id="parent-1",
+        suggestion_input=PlanSuggestionInput(title="", statement="实现字典查询"),
+    )
+
+    assert (
+        submitted.input_hash
+        == "c97b3366eadd18ad59c168bb99b2a2032f83315d84d65487301e5b8bd6af5941"
+    )
+    assert not hasattr(submitted, "suggestion_input")
+    with session_factory() as session:
+        job = session.get(ClassroomPlanSuggestionJob, submitted.job_id)
+    assert job is not None
+    assert job.authoring_session_id == "authoring-1"
+
+
+def test_cpp_input_hash_excludes_requirement_text_and_other_private_materials() -> None:
+    now = datetime(2026, 8, 19, 10, 0, tzinfo=UTC)
+    service, _generator, _session_factory = build_service(now)
+    common = {
+        "profile_kind": "cpp_v3",
+        "title": "C++ 练习",
+        "statement": "计算累加值。",
+        "material_bundle_hash": "b" * 64,
+    }
+
+    first = service.submit(
+        teacher_id="teacher-1",
+        space_id="space-1",
+        parent_algorithm_id="parent-1",
+        suggestion_input=PlanSuggestionInput(
+            **common,
+            material_requirements=(
+                {"id": "r1", "name": "累加", "source_statement": "私有材料原文 A"},
+            ),
+        ),
+    )
+    second = service.submit(
+        teacher_id="teacher-2",
+        space_id="space-1",
+        parent_algorithm_id="parent-1",
+        suggestion_input=PlanSuggestionInput(
+            **common,
+            material_requirements=(
+                {"id": "r2", "name": "完全不同", "source_statement": "私有材料原文 B"},
+            ),
+        ),
+    )
+
+    assert first.input_hash == second.input_hash
+
+
+def test_an_authoring_session_job_cannot_be_reused_by_a_different_teacher() -> None:
+    now = datetime(2026, 8, 19, 10, 0, tzinfo=UTC)
+    service, _generator, _session_factory = build_service(now)
+    service.submit(
+        authoring_session_id="authoring-1",
+        teacher_id="teacher-1",
+        space_id="space-1",
+        parent_algorithm_id="parent-1",
+        suggestion_input=PlanSuggestionInput(title="", statement="实现字典查询"),
+    )
+
+    with pytest.raises(AuthorizationError, match="plan_suggestion_job_not_owned"):
+        service.submit(
+            authoring_session_id="authoring-1",
+            teacher_id="teacher-2",
+            space_id="space-1",
+            parent_algorithm_id="parent-1",
+            suggestion_input=PlanSuggestionInput(title="", statement="窃取原始任务"),
+        )
 
 
 def test_submit_returns_concurrent_winner_after_unique_insert_race() -> None:
     now = datetime(2026, 8, 19, 10, 0, tzinfo=UTC)
     winner = ClassroomPlanSuggestionJob(
         id="winner-job",
+        authoring_session_id=None,
         teacher_id="teacher-1",
         space_id="space-1",
         parent_algorithm_id="parent-1",
@@ -164,6 +251,8 @@ def test_worker_persists_only_validated_result_then_erases_teacher_input() -> No
     with session_factory() as session:
         job = session.get(ClassroomPlanSuggestionJob, submitted.job_id)
     assert job is not None
+    assert job.authoring_session_id is None
+    assert job.request_hash == submitted.input_hash
     assert job.suggestion_input == {}
     assert job.result == {
         "title": "字典课堂练习",
@@ -201,6 +290,8 @@ def test_worker_returns_a_safe_failure_after_retry_budget_and_erases_input() -> 
     with session_factory() as session:
         job = session.get(ClassroomPlanSuggestionJob, submitted.job_id)
     assert job is not None
+    assert job.authoring_session_id is None
+    assert job.request_hash == submitted.input_hash
     assert job.suggestion_input == {}
     assert job.result is None
 

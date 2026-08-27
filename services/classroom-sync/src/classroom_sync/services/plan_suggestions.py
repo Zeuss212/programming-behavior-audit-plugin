@@ -6,11 +6,11 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic import ValidationError as PydanticValidationError
 
 from classroom_sync.config import Settings
@@ -205,13 +205,43 @@ class OpenAiCompletionClient:
         return OpenAiCompletionResult(content=content, finish_reason=finish_reason)
 
 
+class MaterialSuggestionRequirement(BaseModel):
+    """One source-code-free material dimension the provider may reference by ID."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+
+    id: str = Field(min_length=1, max_length=200)
+    name: str = Field(min_length=1, max_length=500)
+    source_statement: str = Field(min_length=1, max_length=5_000)
+
+
 class PlanSuggestionInput(BaseModel):
     """The bounded teacher text that may be sent to the configured provider."""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
+    profile_kind: Literal["python_v2", "cpp_v3"] = "python_v2"
     title: str = Field(default="", max_length=200)
     statement: str = Field(min_length=1, max_length=10_000)
+    material_bundle_hash: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$"
+    )
+    material_requirements: Annotated[
+        tuple[MaterialSuggestionRequirement, ...], Field(max_length=128)
+    ] = ()
+
+    @model_validator(mode="after")
+    def validate_profile_materials(self) -> PlanSuggestionInput:
+        if self.profile_kind == "python_v2":
+            if self.material_bundle_hash is not None or self.material_requirements:
+                raise ValueError("python suggestions cannot include C++ materials")
+            return self
+        if self.material_bundle_hash is None or not self.material_requirements:
+            raise ValueError("C++ suggestions require a bounded material bundle")
+        requirement_ids = [requirement.id for requirement in self.material_requirements]
+        if len(requirement_ids) != len(set(requirement_ids)):
+            raise ValueError("C++ material requirement IDs must be unique")
+        return self
 
 
 class AutomaticEvaluationRequirement(BaseModel):
@@ -250,6 +280,12 @@ class SuggestedKnowledgePoint(BaseModel):
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
+    material_requirement_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        exclude_if=lambda value: value is None,
+    )
     name: str = Field(min_length=1, max_length=50)
     description: str = Field(min_length=1, max_length=500)
     automatic_evaluation: AutomaticEvaluation | None = None
@@ -267,6 +303,33 @@ class PlanSuggestionPayload(BaseModel):
 
     title: str = Field(min_length=1, max_length=200)
     knowledge_points: list[SuggestedKnowledgePoint] = Field(min_length=1, max_length=10)
+
+    @field_validator("title")
+    @classmethod
+    def validate_safe_title(cls, value: str) -> str:
+        return _validate_safe_plan_display_text(value)
+
+
+class _CppSuggestedKnowledgePoint(BaseModel):
+    """Strict C++ output: explanation only, linked to one supplied requirement."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    material_requirement_id: str = Field(min_length=1, max_length=200)
+    name: str = Field(min_length=1, max_length=50)
+    description: str = Field(min_length=1, max_length=500)
+
+    @field_validator("name", "description")
+    @classmethod
+    def validate_safe_display_text(cls, value: str) -> str:
+        return _validate_safe_plan_display_text(value)
+
+
+class _CppPlanSuggestionPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    title: str = Field(min_length=1, max_length=200)
+    knowledge_points: list[_CppSuggestedKnowledgePoint] = Field(min_length=1, max_length=10)
 
     @field_validator("title")
     @classmethod
@@ -340,7 +403,7 @@ class OpenAiPlanSuggestionService:
             ) from error
 
         try:
-            suggestion = self._parse_provider_suggestion(completion.content)
+            suggestion = self._parse_provider_suggestion(completion.content, suggestion_input)
         except (json.JSONDecodeError, KeyError, TypeError, PydanticValidationError, ValueError) as error:
             logger.warning(
                 "AI plan suggestion response rejected: error_type=%s",
@@ -356,7 +419,9 @@ class OpenAiPlanSuggestionService:
         )
 
     @classmethod
-    def _parse_provider_suggestion(cls, content: str) -> PlanSuggestionPayload:
+    def _parse_provider_suggestion(
+        cls, content: str, suggestion_input: PlanSuggestionInput
+    ) -> PlanSuggestionPayload:
         """Keep a usable plan when only an optional local rule is unsupported.
 
         Automatic evaluation is never executed and must pass the strict local
@@ -366,6 +431,19 @@ class OpenAiPlanSuggestionService:
         payload = json.loads(cls._strip_optional_json_fence(content))
         if not isinstance(payload, dict):
             raise TypeError("provider suggestion is not an object")
+        if suggestion_input.profile_kind == "cpp_v3":
+            cpp_payload = _CppPlanSuggestionPayload.model_validate(payload)
+            submitted_ids = {
+                requirement.id for requirement in suggestion_input.material_requirements
+            }
+            suggested_ids = [
+                point.material_requirement_id for point in cpp_payload.knowledge_points
+            ]
+            if len(suggested_ids) != len(set(suggested_ids)):
+                raise ValueError("C++ suggestion repeats a material requirement ID")
+            if not set(suggested_ids).issubset(submitted_ids):
+                raise ValueError("C++ suggestion references an unknown material requirement ID")
+            return PlanSuggestionPayload.model_validate(cpp_payload.model_dump())
 
         knowledge_points = payload.get("knowledge_points")
         if not isinstance(knowledge_points, list):
@@ -409,6 +487,35 @@ class OpenAiPlanSuggestionService:
         *,
         include_automatic_evaluation: bool,
     ) -> list[dict[str, str]]:
+        if suggestion_input.profile_kind == "cpp_v3":
+            system_content = (
+                "你是 C++ 课堂教学设计助手。只返回一个 JSON 对象，不要 Markdown。"
+                "对象只能含 title 和 knowledge_points；knowledge_points 是 1 到 10 项，"
+                "每项只能含 material_requirement_id、name 和 description。"
+                "material_requirement_id 必须引用用户消息中的现有要求 ID，且不得重复。"
+                "不得生成测试、源代码、检测器或 provider 元数据。"
+                "内容必须是教师可继续编辑的简洁中文课堂方案草稿。"
+            )
+            return [
+                {"role": "system", "content": system_content},
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "profile_kind": suggestion_input.profile_kind,
+                            "title": suggestion_input.title,
+                            "statement": suggestion_input.statement,
+                            "material_bundle_hash": suggestion_input.material_bundle_hash,
+                            "material_requirements": [
+                                requirement.model_dump(mode="json")
+                                for requirement in suggestion_input.material_requirements
+                            ],
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ]
+
         system_content = (
             "你是课堂教学设计助手。只返回一个 JSON 对象，不要 Markdown。"
             "对象必须含 title 和 knowledge_points；knowledge_points 是 1 到 10 项，"

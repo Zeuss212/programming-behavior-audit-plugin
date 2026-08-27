@@ -17,7 +17,7 @@ from classroom_sync.errors import (
     NotFoundError,
     UpstreamUnavailableError,
 )
-from classroom_sync.models import PlanAuthoringSession
+from classroom_sync.models import ClassroomPlanSuggestionJob, PlanAuthoringSession
 from classroom_sync.repositories import ClassroomRepository
 from classroom_sync.services.plan_suggestion_jobs import (
     PlanSuggestionJobService,
@@ -153,9 +153,12 @@ class PlanAuthoringService:
             )
             if authoring.status == "open":
                 if authoring.suggestion_job_id is not None:
+                    self._linked_job(repository, authoring, for_update=True)
                     self._suggestion_jobs.cancel_for_authoring_session(
                         authoring.id,
                         teacher_id=teacher_id,
+                        space_id=authoring.space_id,
+                        parent_algorithm_id=authoring.parent_algorithm_id,
                         session=session,
                     )
                 authoring.status = "abandoned"
@@ -202,20 +205,7 @@ class PlanAuthoringService:
         )
         if authoring.suggestion_job_id is not None:
             if suggestion_job is None:
-                job_model = repository.get_plan_suggestion_job(
-                    authoring.suggestion_job_id
-                )
-                if job_model is None:
-                    raise UpstreamUnavailableError(
-                        "plan_authoring_suggestion_job_missing", retryable=False
-                    )
-                if (
-                    job_model.teacher_id != authoring.teacher_id
-                    or job_model.authoring_session_id != authoring.id
-                ):
-                    raise UpstreamUnavailableError(
-                        "plan_authoring_suggestion_job_invalid", retryable=False
-                    )
+                job_model = cls._linked_job(repository, authoring)
                 suggestion_job = PlanSuggestionJobService.snapshot_for_model(job_model)
             suggestion = cls._suggestion_snapshot(suggestion_job)
         return PlanAuthoringSnapshot(
@@ -226,6 +216,34 @@ class PlanAuthoringService:
             draft_id=None if draft is None else draft.id,
             suggestion=suggestion,
         )
+
+    @staticmethod
+    def _linked_job(
+        repository: ClassroomRepository,
+        authoring: PlanAuthoringSession,
+        *,
+        for_update: bool = False,
+    ) -> ClassroomPlanSuggestionJob:
+        job_id = authoring.suggestion_job_id
+        if job_id is None:
+            raise UpstreamUnavailableError(
+                "plan_authoring_suggestion_job_missing", retryable=False
+            )
+        job = repository.get_plan_suggestion_job(job_id, for_update=for_update)
+        if job is None:
+            raise UpstreamUnavailableError(
+                "plan_authoring_suggestion_job_missing", retryable=False
+            )
+        if (
+            job.teacher_id != authoring.teacher_id
+            or job.space_id != authoring.space_id
+            or job.parent_algorithm_id != authoring.parent_algorithm_id
+            or job.authoring_session_id != authoring.id
+        ):
+            raise UpstreamUnavailableError(
+                "plan_authoring_suggestion_job_invalid", retryable=False
+            )
+        return job
 
     @staticmethod
     def _suggestion_snapshot(

@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from classroom_sync.errors import AuthorizationError
+from classroom_sync.errors import AuthorizationError, UpstreamUnavailableError
 from classroom_sync.models import Base, ClassroomPlanSuggestionJob, PlanAuthoringSession
 from classroom_sync.services.plan_authoring import PlanAuthoringService
 from classroom_sync.services.plan_suggestion_jobs import PlanSuggestionJobService
@@ -215,6 +215,37 @@ def test_first_suggestion_request_links_one_job_and_public_input_hash() -> None:
     assert job.authoring_session_id == opened.authoring_session_id
 
 
+def test_first_suggestion_request_adopts_a_compatible_legacy_active_job() -> None:
+    now = datetime(2026, 8, 27, 9, 0, tzinfo=UTC)
+    service, jobs, _generator, session_factory = build_services(now)
+    opened = service.create_or_return_open(
+        teacher_id="teacher-1", space_id="space-1", parent_algorithm_id="parent-1"
+    )
+    legacy = jobs.submit(
+        teacher_id="teacher-1",
+        space_id="space-1",
+        parent_algorithm_id="parent-1",
+        suggestion_input=PlanSuggestionInput(title="", statement="实现字典查询"),
+    )
+
+    requested = service.request_suggestion(
+        opened.authoring_session_id,
+        teacher_id="teacher-1",
+        suggestion_input=PlanSuggestionInput(title="", statement="实现字典查询"),
+    )
+
+    assert requested.suggestion.job_id == legacy.job_id
+    assert requested.suggestion.input_hash == legacy.input_hash
+    with session_factory() as session:
+        authoring = session.get(PlanAuthoringSession, opened.authoring_session_id)
+        persisted_jobs = list(session.scalars(select(ClassroomPlanSuggestionJob)))
+    assert authoring is not None
+    assert authoring.suggestion_job_id == legacy.job_id
+    assert len(persisted_jobs) == 1
+    assert persisted_jobs[0].authoring_session_id == opened.authoring_session_id
+    assert persisted_jobs[0].suggestion_input["statement"] == "实现字典查询"
+
+
 def test_duplicate_request_with_different_text_recovers_the_original_job_and_hash() -> None:
     now = datetime(2026, 8, 27, 9, 0, tzinfo=UTC)
     service, _jobs, _generator, session_factory = build_services(now)
@@ -296,6 +327,72 @@ def test_terminal_failure_consumes_the_session_attempt() -> None:
     assert recovered.suggestion.job_id == first.suggestion.job_id
     assert recovered.suggestion.failure_code == "ai_suggestion_response_invalid"
     assert generator.calls == []
+
+
+@pytest.mark.parametrize("operation", ["request", "abandon"])
+@pytest.mark.parametrize("mismatch", ["space", "parent"])
+def test_linked_job_scope_mismatch_is_rejected_without_mutation(
+    operation: str, mismatch: str
+) -> None:
+    now = datetime(2026, 8, 27, 9, 0, tzinfo=UTC)
+    service, _jobs, _generator, session_factory = build_services(now)
+    opened = service.create_or_return_open(
+        teacher_id="teacher-1", space_id="space-1", parent_algorithm_id="parent-1"
+    )
+    with session_factory.begin() as session:
+        job = ClassroomPlanSuggestionJob(
+            id=f"mismatched-{operation}-{mismatch}",
+            authoring_session_id=opened.authoring_session_id,
+            teacher_id="teacher-1",
+            space_id="space-2" if mismatch == "space" else "space-1",
+            parent_algorithm_id="parent-2" if mismatch == "parent" else "parent-1",
+            request_hash="c" * 64,
+            suggestion_input={
+                "profile_kind": "python_v2",
+                "title": "",
+                "statement": "不得读取或清理的原始输入",
+                "material_bundle_hash": None,
+                "material_requirements": [],
+            },
+            result=None,
+            run_at=now,
+            status="pending",
+            active_slot=1,
+            lease_owner=None,
+            lease_expires_at=None,
+            attempts=0,
+            failure_code=None,
+            completed_at=None,
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(job)
+        authoring = session.get(PlanAuthoringSession, opened.authoring_session_id)
+        assert authoring is not None
+        authoring.suggestion_job_id = job.id
+
+    with pytest.raises(
+        UpstreamUnavailableError, match="plan_authoring_suggestion_job_invalid"
+    ):
+        if operation == "request":
+            service.request_suggestion(
+                opened.authoring_session_id,
+                teacher_id="teacher-1",
+                suggestion_input=PlanSuggestionInput(title="", statement="忽略的重试"),
+            )
+        else:
+            service.abandon(opened.authoring_session_id, teacher_id="teacher-1")
+
+    with session_factory() as session:
+        authoring = session.get(PlanAuthoringSession, opened.authoring_session_id)
+        persisted_job = session.get(
+            ClassroomPlanSuggestionJob, f"mismatched-{operation}-{mismatch}"
+        )
+    assert authoring is not None
+    assert authoring.status == "open"
+    assert persisted_job is not None
+    assert persisted_job.status == "pending"
+    assert persisted_job.suggestion_input["statement"] == "不得读取或清理的原始输入"
 
 
 @pytest.mark.parametrize("operation", ["request", "abandon"])

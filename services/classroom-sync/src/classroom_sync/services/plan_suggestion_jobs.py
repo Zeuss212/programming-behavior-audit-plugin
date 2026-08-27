@@ -11,11 +11,16 @@ from typing import Literal, Protocol
 from uuid import uuid4
 
 from pydantic import ValidationError as PydanticValidationError
-from sqlalchemy import or_, select
+from sqlalchemy import Select, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
-from classroom_sync.errors import AuthorizationError, NotFoundError, UpstreamUnavailableError
+from classroom_sync.errors import (
+    AuthorizationError,
+    ConflictError,
+    NotFoundError,
+    UpstreamUnavailableError,
+)
 from classroom_sync.models import ClassroomPlanSuggestionJob
 from classroom_sync.services.plan_suggestions import (
     PlanSuggestion,
@@ -140,6 +145,26 @@ class PlanSuggestionJobService:
             )
             return self._snapshot(existing)
 
+        if authoring_session_id is not None:
+            legacy = session.scalar(
+                self._active_request_statement(
+                    teacher_id=teacher_id,
+                    space_id=space_id,
+                    parent_algorithm_id=parent_algorithm_id,
+                    request_hash=request_hash,
+                    unlinked_only=True,
+                ).with_for_update()
+            )
+            if legacy is not None:
+                return self._adopt_legacy_job(
+                    session,
+                    legacy,
+                    authoring_session_id=authoring_session_id,
+                    teacher_id=teacher_id,
+                    space_id=space_id,
+                    parent_algorithm_id=parent_algorithm_id,
+                )
+
         job = ClassroomPlanSuggestionJob(
             id=str(uuid4()),
             authoring_session_id=authoring_session_id,
@@ -165,20 +190,67 @@ class PlanSuggestionJobService:
                 session.add(job)
                 session.flush()
         except IntegrityError:
-            winner_statement = select(ClassroomPlanSuggestionJob)
             if authoring_session_id is not None:
-                winner_statement = winner_statement.where(
-                    ClassroomPlanSuggestionJob.authoring_session_id == authoring_session_id
+                winner = session.scalar(
+                    select(ClassroomPlanSuggestionJob)
+                    .where(
+                        ClassroomPlanSuggestionJob.authoring_session_id
+                        == authoring_session_id
+                    )
+                    .with_for_update()
                 )
+                if winner is not None:
+                    self._verify_owner_scope(
+                        winner,
+                        teacher_id=teacher_id,
+                        space_id=space_id,
+                        parent_algorithm_id=parent_algorithm_id,
+                    )
+                    return self._snapshot(winner)
+
+                legacy = session.scalar(
+                    self._active_request_statement(
+                        teacher_id=teacher_id,
+                        space_id=space_id,
+                        parent_algorithm_id=parent_algorithm_id,
+                        request_hash=request_hash,
+                        unlinked_only=True,
+                    ).with_for_update()
+                )
+                if legacy is not None:
+                    return self._adopt_legacy_job(
+                        session,
+                        legacy,
+                        authoring_session_id=authoring_session_id,
+                        teacher_id=teacher_id,
+                        space_id=space_id,
+                        parent_algorithm_id=parent_algorithm_id,
+                    )
+
+                collision = session.scalar(
+                    self._active_request_statement(
+                        teacher_id=teacher_id,
+                        space_id=space_id,
+                        parent_algorithm_id=parent_algorithm_id,
+                        request_hash=request_hash,
+                        unlinked_only=False,
+                        active_status_only=False,
+                    ).with_for_update()
+                )
+                if collision is not None:
+                    raise ConflictError("plan_suggestion_active_request_conflict")
+                raise
             else:
-                winner_statement = winner_statement.where(
-                    ClassroomPlanSuggestionJob.teacher_id == teacher_id,
-                    ClassroomPlanSuggestionJob.space_id == space_id,
-                    ClassroomPlanSuggestionJob.parent_algorithm_id == parent_algorithm_id,
-                    ClassroomPlanSuggestionJob.request_hash == request_hash,
-                    ClassroomPlanSuggestionJob.active_slot == 1,
+                winner = session.scalar(
+                    select(ClassroomPlanSuggestionJob).where(
+                        ClassroomPlanSuggestionJob.teacher_id == teacher_id,
+                        ClassroomPlanSuggestionJob.space_id == space_id,
+                        ClassroomPlanSuggestionJob.parent_algorithm_id
+                        == parent_algorithm_id,
+                        ClassroomPlanSuggestionJob.request_hash == request_hash,
+                        ClassroomPlanSuggestionJob.active_slot == 1,
+                    )
                 )
-            winner = session.scalar(winner_statement)
             if winner is None:
                 raise
             self._verify_owner_scope(
@@ -204,6 +276,8 @@ class PlanSuggestionJobService:
         authoring_session_id: str,
         *,
         teacher_id: str,
+        space_id: str,
+        parent_algorithm_id: str,
         session: Session,
     ) -> None:
         """Make an abandoned session's unfinished job terminal and source-free."""
@@ -215,8 +289,14 @@ class PlanSuggestionJobService:
         )
         if job is None:
             return
-        if job.teacher_id != teacher_id:
+        if job.authoring_session_id != authoring_session_id:
             raise AuthorizationError("plan_suggestion_job_not_owned")
+        self._verify_owner_scope(
+            job,
+            teacher_id=teacher_id,
+            space_id=space_id,
+            parent_algorithm_id=parent_algorithm_id,
+        )
         if job.status in {"ready", "failed"}:
             return
         now = self._utc_now()
@@ -252,6 +332,75 @@ class PlanSuggestionJobService:
             or job.parent_algorithm_id != parent_algorithm_id
         ):
             raise AuthorizationError("plan_suggestion_job_not_owned")
+
+    @staticmethod
+    def _active_request_statement(
+        *,
+        teacher_id: str,
+        space_id: str,
+        parent_algorithm_id: str,
+        request_hash: str,
+        unlinked_only: bool,
+        active_status_only: bool = True,
+    ) -> Select[tuple[ClassroomPlanSuggestionJob]]:
+        statement = select(ClassroomPlanSuggestionJob).where(
+            ClassroomPlanSuggestionJob.teacher_id == teacher_id,
+            ClassroomPlanSuggestionJob.space_id == space_id,
+            ClassroomPlanSuggestionJob.parent_algorithm_id == parent_algorithm_id,
+            ClassroomPlanSuggestionJob.request_hash == request_hash,
+            ClassroomPlanSuggestionJob.active_slot == 1,
+        )
+        if active_status_only:
+            statement = statement.where(
+                ClassroomPlanSuggestionJob.status.in_(("pending", "leased"))
+            )
+        if unlinked_only:
+            statement = statement.where(
+                ClassroomPlanSuggestionJob.authoring_session_id.is_(None)
+            )
+        return statement
+
+    def _adopt_legacy_job(
+        self,
+        session: Session,
+        job: ClassroomPlanSuggestionJob,
+        *,
+        authoring_session_id: str,
+        teacher_id: str,
+        space_id: str,
+        parent_algorithm_id: str,
+    ) -> PlanSuggestionJobSnapshot:
+        self._verify_owner_scope(
+            job,
+            teacher_id=teacher_id,
+            space_id=space_id,
+            parent_algorithm_id=parent_algorithm_id,
+        )
+        if job.authoring_session_id is not None:
+            raise ConflictError("plan_suggestion_active_request_conflict")
+        try:
+            with session.begin_nested():
+                job.authoring_session_id = authoring_session_id
+                session.flush()
+        except IntegrityError:
+            winner = session.scalar(
+                select(ClassroomPlanSuggestionJob)
+                .where(
+                    ClassroomPlanSuggestionJob.authoring_session_id
+                    == authoring_session_id
+                )
+                .with_for_update()
+            )
+            if winner is None:
+                raise ConflictError("plan_suggestion_active_request_conflict")
+            self._verify_owner_scope(
+                winner,
+                teacher_id=teacher_id,
+                space_id=space_id,
+                parent_algorithm_id=parent_algorithm_id,
+            )
+            return self._snapshot(winner)
+        return self._snapshot(job)
 
     def claim_due_jobs(
         self, worker_id: str, now: datetime | None = None

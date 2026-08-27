@@ -24,7 +24,10 @@
     "space_id": {"type": "string", "minLength": 1, "maxLength": 128},
     "parent_algorithm_id": {"type": "string", "minLength": 1, "maxLength": 128},
     "profile": {
-      "$ref": "https://classroom.local/plugin/api-schemas/profile-version-v2.json"
+      "oneOf": [
+        {"$ref": "https://classroom.local/plugin/api-schemas/profile-version-v2.json"},
+        {"$ref": "https://classroom.local/plugin/api-schemas/profile-version-v3.json"}
+      ]
     },
     "content_hash": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/sha256"},
     "scheduled_start_at": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/timestamp"},

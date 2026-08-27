@@ -1,0 +1,243 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "C++ assessment profile draft v3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "problem_id",
+    "title",
+    "problem_context",
+    "starter_source",
+    "knowledge_points",
+    "assessment_tests",
+    "dimensions",
+    "confirmations"
+  ],
+  "properties": {
+    "schema_version": {"const": 3},
+    "problem_id": {"type": "string", "minLength": 1, "maxLength": 200},
+    "title": {"type": "string", "minLength": 1, "maxLength": 200},
+    "problem_context": {"$ref": "#/$defs/problem_context"},
+    "starter_source": {"$ref": "#/$defs/starter_source"},
+    "knowledge_points": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 10,
+      "items": {"$ref": "#/$defs/knowledge_point"}
+    },
+    "assessment_tests": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 30,
+      "items": {"$ref": "#/$defs/assessment_test"}
+    },
+    "dimensions": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 10,
+      "items": {"$ref": "#/$defs/dimension"}
+    },
+    "confirmations": {"$ref": "#/$defs/confirmations"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "knowledge_point_id": {"type": "string", "pattern": "^KP_[A-Z0-9]{8}$"},
+    "assessment_test_id": {"type": "string", "pattern": "^TEST_[A-Z0-9]{8}$"},
+    "criterion_id": {"type": "string", "pattern": "^CRIT_[A-Z0-9]{8}$"},
+    "material_requirement_id": {
+      "type": "string",
+      "pattern": "^REQ_[A-Z0-9_]{1,80}$"
+    },
+    "problem_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "statement",
+        "language",
+        "submission_contract",
+        "toolchain_profile",
+        "entry_file",
+        "source_encoding"
+      ],
+      "properties": {
+        "statement": {"type": "string", "minLength": 1, "maxLength": 10000},
+        "language": {"const": "cpp"},
+        "submission_contract": {"$ref": "#/$defs/submission_contract"},
+        "toolchain_profile": {"const": "cpp17_stdio_v1"},
+        "entry_file": {
+          "type": "string",
+          "pattern": "^[^/\\\\\u0000]{1,120}\\.(?:cpp|cc|cxx)$"
+        },
+        "source_encoding": {"const": "utf-8"}
+      }
+    },
+    "submission_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {"kind": {"const": "stdin_stdout"}}
+    },
+    "starter_source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_id", "display_name", "file_name", "sha256", "size_bytes", "source"],
+      "properties": {
+        "artifact_id": {"type": "string", "pattern": "^ART_[A-Z0-9_]{1,80}$"},
+        "display_name": {"type": "string", "minLength": 1, "maxLength": 200},
+        "file_name": {"type": "string", "minLength": 1, "maxLength": 200},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "size_bytes": {"type": "integer", "minimum": 1, "maximum": 10485760},
+        "source": {"const": "fincolab_experiment"}
+      }
+    },
+    "knowledge_point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "material_requirement_id", "name", "description", "source", "order"],
+      "properties": {
+        "id": {"$ref": "#/$defs/knowledge_point_id"},
+        "material_requirement_id": {"$ref": "#/$defs/material_requirement_id"},
+        "name": {"type": "string", "minLength": 1, "maxLength": 80},
+        "description": {"type": "string", "minLength": 1, "maxLength": 500},
+        "source": {"enum": ["teacher", "ai_suggestion"]},
+        "order": {"type": "integer", "minimum": 0, "maximum": 9}
+      }
+    },
+    "assessment_test": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "knowledge_point_ids",
+        "criterion_ids",
+        "kind",
+        "input",
+        "expected_stdout",
+        "comparison",
+        "timeout_ms",
+        "enabled",
+        "source",
+        "order",
+        "content_hash"
+      ],
+      "properties": {
+        "id": {"$ref": "#/$defs/assessment_test_id"},
+        "name": {"type": "string", "minLength": 1, "maxLength": 120},
+        "knowledge_point_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/knowledge_point_id"}
+        },
+        "criterion_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/criterion_id"}
+        },
+        "kind": {"const": "stdin_stdout"},
+        "input": {"type": "string", "maxLength": 4000},
+        "expected_stdout": {"type": "string", "maxLength": 4000},
+        "comparison": {"const": "normalized_text_v1"},
+        "timeout_ms": {"type": "integer", "minimum": 100, "maximum": 10000},
+        "enabled": {"type": "boolean"},
+        "source": {"enum": ["teacher", "ai_suggestion"]},
+        "order": {"type": "integer", "minimum": 0, "maximum": 29},
+        "content_hash": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "dimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "knowledge_point_id",
+        "name",
+        "question",
+        "evidence_criteria",
+        "verification_bindings",
+        "analysis_config"
+      ],
+      "properties": {
+        "knowledge_point_id": {"$ref": "#/$defs/knowledge_point_id"},
+        "name": {"type": "string", "minLength": 1, "maxLength": 80},
+        "question": {"type": "string", "minLength": 1, "maxLength": 500},
+        "evidence_criteria": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": {"$ref": "#/$defs/evidence_criterion"}
+        },
+        "verification_bindings": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 30,
+          "items": {"$ref": "#/$defs/verification_binding"}
+        },
+        "analysis_config": {"$ref": "#/$defs/analysis_config"}
+      }
+    },
+    "evidence_criterion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "material_requirement_id", "statement", "required"],
+      "properties": {
+        "id": {"$ref": "#/$defs/criterion_id"},
+        "material_requirement_id": {"$ref": "#/$defs/material_requirement_id"},
+        "statement": {"type": "string", "minLength": 1, "maxLength": 500},
+        "required": {"type": "boolean"}
+      }
+    },
+    "verification_binding": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["criterion_id", "kind", "assessment_test_id"],
+          "properties": {
+            "criterion_id": {"$ref": "#/$defs/criterion_id"},
+            "kind": {"const": "assessment_test"},
+            "assessment_test_id": {"$ref": "#/$defs/assessment_test_id"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["criterion_id", "kind", "detector_profile_id"],
+          "properties": {
+            "criterion_id": {"$ref": "#/$defs/criterion_id"},
+            "kind": {"const": "detector_profile"},
+            "detector_profile_id": {"const": "address_undefined_leak_v1"}
+          }
+        }
+      ]
+    },
+    "analysis_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {"mode": {"const": "evidence_binding"}}
+    },
+    "confirmations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "material_bundle_hash",
+        "starter_source_hash",
+        "knowledge_points_hash",
+        "dimensions_hash",
+        "tests_hash"
+      ],
+      "properties": {
+        "material_bundle_hash": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "starter_source_hash": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "knowledge_points_hash": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "dimensions_hash": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "tests_hash": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}

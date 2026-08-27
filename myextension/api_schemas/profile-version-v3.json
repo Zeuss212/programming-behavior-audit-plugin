@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Published C++ assessment profile version v3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "profile_id",
+    "version",
+    "problem_id",
+    "title",
+    "problem_context",
+    "starter_source",
+    "knowledge_points",
+    "assessment_tests",
+    "dimensions",
+    "confirmations",
+    "content_hash",
+    "deployment_status",
+    "preview_status"
+  ],
+  "properties": {
+    "schema_version": {"$ref": "profile-draft-v3.json#/properties/schema_version"},
+    "profile_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
+    "version": {"type": "integer", "minimum": 1},
+    "problem_id": {"$ref": "profile-draft-v3.json#/properties/problem_id"},
+    "title": {"$ref": "profile-draft-v3.json#/properties/title"},
+    "problem_context": {"$ref": "profile-draft-v3.json#/properties/problem_context"},
+    "starter_source": {"$ref": "profile-draft-v3.json#/properties/starter_source"},
+    "knowledge_points": {"$ref": "profile-draft-v3.json#/properties/knowledge_points", "minItems": 1},
+    "assessment_tests": {"$ref": "profile-draft-v3.json#/properties/assessment_tests", "minItems": 1},
+    "dimensions": {"$ref": "profile-draft-v3.json#/properties/dimensions", "minItems": 1},
+    "confirmations": {"$ref": "#/$defs/published_confirmations"},
+    "content_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "deployment_status": {"const": "pilot"},
+    "preview_status": {"enum": ["pending_real_samples", "completed"]}
+  },
+  "$defs": {
+    "published_confirmations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "material_bundle_hash",
+        "starter_source_hash",
+        "knowledge_points_hash",
+        "dimensions_hash",
+        "tests_hash"
+      ],
+      "properties": {
+        "material_bundle_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "starter_source_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "knowledge_points_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "dimensions_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "tests_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}

@@ -7,6 +7,7 @@ from jsonschema import Draft202012Validator, ValidationError
 from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
 
+from myextension.tests.profile_v3_fixtures import profile_v3_draft, profile_v3_version
 from myextension.schema_registry import schema_path, validate_schema
 
 
@@ -80,6 +81,71 @@ def _profile_version(**overrides):
     }
     payload.update(overrides)
     return payload
+
+
+def _profile_v2_draft() -> dict[str, object]:
+    """The frozen minimal v2 payload must remain independently valid."""
+    return {
+        "schema_version": 2,
+        "problem_id": "dictionary-basics",
+        "title": "字典数据结构",
+        "problem_context": {
+            "statement": "实现一个字典读取函数。",
+            "language": "python",
+            "submission_contract": {"kind": "stdin_stdout"},
+        },
+        "knowledge_points": [],
+        "assessment_tests": [],
+        "confirmations": {"knowledge_points_hash": None, "tests_hash": None},
+        "dimensions": [],
+    }
+
+
+def test_profile_v3_accepts_the_complete_linked_list_contract():
+    """Removing any frozen v3 field must reject the real linked-list profile."""
+    validate_schema("profile-draft-v3", profile_v3_draft())
+    validate_schema("profile-version-v3", profile_v3_version())
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda payload: payload["problem_context"].update({"language": "python"}),
+        lambda payload: payload["problem_context"].update({"entry_file": "../main.cpp"}),
+        lambda payload: payload["problem_context"].update({"source_encoding": "gb18030"}),
+        lambda payload: payload["assessment_tests"][0].update({"kind": "function_call"}),
+        lambda payload: payload["assessment_tests"][0].update({"comparison": "semantic_match"}),
+        lambda payload: payload["assessment_tests"][0].update({"timeout_ms": 99}),
+        lambda payload: payload["assessment_tests"][0].update({"timeout_ms": 10001}),
+        lambda payload: payload["starter_source"].update({"sha256": "not-a-sha"}),
+        lambda payload: payload["knowledge_points"][0].update({"material_requirement_id": "unknown"}),
+        lambda payload: payload.update({"extra": True}),
+    ],
+    ids=[
+        "language",
+        "entry-file",
+        "source-encoding",
+        "function-call",
+        "comparison",
+        "timeout-too-small",
+        "timeout-too-large",
+        "sha",
+        "requirement-reference",
+        "extra-property",
+    ],
+)
+def test_profile_v3_rejects_unsafe_or_unknown_contract_values(mutate):
+    """Unrecognized C++ execution contract values must not reach publication."""
+    payload = profile_v3_draft()
+    mutate(payload)
+
+    with pytest.raises(ValidationError):
+        validate_schema("profile-draft-v3", payload)
+
+
+def test_profile_v2_contract_remains_unchanged():
+    """Adding C++ v3 must not change the established Python v2 profile contract."""
+    validate_schema("profile-draft-v2", _profile_v2_draft())
 
 
 def test_profile_draft_accepts_teacher_language_fields():

@@ -10,7 +10,12 @@ from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
 
 PLUGIN_SCHEMA_BASE_URI = "https://classroom.local/plugin/api-schemas/"
-PROFILE_SCHEMA_FILENAMES = ("profile-draft-v2.json", "profile-version-v2.json")
+PROFILE_SCHEMA_FILENAMES = (
+    "profile-draft-v2.json",
+    "profile-version-v2.json",
+    "profile-draft-v3.json",
+    "profile-version-v3.json",
+)
 
 
 class ClassroomSchemaRegistry:

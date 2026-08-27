@@ -337,8 +337,8 @@ def _add_duplicate_material_requirement_mapping(payload):
     )
 
 
-def _set_test_field_and_rehash(payload, field, value):
-    assessment_test = payload["assessment_tests"][0]
+def _set_test_field_and_rehash(payload, field, value, *, index=0):
+    assessment_test = payload["assessment_tests"][index]
     assessment_test[field] = value
     assessment_test["content_hash"] = sha256_json(
         {
@@ -384,6 +384,79 @@ def _add_test_knowledge_mismatch(payload):
             "analysis_config": {"mode": "evidence_binding"},
         }
     )
+
+
+def _add_second_point_with_detector_binding(payload):
+    payload["knowledge_points"].append(
+        {
+            "id": "KP_ABCDEFGH",
+            "material_requirement_id": "REQ_SECOND",
+            "name": "第二知识点",
+            "description": "用于验证测试与知识点的关系。",
+            "source": "teacher",
+            "order": 1,
+        }
+    )
+    payload["dimensions"].append(
+        {
+            "knowledge_point_id": "KP_ABCDEFGH",
+            "name": "第二知识点",
+            "question": "此维度只由检测器验证。",
+            "evidence_criteria": [
+                {
+                    "id": "CRIT_ABCDEFGH",
+                    "material_requirement_id": "REQ_SECOND",
+                    "statement": "第二知识点的证据必须关联本知识点。",
+                    "required": False,
+                }
+            ],
+            "verification_bindings": [
+                {
+                    "criterion_id": "CRIT_ABCDEFGH",
+                    "kind": "detector_profile",
+                    "detector_profile_id": "address_undefined_leak_v1",
+                }
+            ],
+            "analysis_config": {"mode": "evidence_binding"},
+        }
+    )
+
+
+def _add_unbound_test_cross_point_criterion(payload):
+    _add_second_point_with_detector_binding(payload)
+    _set_test_field_and_rehash(
+        payload, "criterion_ids", ["CRIT_ABCDEFGH"], index=1
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutate", "code"),
+    [
+        (
+            lambda payload: _set_test_field_and_rehash(
+                payload, "criterion_ids", ["CRIT_ABCDEFGH"], index=1
+            ),
+            "unknown_assessment_test_criterion_reference",
+        ),
+        (
+            lambda payload: _add_unbound_test_cross_point_criterion(payload),
+            "assessment_test_criterion_knowledge_point_mismatch",
+        ),
+    ],
+    ids=["unknown-unbound-test-criterion", "cross-point-unbound-test-criterion"],
+)
+def test_v3_rejects_every_assessment_test_criterion_reference(
+    tmp_path, mutate, code
+):
+    """Test criteria must resolve to an existing criterion for the same point."""
+    payload = profile_v3_draft()
+    mutate(payload)
+    payload["confirmations"] = {key: None for key in payload["confirmations"]}
+
+    with pytest.raises(ProfileValidationError) as caught:
+        DimensionProfileStore(tmp_path).create_draft(payload)
+
+    assert caught.value.code == code
 
 
 @pytest.mark.parametrize(

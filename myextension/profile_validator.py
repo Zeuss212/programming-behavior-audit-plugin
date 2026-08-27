@@ -531,6 +531,22 @@ def _validate_v3_profile_relationships(normalized: dict[str, Any]) -> None:
             )
 
     for assessment_test in assessment_tests:
+        for criterion_id in assessment_test["criterion_ids"]:
+            criterion_record = criteria_by_id.get(criterion_id)
+            if criterion_record is None:
+                raise ProfileValidationError(
+                    "unknown_assessment_test_criterion_reference",
+                    "An assessment test references an unknown criterion.",
+                    field="assessment_tests",
+                )
+            if criterion_record[0] not in assessment_test["knowledge_point_ids"]:
+                raise ProfileValidationError(
+                    "assessment_test_criterion_knowledge_point_mismatch",
+                    "An assessment test criterion must belong to one of its knowledge points.",
+                    field="assessment_tests",
+                )
+
+    for assessment_test in assessment_tests:
         if assessment_test["content_hash"] != assessment_test_content_hash(assessment_test):
             raise ProfileValidationError(
                 "stale_assessment_test_content_hash",

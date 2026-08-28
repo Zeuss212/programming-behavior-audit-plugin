@@ -5,9 +5,10 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
-from sqlalchemy import create_engine, event, inspect, text
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError
 
+from classroom_sync.db import create_database_engine
 from classroom_sync.models import (
     Base,
     ClassroomBriefAnalysisJob,
@@ -257,13 +258,8 @@ def test_core_migration_round_trip_and_uniqueness(tmp_path: Path):
 
 
 def test_plan_draft_plan_id_requires_an_existing_plan_series():
-    """Direct draft writes cannot bypass the required plan-series lineage."""
-    engine = create_engine("sqlite://")
-
-    @event.listens_for(engine, "connect")
-    def enable_foreign_keys(dbapi_connection, _connection_record) -> None:
-        dbapi_connection.execute("PRAGMA foreign_keys = ON")
-
+    """The production SQLite engine rejects drafts whose plan series is absent."""
+    engine = create_database_engine("sqlite://")
     Base.metadata.create_all(engine)
     now = datetime(2026, 8, 29, 8, 0, tzinfo=UTC)
     tables = Base.metadata.tables
@@ -273,25 +269,28 @@ def test_plan_draft_plan_id_requires_an_existing_plan_series():
     }
     assert plan_id_foreign_keys == {"plan_series.id"}
 
-    with engine.connect() as connection, pytest.raises(IntegrityError):
-        connection.execute(
-            tables["plan_drafts"].insert(),
-            {
-                "id": "orphan-draft",
-                "profile_id": "orphan-profile",
-                "space_id": "space-1",
-                "parent_algorithm_id": "parent-1",
-                "title": "Orphan direct draft",
-                "profile": {"schema_version": 2},
-                "scheduled_start_at": now,
-                "scheduled_end_at": now,
-                "ai_policy": "prohibited",
-                "revision": 0,
-                "teacher_id": "teacher-1",
-                "created_at": now,
-                "updated_at": now,
-            },
-        )
+    with engine.connect() as connection:
+        assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
+        with pytest.raises(IntegrityError):
+            connection.execute(
+                tables["plan_drafts"].insert(),
+                {
+                    "id": "orphan-draft",
+                    "plan_id": "missing-series",
+                    "profile_id": "orphan-profile",
+                    "space_id": "space-1",
+                    "parent_algorithm_id": "parent-1",
+                    "title": "Orphan direct draft",
+                    "profile": {"schema_version": 2},
+                    "scheduled_start_at": now,
+                    "scheduled_end_at": now,
+                    "ai_policy": "prohibited",
+                    "revision": 0,
+                    "teacher_id": "teacher-1",
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
 
 
 def test_analysis_job_migration_has_one_source_brief_idempotency_key(tmp_path: Path):

@@ -193,3 +193,87 @@ Both exited 0 with no output. They are rerun after the report and before commit.
 - Downgrade retains the existing duplicate-profile safety refusal and now removes the
   named FK before dropping `plan_id`.
 - No push, merge, deploy, external write, or real migration was performed.
+
+## Final re-review fix: enforce SQLite runtime foreign keys
+
+### Verified finding
+
+The first final-fix test installed its own SQLite connect listener, while production
+`create_database_engine()` returned an engine with `PRAGMA foreign_keys = 0`.
+Consequently, actual SQLite runtime connections could ignore the new restrictive
+`PlanDraft.plan_id` foreign key. The finding was reproduced before implementation.
+
+### TDD RED
+
+The test was changed to create its engine only through production
+`create_database_engine("sqlite://")`, with no test-local listener. It asserts the
+runtime pragma and uses an explicit nonexistent `plan_id`, so NOT NULL cannot mask a
+disabled-FK defect.
+
+Command:
+
+```text
+UV_CACHE_DIR=/private/tmp/classroom-sync-uv-cache uv run --frozen --extra dev pytest tests/integration/test_migrations.py -q -k 'plan_draft_plan_id_requires'
+```
+
+Expected RED:
+
+```text
+assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
+E AssertionError: assert 0 == 1
+1 failed, 8 deselected in 0.17s
+```
+
+### Minimal implementation and GREEN
+
+`create_database_engine()` now registers a SQLAlchemy `connect` listener only when
+`engine.dialect.name == "sqlite"`. The listener executes
+`PRAGMA foreign_keys = ON` for every DBAPI connection from that engine. PostgreSQL and
+other dialects do not register or execute the SQLite listener, leaving their engine
+construction unchanged apart from the existing `pool_pre_ping=True`.
+
+The same focused command after implementation:
+
+```text
+. [100%]
+1 passed, 8 deselected in 0.12s
+```
+
+The test then reaches the explicit orphan insert and observes `IntegrityError` without
+any test-local event handler.
+
+### Fresh verification
+
+```text
+pytest -q
+312 passed, 4 warnings in 2.44s
+
+ruff check src tests migrations
+All checks passed!
+
+mypy src
+Success: no issues found in 42 source files
+```
+
+The four warnings remain the Python 3.12 sqlite3 default datetime-adapter deprecations
+from the historical migration fixture.
+
+Isolated migration path, all exit 0:
+
+```text
+alembic upgrade 0008_plan_authoring_sessions
+alembic upgrade head
+alembic downgrade 0008_plan_authoring_sessions
+alembic upgrade head
+```
+
+Database location:
+`/private/tmp/classroom-sync-runtime-fk-20260829.5Euwiu/migration.sqlite3`.
+
+Additional files changed in this fix loop:
+
+- `services/classroom-sync/src/classroom_sync/db.py`
+- `services/classroom-sync/tests/integration/test_migrations.py`
+
+No PostgreSQL service was needed or contacted. No push, merge, deploy, external write,
+or real migration was performed.

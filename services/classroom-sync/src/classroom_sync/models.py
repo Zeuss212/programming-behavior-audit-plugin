@@ -13,6 +13,14 @@ class Base(DeclarativeBase):
     """Base metadata used by Alembic and all classroom repositories."""
 
 
+def _draft_plan_id(context: Any) -> str:
+    return str(context.get_current_parameters()["id"])
+
+
+def _version_source_draft_id(context: Any) -> str:
+    return str(context.get_current_parameters()["plan_id"])
+
+
 class PlanAuthoringSession(Base):
     """A teacher-owned plan-authoring flow and its non-circular audit links."""
 
@@ -64,7 +72,7 @@ class PlanDraft(Base):
         ForeignKey("plan_authoring_sessions.id", ondelete="RESTRICT"),
         nullable=True,
     )
-    plan_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    plan_id: Mapped[str] = mapped_column(String(64), nullable=False, default=_draft_plan_id)
     profile_id: Mapped[str] = mapped_column(String(64), nullable=False)
     space_id: Mapped[str] = mapped_column(String(128), nullable=False)
     parent_algorithm_id: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -96,7 +104,9 @@ class PlanVersion(Base):
     plan_id: Mapped[str] = mapped_column(String(64), nullable=False)
     profile_id: Mapped[str] = mapped_column(String(64), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
-    source_draft_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_draft_id: Mapped[str] = mapped_column(
+        String(64), nullable=False, default=_version_source_draft_id
+    )
     source_draft_revision: Mapped[int] = mapped_column(Integer, nullable=False)
     space_id: Mapped[str] = mapped_column(String(128), nullable=False)
     parent_algorithm_id: Mapped[str] = mapped_column(String(128), nullable=False)

@@ -255,6 +255,61 @@ def test_core_migration_round_trip_and_uniqueness(tmp_path: Path):
             )
 
 
+def test_identity_defaults_preserve_legacy_direct_model_writes():
+    """Existing direct fixtures retain the draft and source identities they implied."""
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    now = datetime(2026, 8, 29, 8, 0, tzinfo=UTC)
+    tables = Base.metadata.tables
+
+    with engine.begin() as connection:
+        connection.execute(
+            tables["plan_drafts"].insert(),
+            {
+                "id": "legacy-draft",
+                "profile_id": "legacy-profile",
+                "space_id": "space-1",
+                "parent_algorithm_id": "parent-1",
+                "title": "Legacy direct draft",
+                "profile": {"schema_version": 2},
+                "scheduled_start_at": now,
+                "scheduled_end_at": now,
+                "ai_policy": "prohibited",
+                "revision": 0,
+                "teacher_id": "teacher-1",
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+        connection.execute(
+            tables["plan_versions"].insert(),
+            {
+                "id": "legacy-version",
+                "plan_id": "legacy-draft",
+                "profile_id": "legacy-profile",
+                "version": 1,
+                "source_draft_revision": 0,
+                "space_id": "space-1",
+                "parent_algorithm_id": "parent-1",
+                "profile": {"schema_version": 2},
+                "content_hash": "a" * 64,
+                "scheduled_start_at": now,
+                "scheduled_end_at": now,
+                "ai_policy": "prohibited",
+                "published_at": now,
+                "teacher_id": "teacher-1",
+            },
+        )
+
+    with engine.connect() as connection:
+        assert connection.execute(
+            text("SELECT plan_id FROM plan_drafts WHERE id = 'legacy-draft'")
+        ).scalar_one() == "legacy-draft"
+        assert connection.execute(
+            text("SELECT source_draft_id FROM plan_versions WHERE id = 'legacy-version'")
+        ).scalar_one() == "legacy-draft"
+
+
 def test_analysis_job_migration_has_one_source_brief_idempotency_key(tmp_path: Path):
     database_url = f"sqlite:///{tmp_path / 'classroom-analysis.db'}"
     config = migration_config(database_url)
@@ -296,7 +351,8 @@ def test_plan_authoring_session_migration_preserves_legacy_rows_and_constraints(
 
     command.upgrade(config, "0007_evidence_analysis_manifest")
     engine = create_engine(database_url)
-    metadata = Base.metadata
+    metadata = Base.metadata.__class__()
+    metadata.reflect(engine)
     with engine.begin() as connection:
         connection.execute(
             metadata.tables["plan_drafts"].insert(),
@@ -539,7 +595,9 @@ def test_plan_series_migration_backfills_legacy_drafts_and_source_versions(
 
     command.upgrade(config, "0008_plan_authoring_sessions")
     engine = create_engine(database_url)
-    legacy_tables = Base.metadata.tables
+    legacy_metadata = Base.metadata.__class__()
+    legacy_metadata.reflect(engine)
+    legacy_tables = legacy_metadata.tables
     with engine.begin() as connection:
         connection.execute(
             legacy_tables["plan_drafts"].insert(),
@@ -579,6 +637,25 @@ def test_plan_series_migration_backfills_legacy_drafts_and_source_versions(
                     "teacher_id": "teacher-1",
                 },
             )
+        connection.execute(
+            legacy_tables["plan_versions"].insert(),
+            {
+                "id": "orphan-version-1",
+                "plan_id": "orphan-plan",
+                "profile_id": "orphan-profile",
+                "version": 1,
+                "source_draft_revision": 0,
+                "space_id": "space-2",
+                "parent_algorithm_id": "parent-2",
+                "profile": {"schema_version": 2},
+                "content_hash": "o" * 64,
+                "scheduled_start_at": now,
+                "scheduled_end_at": now,
+                "ai_policy": "prohibited",
+                "published_at": now,
+                "teacher_id": "teacher-2",
+            },
+        )
 
     command.upgrade(config, "head")
 
@@ -592,6 +669,9 @@ def test_plan_series_migration_backfills_legacy_drafts_and_source_versions(
         assert connection.execute(
             text("SELECT latest_version FROM plan_series WHERE id = 'legacy-draft'")
         ).scalar_one() == 2
+        assert connection.execute(
+            text("SELECT latest_version FROM plan_series WHERE id = 'orphan-plan'")
+        ).scalar_one() == 1
 
         reflected = Base.metadata.__class__()
         reflected.reflect(connection)

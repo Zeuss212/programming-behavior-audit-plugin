@@ -57,6 +57,14 @@ def upgrade() -> None:
     bind.execute(drafts.update().values(plan_id=drafts.c.id))
     bind.execute(versions.update().values(source_draft_id=versions.c.plan_id))
 
+    version_rows = bind.execute(
+        sa.select(
+            versions.c.plan_id,
+            versions.c.profile_id,
+            versions.c.space_id,
+            versions.c.parent_algorithm_id,
+        ).order_by(versions.c.plan_id, versions.c.version)
+    ).mappings()
     draft_rows = bind.execute(
         sa.select(
             drafts.c.plan_id,
@@ -65,18 +73,22 @@ def upgrade() -> None:
             drafts.c.parent_algorithm_id,
         )
     ).mappings()
-    for draft in draft_rows:
+    series_rows = {row["plan_id"]: row for row in version_rows}
+    series_rows.update(
+        {row["plan_id"]: row for row in draft_rows if row["plan_id"] not in series_rows}
+    )
+    for plan_id, series in series_rows.items():
         latest_version = bind.execute(
             sa.select(sa.func.coalesce(sa.func.max(versions.c.version), 0)).where(
-                versions.c.plan_id == draft["plan_id"]
+                versions.c.plan_id == plan_id
             )
         ).scalar_one()
         bind.execute(
             plan_series.insert().values(
-                id=draft["plan_id"],
-                profile_id=draft["profile_id"],
-                space_id=draft["space_id"],
-                parent_algorithm_id=draft["parent_algorithm_id"],
+                id=plan_id,
+                profile_id=series["profile_id"],
+                space_id=series["space_id"],
+                parent_algorithm_id=series["parent_algorithm_id"],
                 latest_version=latest_version,
             )
         )

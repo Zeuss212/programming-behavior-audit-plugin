@@ -266,12 +266,22 @@ def _assessment_material_bundle(parent_algorithm_id: str) -> dict[str, object]:
     return payload
 
 
-def _child_algorithm_id(student_id: str) -> str:
-    return CHILD_ALGORITHM_ID if student_id == "student001" else f"child-experiment-{student_id}"
+def _child_algorithm_id(
+    student_id: str,
+    parent_algorithm_id: str = PARENT_ALGORITHM_ID,
+) -> str:
+    if parent_algorithm_id == PARENT_ALGORITHM_ID:
+        return CHILD_ALGORITHM_ID if student_id == "student001" else f"child-experiment-{student_id}"
+    return f"child-{parent_algorithm_id}-{student_id}"
 
 
-def _workbench_id(student_id: str) -> str:
-    return WORKBENCH_ID if student_id == "student001" else f"workbench-{student_id}"
+def _workbench_id(
+    student_id: str,
+    parent_algorithm_id: str = PARENT_ALGORITHM_ID,
+) -> str:
+    if parent_algorithm_id == PARENT_ALGORITHM_ID:
+        return WORKBENCH_ID if student_id == "student001" else f"workbench-{student_id}"
+    return f"workbench-{parent_algorithm_id}-{student_id}"
 
 
 def _course_students() -> list[DemoUser]:
@@ -282,14 +292,19 @@ def _course_students() -> list[DemoUser]:
     ]
 
 
-def _student_project(student_id: str = "student001") -> dict[str, object]:
-    child_algorithm_id = _child_algorithm_id(student_id)
-    workbench_id = _workbench_id(student_id)
+def _student_project(
+    student_id: str = "student001",
+    parent_algorithm_id: str = PARENT_ALGORITHM_ID,
+) -> dict[str, object]:
+    child_algorithm_id = _child_algorithm_id(student_id, parent_algorithm_id)
+    workbench_id = _workbench_id(student_id, parent_algorithm_id)
     return {
         "id": child_algorithm_id,
         "name": f"exp-{student_id}-a1b2",
         "username": student_id,
-        "description": f"[FINCOLAB_PARENT_PROJECT_ID:{PARENT_ALGORITHM_ID}] 本地课堂学生任务",
+        "description": (
+            f"[FINCOLAB_PARENT_PROJECT_ID:{parent_algorithm_id}] 本地课堂学生任务"
+        ),
         "project_type": "notebook",
         "workbench_id": workbench_id,
         "workbench_status": "RUNNING",
@@ -425,7 +440,11 @@ class DemoFincolabHandler(BaseHTTPRequestHandler):
             # association; its detail endpoint remains teacher-only below.
             rows = [
                 *[_parent_project(parent_id) for parent_id in PARENT_PROJECT_NAMES],
-                *[_student_project(student.username) for student in _course_students()],
+                *[
+                    _student_project(student.username, parent_id)
+                    for student in _course_students()
+                    for parent_id in PARENT_PROJECT_NAMES
+                ],
             ]
             self._reply(HTTPStatus.OK, _pagination(rows))
             return
@@ -445,21 +464,23 @@ class DemoFincolabHandler(BaseHTTPRequestHandler):
                 return
             self._reply(HTTPStatus.NOT_FOUND, {"detail": "demo_endpoint_not_found"})
             return
-        student = next(
+        student_context = next(
             (
-                candidate
+                (candidate, parent_id)
                 for candidate in _course_students()
-                if _child_algorithm_id(candidate.username) == algorithm_id
+                for parent_id in PARENT_PROJECT_NAMES
+                if _child_algorithm_id(candidate.username, parent_id) == algorithm_id
             ),
             None,
         )
-        if student is None or user.username != student.username:
+        if student_context is None or user.username != student_context[0].username:
             self._reply(HTTPStatus.FORBIDDEN, {"detail": "demo_resource_access_denied"})
             return
+        student, parent_id = student_context
         if len(tail) == 1:
-            self._reply(HTTPStatus.OK, _student_project(student.username))
+            self._reply(HTTPStatus.OK, _student_project(student.username, parent_id))
             return
-        workbench_id = _workbench_id(student.username)
+        workbench_id = _workbench_id(student.username, parent_id)
         if tail == [algorithm_id, "workbench", workbench_id]:
             self._reply(
                 HTTPStatus.OK,

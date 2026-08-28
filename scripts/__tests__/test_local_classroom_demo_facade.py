@@ -16,7 +16,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Thread
 from urllib.error import HTTPError
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 
 import pytest
 
@@ -29,6 +29,7 @@ CPP_MATERIALS = {
     "sequence-list-experiment-001": MATERIALS_ROOT / "sequence-list" / "bundle.json",
     "linked-list-experiment-002": MATERIALS_ROOT / "linked-list" / "bundle.json",
 }
+LOCAL_OPENER = build_opener(ProxyHandler({}))
 
 
 def _load_facade_module():
@@ -61,7 +62,7 @@ class DemoClient:
             body = json.dumps(payload).encode("utf-8")
         request = Request(f"{self._base_url}{path}", data=body, headers=headers, method=method)
         try:
-            with urlopen(request, timeout=3) as response:  # nosec B310 - localhost test server.
+            with LOCAL_OPENER.open(request, timeout=3) as response:  # nosec B310 - localhost fixture.
                 return response.status, json.loads(response.read().decode("utf-8"))
         except HTTPError as error:
             return error.code, json.loads(error.read().decode("utf-8"))
@@ -141,6 +142,26 @@ def test_project_listing_keeps_python_parent_and_adds_both_cpp_parents() -> None
         "parent-experiment-001",
         "sequence-list-experiment-001",
         "linked-list-experiment-002",
+    ]
+
+
+def test_each_parent_gets_a_distinct_student_project_contract() -> None:
+    facade = _load_facade_module()
+
+    projects = [
+        facade._student_project("student001", parent_id)
+        for parent_id in facade.PARENT_PROJECT_NAMES
+    ]
+
+    assert [project["id"] for project in projects] == [
+        "child-experiment-001",
+        "child-sequence-list-experiment-001-student001",
+        "child-linked-list-experiment-002-student001",
+    ]
+    assert len({project["workbench_id"] for project in projects}) == 3
+    assert [project["description"].split("]", 1)[0] for project in projects] == [
+        f"[FINCOLAB_PARENT_PROJECT_ID:{parent_id}"
+        for parent_id in facade.PARENT_PROJECT_NAMES
     ]
 
 
@@ -394,7 +415,7 @@ def test_facade_keeps_request_logging_silent(capsys: pytest.CaptureFixture[str])
     assert captured.err == ""
 
 
-def test_student_receives_parent_metadata_and_own_child_for_compatibility_matching():
+def test_student_receives_parent_metadata_and_one_own_child_per_parent():
     with demo_client() as client:
         status, projects = client.request(
             "GET",
@@ -407,8 +428,16 @@ def test_student_receives_parent_metadata_and_own_child_for_compatibility_matchi
             "sequence-list-experiment-001",
             "linked-list-experiment-002",
             "child-experiment-001",
+            "child-sequence-list-experiment-001-student001",
+            "child-linked-list-experiment-002-student001",
         ]
         assert projects["data"][3]["name"] == "exp-student001-a1b2"
+        child_projects = projects["data"][3:]
+        assert [project["description"].split("]", 1)[0] for project in child_projects] == [
+            "[FINCOLAB_PARENT_PROJECT_ID:parent-experiment-001",
+            "[FINCOLAB_PARENT_PROJECT_ID:sequence-list-experiment-001",
+            "[FINCOLAB_PARENT_PROJECT_ID:linked-list-experiment-002",
+        ]
 
         status, parent = client.request(
             "GET",
@@ -426,6 +455,16 @@ def test_student_receives_parent_metadata_and_own_child_for_compatibility_matchi
         assert status == HTTPStatus.OK
         assert workbench["workbench_status"] == "RUNNING"
         assert workbench["jupyter_url"] == "http://127.0.0.1:8888/lab"
+
+        status, cpp_workbench = client.request(
+            "GET",
+            "/v1/spaces/course-001/algorithm_development/"
+            "child-linked-list-experiment-002-student001/workbench/"
+            "workbench-linked-list-experiment-002-student001",
+            token="student001-token",
+        )
+        assert status == HTTPStatus.OK
+        assert cpp_workbench["workbench_status"] == "RUNNING"
 
 
 @pytest.mark.parametrize(

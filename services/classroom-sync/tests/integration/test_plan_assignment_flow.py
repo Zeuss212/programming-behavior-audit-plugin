@@ -385,9 +385,17 @@ def test_successive_authoring_sessions_reuse_plan_series_and_publish_exact_retry
         teacher_id="teacher-1",
         materials=materials,
     )
-    assignment_service.sync_assignments(
+    roster = (
+        StudentChildExperiment("student-1", "student-a", "child-1", "workbench-1"),
+        StudentChildExperiment("student-2", "student-b", "child-2", "workbench-2"),
+    )
+    first_assignments = assignment_service.sync_assignments(
         first,
-        (StudentChildExperiment("student-1", "student-a", "child-1", "workbench-1"),),
+        roster,
+    )
+    accepted_assignment = assignment_service.accept_assignment(
+        first_assignments[0].id,
+        student_id="student-1",
     )
 
     with session_factory.begin() as session:
@@ -424,11 +432,20 @@ def test_successive_authoring_sessions_reuse_plan_series_and_publish_exact_retry
         teacher_id="teacher-1",
         materials=materials,
     )
+    second_assignments = assignment_service.sync_assignments(second, roster)
+    assignments_by_student = {
+        assignment.student_id: assignment for assignment in second_assignments
+    }
 
     assert first.plan_id == second.plan_id
     assert first.profile_id == second.profile_id
     assert (first.version, second.version) == (1, 2)
     assert second.source_draft_id == second_draft.id
+    assert accepted_assignment.status == "ready"
+    assert assignments_by_student["student-1"].plan_version == 1
+    assert assignments_by_student["student-1"].id == first_assignments[0].id
+    assert assignments_by_student["student-2"].plan_version == 2
+    assert assignments_by_student["student-2"].id == first_assignments[1].id
 
     retried = plan_service.publish_draft(
         second_draft.id,
@@ -903,6 +920,11 @@ def test_v3_publish_insert_failure_rolls_back_and_keeps_session_open():
         teacher_id="teacher-1",
     )
 
+    with session_factory() as session:
+        series = session.get(PlanSeries, draft.plan_id)
+        assert series is not None
+        assert series.latest_version == 0
+
     with pytest.raises(IntegrityError, match="forced insert failure"):
         service.publish_draft(
             draft.id,
@@ -911,6 +933,9 @@ def test_v3_publish_insert_failure_rolls_back_and_keeps_session_open():
         )
 
     with session_factory() as session:
+        series = session.get(PlanSeries, draft.plan_id)
+        assert series is not None
+        assert series.latest_version == 0
         authoring = session.get(
             PlanAuthoringSession,
             "authoring-insert-rollback",

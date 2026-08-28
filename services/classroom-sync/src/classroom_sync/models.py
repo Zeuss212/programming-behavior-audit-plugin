@@ -13,10 +13,6 @@ class Base(DeclarativeBase):
     """Base metadata used by Alembic and all classroom repositories."""
 
 
-def _draft_plan_id(context: Any) -> str:
-    return str(context.get_current_parameters()["id"])
-
-
 def _version_source_draft_id(context: Any) -> str:
     return str(context.get_current_parameters()["plan_id"])
 
@@ -72,7 +68,10 @@ class PlanDraft(Base):
         ForeignKey("plan_authoring_sessions.id", ondelete="RESTRICT"),
         nullable=True,
     )
-    plan_id: Mapped[str] = mapped_column(String(64), nullable=False, default=_draft_plan_id)
+    plan_id: Mapped[str] = mapped_column(
+        ForeignKey("plan_series.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
     profile_id: Mapped[str] = mapped_column(String(64), nullable=False)
     space_id: Mapped[str] = mapped_column(String(128), nullable=False)
     parent_algorithm_id: Mapped[str] = mapped_column(String(128), nullable=False)

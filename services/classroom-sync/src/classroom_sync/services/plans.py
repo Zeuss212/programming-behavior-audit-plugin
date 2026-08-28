@@ -60,9 +60,11 @@ class PlanService:
 
     def create_draft(self, draft_input: PlanDraftInput, *, teacher_id: str) -> PlanDraft:
         now = self._clock()
+        draft_id = str(uuid4())
         draft = PlanDraft(
-            id=str(uuid4()),
+            id=draft_id,
             authoring_session_id=draft_input.authoring_session_id,
+            plan_id=draft_id,
             profile_id=str(uuid4()),
             space_id=draft_input.space_id,
             parent_algorithm_id=draft_input.parent_algorithm_id,
@@ -81,6 +83,10 @@ class PlanService:
         with self._session_factory.begin() as session:
             repository = ClassroomRepository(session)
             if draft_input.authoring_session_id is not None:
+                repository.lock_plan_scope(
+                    draft.space_id,
+                    draft.parent_algorithm_id,
+                )
                 authoring = repository.get_authoring_session(
                     draft_input.authoring_session_id,
                     for_update=True,
@@ -94,6 +100,7 @@ class PlanService:
                 binding = repository.get_binding(
                     draft.space_id,
                     draft.parent_algorithm_id,
+                    for_update=True,
                 )
                 if binding is not None:
                     series = repository.get_plan_series(binding.plan_id, for_update=True)

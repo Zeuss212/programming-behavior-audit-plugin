@@ -36,7 +36,15 @@ class AssignmentService:
         now = self._clock()
         with self._session_factory.begin() as session:
             repository = ClassroomRepository(session)
-            binding = repository.get_binding(plan_version.space_id, plan_version.parent_algorithm_id)
+            repository.lock_plan_scope(
+                plan_version.space_id,
+                plan_version.parent_algorithm_id,
+            )
+            binding = repository.get_binding(
+                plan_version.space_id,
+                plan_version.parent_algorithm_id,
+                for_update=True,
+            )
             if binding is None:
                 binding = ExperimentPlanBinding(
                     id=str(uuid4()),

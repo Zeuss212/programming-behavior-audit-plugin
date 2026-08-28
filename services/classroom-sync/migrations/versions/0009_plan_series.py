@@ -99,6 +99,13 @@ def upgrade() -> None:
             existing_type=sa.String(length=64),
             nullable=False,
         )
+        batch_op.create_foreign_key(
+            "fk_plan_drafts_plan_id_plan_series",
+            "plan_series",
+            ["plan_id"],
+            ["id"],
+            ondelete="RESTRICT",
+        )
 
     with op.batch_alter_table("plan_versions") as batch_op:
         batch_op.alter_column(
@@ -133,6 +140,10 @@ def downgrade() -> None:
         batch_op.drop_column("source_draft_id")
 
     with op.batch_alter_table("plan_drafts") as batch_op:
+        batch_op.drop_constraint(
+            "fk_plan_drafts_plan_id_plan_series",
+            type_="foreignkey",
+        )
         batch_op.create_unique_constraint("uq_plan_drafts_profile_id", ["profile_id"])
         batch_op.drop_column("plan_id")
 

@@ -1,17 +1,18 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.exc import IntegrityError
 
 from classroom_sync.models import (
     Base,
     ClassroomBriefAnalysisJob,
     ClassroomPlanSuggestionJob,
+    PlanDraft,
     StudentBrief,
 )
 
@@ -255,22 +256,32 @@ def test_core_migration_round_trip_and_uniqueness(tmp_path: Path):
             )
 
 
-def test_identity_defaults_preserve_legacy_direct_model_writes():
-    """Existing direct fixtures retain the draft and source identities they implied."""
+def test_plan_draft_plan_id_requires_an_existing_plan_series():
+    """Direct draft writes cannot bypass the required plan-series lineage."""
     engine = create_engine("sqlite://")
+
+    @event.listens_for(engine, "connect")
+    def enable_foreign_keys(dbapi_connection, _connection_record) -> None:
+        dbapi_connection.execute("PRAGMA foreign_keys = ON")
+
     Base.metadata.create_all(engine)
     now = datetime(2026, 8, 29, 8, 0, tzinfo=UTC)
     tables = Base.metadata.tables
+    plan_id_foreign_keys = {
+        foreign_key.target_fullname
+        for foreign_key in PlanDraft.__table__.c.plan_id.foreign_keys
+    }
+    assert plan_id_foreign_keys == {"plan_series.id"}
 
-    with engine.begin() as connection:
+    with engine.connect() as connection, pytest.raises(IntegrityError):
         connection.execute(
             tables["plan_drafts"].insert(),
             {
-                "id": "legacy-draft",
-                "profile_id": "legacy-profile",
+                "id": "orphan-draft",
+                "profile_id": "orphan-profile",
                 "space_id": "space-1",
                 "parent_algorithm_id": "parent-1",
-                "title": "Legacy direct draft",
+                "title": "Orphan direct draft",
                 "profile": {"schema_version": 2},
                 "scheduled_start_at": now,
                 "scheduled_end_at": now,
@@ -281,33 +292,6 @@ def test_identity_defaults_preserve_legacy_direct_model_writes():
                 "updated_at": now,
             },
         )
-        connection.execute(
-            tables["plan_versions"].insert(),
-            {
-                "id": "legacy-version",
-                "plan_id": "legacy-draft",
-                "profile_id": "legacy-profile",
-                "version": 1,
-                "source_draft_revision": 0,
-                "space_id": "space-1",
-                "parent_algorithm_id": "parent-1",
-                "profile": {"schema_version": 2},
-                "content_hash": "a" * 64,
-                "scheduled_start_at": now,
-                "scheduled_end_at": now,
-                "ai_policy": "prohibited",
-                "published_at": now,
-                "teacher_id": "teacher-1",
-            },
-        )
-
-    with engine.connect() as connection:
-        assert connection.execute(
-            text("SELECT plan_id FROM plan_drafts WHERE id = 'legacy-draft'")
-        ).scalar_one() == "legacy-draft"
-        assert connection.execute(
-            text("SELECT source_draft_id FROM plan_versions WHERE id = 'legacy-version'")
-        ).scalar_one() == "legacy-draft"
 
 
 def test_analysis_job_migration_has_one_source_brief_idempotency_key(tmp_path: Path):
@@ -618,6 +602,7 @@ def test_plan_series_migration_backfills_legacy_drafts_and_source_versions(
             },
         )
         for version in (1, 2):
+            published_at = now + timedelta(minutes=version)
             connection.execute(
                 legacy_tables["plan_versions"].insert(),
                 {
@@ -628,13 +613,13 @@ def test_plan_series_migration_backfills_legacy_drafts_and_source_versions(
                     "source_draft_revision": version,
                     "space_id": "space-1",
                     "parent_algorithm_id": "parent-1",
-                    "profile": {"schema_version": 2},
+                    "profile": {"schema_version": 2, "historical_version": version},
                     "content_hash": str(version) * 64,
                     "scheduled_start_at": now,
                     "scheduled_end_at": now,
                     "ai_policy": "prohibited",
-                    "published_at": now,
-                    "teacher_id": "teacher-1",
+                    "published_at": published_at,
+                    "teacher_id": f"teacher-{version}",
                 },
             )
         connection.execute(
@@ -677,6 +662,29 @@ def test_plan_series_migration_backfills_legacy_drafts_and_source_versions(
         reflected.reflect(connection)
         drafts = reflected.tables["plan_drafts"]
         versions = reflected.tables["plan_versions"]
+        preserved_version = connection.execute(
+            versions.select().where(versions.c.id == "legacy-version-2")
+        ).mappings().one()
+        assert preserved_version["content_hash"] == "2" * 64
+        assert preserved_version["profile"] == {
+            "schema_version": 2,
+            "historical_version": 2,
+        }
+        assert preserved_version["published_at"] == (
+            now + timedelta(minutes=2)
+        ).replace(tzinfo=None)
+        assert preserved_version["space_id"] == "space-1"
+        assert preserved_version["parent_algorithm_id"] == "parent-1"
+        assert preserved_version["teacher_id"] == "teacher-2"
+
+        plan_id_foreign_keys = inspect(connection).get_foreign_keys("plan_drafts")
+        assert any(
+            foreign_key["constrained_columns"] == ["plan_id"]
+            and foreign_key["referred_table"] == "plan_series"
+            and foreign_key["referred_columns"] == ["id"]
+            and foreign_key["options"].get("ondelete") == "RESTRICT"
+            for foreign_key in plan_id_foreign_keys
+        )
 
         connection.execute(
             drafts.insert(),
@@ -718,6 +726,22 @@ def test_plan_series_migration_backfills_legacy_drafts_and_source_versions(
                     "published_at": now,
                     "teacher_id": "teacher-1",
                 },
+            )
+
+    with engine.connect() as connection:
+        connection.execute(text("PRAGMA foreign_keys = ON"))
+        with pytest.raises(IntegrityError):
+            connection.execute(
+                text(
+                    "INSERT INTO plan_drafts "
+                    "(id, plan_id, profile_id, space_id, parent_algorithm_id, title, profile, "
+                    "scheduled_start_at, scheduled_end_at, ai_policy, revision, teacher_id, "
+                    "created_at, updated_at) VALUES "
+                    "('orphan-draft', 'missing-series', 'orphan-profile', 'space-1', "
+                    "'parent-1', 'Orphan', '{}', :now, :now, 'prohibited', 0, "
+                    "'teacher-1', :now, :now)"
+                ),
+                {"now": now},
             )
 
 

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select, tuple_
+from hashlib import sha256
+
+from sqlalchemy import select, text, tuple_
 from sqlalchemy.orm import Session
 
 from classroom_sync.models import (
@@ -24,6 +26,30 @@ class ClassroomRepository:
 
     def __init__(self, session: Session) -> None:
         self.session = session
+
+    def lock_plan_scope(self, space_id: str, parent_algorithm_id: str) -> None:
+        """Serialize binding reads and writes for one experiment scope."""
+
+        connection = self.session.connection()
+        dialect_name = connection.dialect.name
+        if dialect_name == "postgresql":
+            scope = (
+                b"classroom-plan-scope-v1\0"
+                + len(space_id.encode()).to_bytes(4, "big")
+                + space_id.encode()
+                + len(parent_algorithm_id.encode()).to_bytes(4, "big")
+                + parent_algorithm_id.encode()
+            )
+            lock_key = int.from_bytes(sha256(scope).digest()[:8], "big", signed=True)
+            connection.execute(
+                text("SELECT pg_advisory_xact_lock(:lock_key)"),
+                {"lock_key": lock_key},
+            )
+            return
+        if dialect_name == "sqlite":
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
+            return
+        raise RuntimeError(f"unsupported plan scope lock dialect: {dialect_name}")
 
     def get_plan_draft(self, draft_id: str, *, for_update: bool = False) -> PlanDraft | None:
         statement = select(PlanDraft).where(PlanDraft.id == draft_id)
@@ -127,13 +153,20 @@ class ClassroomRepository:
             )
         )
 
-    def get_binding(self, space_id: str, parent_algorithm_id: str) -> ExperimentPlanBinding | None:
-        return self.session.scalar(
-            select(ExperimentPlanBinding).where(
-                ExperimentPlanBinding.space_id == space_id,
-                ExperimentPlanBinding.parent_algorithm_id == parent_algorithm_id,
-            )
+    def get_binding(
+        self,
+        space_id: str,
+        parent_algorithm_id: str,
+        *,
+        for_update: bool = False,
+    ) -> ExperimentPlanBinding | None:
+        statement = select(ExperimentPlanBinding).where(
+            ExperimentPlanBinding.space_id == space_id,
+            ExperimentPlanBinding.parent_algorithm_id == parent_algorithm_id,
         )
+        if for_update:
+            statement = statement.with_for_update()
+        return self.session.scalar(statement)
 
     def get_assignment(
         self,

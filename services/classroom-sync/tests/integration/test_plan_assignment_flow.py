@@ -4,8 +4,8 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
-from sqlalchemy import create_engine, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import create_engine, event, text
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
 from classroom_sync.auth.fincolab import StudentChildExperiment
@@ -20,6 +20,7 @@ from classroom_sync.models import (
     PlanVersion,
     StudentAssignment,
 )
+from classroom_sync.repositories import ClassroomRepository
 from classroom_sync.services import plans as plans_module
 from classroom_sync.services.assignments import AssignmentService
 from classroom_sync.services.plans import PlanDraftInput, PlanService
@@ -100,6 +101,135 @@ def profile_draft(question: str) -> dict[str, object]:
             }
         ],
     }
+
+
+@pytest.mark.parametrize("existing_binding", [False, True])
+def test_plan_scope_lock_serializes_existing_and_absent_bindings_on_sqlite(
+    tmp_path: Path,
+    existing_binding: bool,
+) -> None:
+    """A scope lock excludes a competing writer even when no binding row exists."""
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'scope-lock.sqlite3'}",
+        connect_args={"timeout": 0.01},
+    )
+    Base.metadata.create_all(engine)
+    now = datetime(2026, 8, 29, 7, 0, tzinfo=UTC)
+    if existing_binding:
+        with Session(engine) as seed_session, seed_session.begin():
+            seed_session.add(
+                ExperimentPlanBinding(
+                    id="binding-1",
+                    space_id="space-1",
+                    parent_algorithm_id="parent-1",
+                    plan_id="plan-1",
+                    plan_version=1,
+                    teacher_id="teacher-1",
+                    created_at=now,
+                    updated_at=None,
+                )
+            )
+
+    with Session(engine) as first_session, first_session.begin():
+        first_repository = ClassroomRepository(first_session)
+        first_repository.lock_plan_scope("space-1", "parent-1")
+        binding = first_repository.get_binding(
+            "space-1",
+            "parent-1",
+            for_update=True,
+        )
+        assert (binding is not None) is existing_binding
+
+        with (
+            Session(engine) as competing_session,
+            pytest.raises(OperationalError, match="database is locked"),
+            competing_session.begin(),
+        ):
+            ClassroomRepository(competing_session).lock_plan_scope(
+                "space-1",
+                "parent-1",
+            )
+
+    with Session(engine) as released_session, released_session.begin():
+        ClassroomRepository(released_session).lock_plan_scope("space-1", "parent-1")
+
+
+def test_plan_draft_and_assignment_sync_use_the_same_scope_lock_protocol(
+    tmp_path: Path,
+) -> None:
+    """Both binding readers acquire the shared transaction lock before proceeding."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'shared-scope-lock.sqlite3'}")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    repository_root = Path(__file__).resolve().parents[4]
+    schema_registry = ClassroomSchemaRegistry(repository_root / "contracts" / "classroom" / "v1")
+    now = datetime(2026, 8, 29, 7, 30, tzinfo=UTC)
+    plan_service = PlanService(session_factory, schema_registry, clock=lambda: now)
+    assignment_service = AssignmentService(session_factory, clock=lambda: now)
+    first_draft = plan_service.create_draft(
+        PlanDraftInput(
+            space_id="space-1",
+            parent_algorithm_id="parent-1",
+            title="first lesson",
+            profile=profile_draft("first lesson"),
+            scheduled_start_at=now,
+            scheduled_end_at=now + timedelta(minutes=30),
+            ai_policy="prohibited",
+        ),
+        teacher_id="teacher-1",
+    )
+    first_version = plan_service.publish_draft(first_draft.id, teacher_id="teacher-1")
+    with session_factory.begin() as session:
+        session.add(
+            PlanAuthoringSession(
+                id="authoring-shared-lock",
+                teacher_id="teacher-1",
+                space_id="space-1",
+                parent_algorithm_id="parent-1",
+                status="open",
+                active_slot=1,
+                suggestion_job_id=None,
+                published_plan_id=None,
+                created_at=now,
+                updated_at=now,
+                closed_at=None,
+            )
+        )
+
+    lock_statements: list[str] = []
+
+    def capture_lock_statement(
+        _connection: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
+        if statement == "BEGIN IMMEDIATE":
+            lock_statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", capture_lock_statement)
+    assignment_service.sync_assignments(
+        first_version,
+        (StudentChildExperiment("student-1", "student-a", "child-1", "workbench-1"),),
+    )
+    trusted_draft = plan_service.create_draft(
+        PlanDraftInput(
+            authoring_session_id="authoring-shared-lock",
+            space_id="space-1",
+            parent_algorithm_id="parent-1",
+            title="next lesson",
+            profile=profile_draft("next lesson"),
+            scheduled_start_at=now,
+            scheduled_end_at=now + timedelta(minutes=30),
+            ai_policy="prohibited",
+        ),
+        teacher_id="teacher-1",
+    )
+
+    assert trusted_draft.plan_id == first_version.plan_id
+    assert lock_statements == ["BEGIN IMMEDIATE", "BEGIN IMMEDIATE"]
 
 
 def test_republish_moves_only_unaccepted_assignments_to_the_new_plan_version():

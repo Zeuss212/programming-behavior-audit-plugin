@@ -397,6 +397,8 @@ def test_successive_authoring_sessions_reuse_plan_series_and_publish_exact_retry
         first_assignments[0].id,
         student_id="student-1",
     )
+    accepted_at = accepted_assignment.accepted_at
+    assert accepted_at is not None
 
     with session_factory.begin() as session:
         session.add(
@@ -442,8 +444,12 @@ def test_successive_authoring_sessions_reuse_plan_series_and_publish_exact_retry
     assert (first.version, second.version) == (1, 2)
     assert second.source_draft_id == second_draft.id
     assert accepted_assignment.status == "ready"
-    assert assignments_by_student["student-1"].plan_version == 1
-    assert assignments_by_student["student-1"].id == first_assignments[0].id
+    student_one_assignment = assignments_by_student["student-1"]
+    assert student_one_assignment.status == "ready"
+    assert student_one_assignment.accepted_at is not None
+    assert student_one_assignment.accepted_at.replace(tzinfo=UTC) == accepted_at
+    assert student_one_assignment.plan_version == 1
+    assert student_one_assignment.id == first_assignments[0].id
     assert assignments_by_student["student-2"].plan_version == 2
     assert assignments_by_student["student-2"].id == first_assignments[1].id
 
@@ -945,4 +951,4 @@ def test_v3_publish_insert_failure_rolls_back_and_keeps_session_open():
         assert authoring.active_slot == 1
         assert authoring.published_plan_id is None
         assert authoring.closed_at is None
-        assert session.query(PlanVersion).filter_by(plan_id=draft.id).count() == 0
+        assert session.query(PlanVersion).filter_by(plan_id=draft.plan_id).count() == 0

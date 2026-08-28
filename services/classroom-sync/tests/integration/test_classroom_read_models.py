@@ -300,6 +300,7 @@ def test_student_reads_only_own_assignment_and_cannot_read_teacher_monitoring(cl
         "status": "active",
         "scheduled_start_at": NOW.isoformat(),
         "scheduled_end_at": (NOW + timedelta(minutes=45)).isoformat(),
+        "ai_policy": "prohibited",
         "session": {
             "id": OWN_SESSION_ID,
             "status": "completed",

@@ -525,3 +525,23 @@ def test_facade_can_supply_a_bounded_local_roster_for_concurrency_checks(monkeyp
     assert facade.authenticate_bearer("student020-token") is not None
     assert facade.authenticate_bearer("student002-token").space_id == facade.NEGATIVE_COURSE_ID
     assert len([facade._student_project(student.username) for student in course_students]) == 20
+
+
+def test_project_listing_limits_student_children_to_the_authenticated_owner(monkeypatch):
+    monkeypatch.setenv("CLASSROOM_MOCK_STUDENT_COUNT", "2")
+
+    with demo_client() as client:
+        path = "/v1/spaces/course-001/algorithm_development"
+        teacher_status, teacher_projects = client.request("GET", path, token="teacher-token")
+        student_status, student_projects = client.request("GET", path, token="student001-token")
+
+    assert teacher_status == HTTPStatus.OK
+    assert student_status == HTTPStatus.OK
+
+    teacher_children = teacher_projects["data"][3:]
+    assert {project["username"] for project in teacher_children} == {"student001", "student003"}
+
+    student_children = student_projects["data"][3:]
+    assert len(student_children) == len(CPP_MATERIALS) + 1
+    assert {project["username"] for project in student_children} == {"student001"}
+    assert not any("student003" in project["id"] for project in student_projects["data"])

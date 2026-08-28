@@ -136,6 +136,7 @@ class ClassroomReadService:
                     "status": assignment.status,
                     "scheduled_start_at": self._isoformat(assignment.scheduled_start_at),
                     "scheduled_end_at": self._isoformat(assignment.scheduled_end_at),
+                    "ai_policy": plan_version.ai_policy,
                     "session": self._session_summary(latest_sessions.get(assignment.id)),
                 }
             )

@@ -438,11 +438,12 @@ class DemoFincolabHandler(BaseHTTPRequestHandler):
             # The student UI matches its private child against the teacher's
             # parent metadata.  Listing the parent permits that local
             # association; its detail endpoint remains teacher-only below.
+            visible_students = _course_students() if user.role_name == "teacher" else [user]
             rows = [
                 *[_parent_project(parent_id) for parent_id in PARENT_PROJECT_NAMES],
                 *[
                     _student_project(student.username, parent_id)
-                    for student in _course_students()
+                    for student in visible_students
                     for parent_id in PARENT_PROJECT_NAMES
                 ],
             ]

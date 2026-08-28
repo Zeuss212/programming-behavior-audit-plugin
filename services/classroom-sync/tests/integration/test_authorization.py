@@ -174,6 +174,56 @@ def test_incomplete_pagination_is_treated_as_an_unavailable_authority_source():
         identity_gateway.require_student_member(principal, "space-1")
 
 
+def test_child_workbench_is_hydrated_from_detail_when_list_omits_it():
+    """The production list shape may require the detail endpoint for the workbench ID."""
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/organizations/org-1/spaces/space-1/users":
+            return httpx.Response(
+                200,
+                json=member_response(
+                    {"id": "teacher-1", "username": "teacher-a", "role_name": "teacher"},
+                    {"id": "student-1", "username": "student-a", "role_name": "student"},
+                ),
+            )
+        if request.url.path == "/v1/spaces/space-1/algorithm_development":
+            return httpx.Response(
+                200,
+                json=member_response(
+                    {
+                        "id": "child-1",
+                        "name": "exp-student-a-a1b2",
+                        "username": "teacher-a",
+                        "description": binding_description(),
+                    }
+                ),
+            )
+        if request.url.path == "/v1/spaces/space-1/algorithm_development/child-1":
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "id": "child-1",
+                        "name": "exp-student-a-a1b2",
+                        "username": "teacher-a",
+                        "description": binding_description(),
+                        "workbench_id": "workbench-1",
+                    }
+                },
+            )
+        raise AssertionError(f"Unexpected upstream request: {request.url}")
+
+    roster = gateway(responder).list_student_children(
+        Principal("teacher-1", "teacher-a", "token"),
+        "space-1",
+        "parent-1",
+    )
+
+    assert roster == (
+        StudentChildExperiment("student-1", "student-a", "child-1", "workbench-1"),
+    )
+
+
 def test_duplicate_child_projects_are_quarantined_instead_of_auto_assigned():
     """Two children for one student/parent pair cannot silently choose an environment."""
 

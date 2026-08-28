@@ -184,12 +184,25 @@ class FincolabIdentityGateway:
                     raise RosterConflictError("student_binding_username_mismatch")
 
             child_id = self._required_string(project, "id", "child_algorithm_missing_id")
-            workbench_id = self._required_string(project, "workbench_id", "child_workbench_unverified")
+            workbench_id_value = project.get("workbench_id")
             owner_username = project.get("username")
-            if not isinstance(owner_username, str) or not owner_username.strip():
+            detail: dict[str, object] | None = None
+            if (
+                not isinstance(workbench_id_value, str)
+                or not workbench_id_value.strip()
+                or not isinstance(owner_username, str)
+                or not owner_username.strip()
+            ):
                 detail = self._request_object(
                     f"/v1/spaces/{space_id}/algorithm_development/{child_id}", principal.bearer_token
                 )
+            if not isinstance(workbench_id_value, str) or not workbench_id_value.strip():
+                workbench_id = self._required_string(
+                    detail or {}, "workbench_id", "child_workbench_unverified"
+                )
+            else:
+                workbench_id = workbench_id_value
+            if not isinstance(owner_username, str) or not owner_username.strip():
                 owner_username = self._required_string(detail, "username", "child_owner_unverified")
             if owner_username not in {principal.username, member.username}:
                 raise RosterConflictError("child_owner_contract_conflict")

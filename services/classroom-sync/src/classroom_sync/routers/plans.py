@@ -291,7 +291,10 @@ def publish_plan_draft(
         principal, draft.space_id, draft.parent_algorithm_id
     )
     materials = None
-    if draft.profile.get("schema_version") == 3:
+    if (
+        draft.profile.get("schema_version") == 3
+        and draft.published_revision != draft.revision
+    ):
         materials = _latest_materials(
             services,
             principal,

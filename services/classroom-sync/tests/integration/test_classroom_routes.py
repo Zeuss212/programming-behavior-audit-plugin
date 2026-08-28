@@ -862,3 +862,100 @@ def test_v3_publish_fetches_latest_materials_after_ownership_and_returns_safe_ga
         assert authoring.active_slot == 1
         assert authoring.published_plan_id is None
         assert authoring.closed_at is None
+
+
+def test_v3_publish_retry_returns_existing_version_when_materials_are_unavailable():
+    """A lost publish response must be recoverable through the HTTP endpoint."""
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    repository_root = Path(__file__).resolve().parents[4]
+    schema_registry = ClassroomSchemaRegistry(repository_root / "contracts" / "classroom" / "v1")
+    now = datetime(2026, 8, 29, 10, 0, tzinfo=UTC)
+    materials = real_bundle("linked-list")
+    profile = profile_for(
+        materials,
+        ("REQ_LINK_TAIL_INSERT", "REQ_LINK_REVERSE"),
+    )
+
+    class RecoveringMaterialService:
+        def __init__(self) -> None:
+            self.available = True
+            self.calls = 0
+
+        def get_bundle(
+            self,
+            _principal: Principal,
+            _space_id: str,
+            _parent_algorithm_id: str,
+        ):
+            self.calls += 1
+            if not self.available:
+                raise UpstreamUnavailableError("assessment_materials_unavailable")
+            return materials
+
+    material_service = RecoveringMaterialService()
+    plan_service = PlanService(session_factory, schema_registry, clock=lambda: now)
+    application = create_app(
+        Settings(database_url="sqlite://"),
+        classroom_services=ClassroomServices(
+            identity_gateway=FakeIdentityGateway(),
+            plan_service=plan_service,
+            assignment_service=AssignmentService(session_factory, clock=lambda: now),
+            assessment_material_service=cast(AssessmentMaterialService, material_service),
+        ),
+    )
+    with session_factory.begin() as session:
+        session.add(
+            PlanAuthoringSession(
+                id="retry-authoring",
+                teacher_id="teacher-1",
+                space_id=materials.space_id,
+                parent_algorithm_id=materials.parent_algorithm_id,
+                status="open",
+                active_slot=1,
+                suggestion_job_id=None,
+                published_plan_id=None,
+                created_at=now,
+                updated_at=now,
+                closed_at=None,
+            )
+        )
+    draft = plan_service.create_draft(
+        PlanDraftInput(
+            authoring_session_id="retry-authoring",
+            space_id=materials.space_id,
+            parent_algorithm_id=materials.parent_algorithm_id,
+            title="retry linked list lesson",
+            profile=profile,
+            scheduled_start_at=now,
+            scheduled_end_at=now + timedelta(minutes=30),
+            ai_policy="prohibited",
+        ),
+        teacher_id="teacher-1",
+    )
+    headers = {"Authorization": "Bearer teacher-token"}
+    first = request(
+        application,
+        "POST",
+        f"/v1/classroom/plans/drafts/{draft.id}/publish",
+        headers=headers,
+    )
+
+    material_service.available = False
+    retried = request(
+        application,
+        "POST",
+        f"/v1/classroom/plans/drafts/{draft.id}/publish",
+        headers=headers,
+    )
+
+    assert first.status_code == 200
+    assert retried.status_code == 200
+    assert retried.json()["plan_version_id"] == first.json()["plan_version_id"]
+    assert retried.json()["version"] == 1
+    assert material_service.calls == 1

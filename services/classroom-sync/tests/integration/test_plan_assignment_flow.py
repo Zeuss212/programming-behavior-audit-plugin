@@ -12,7 +12,14 @@ from classroom_sync.auth.fincolab import StudentChildExperiment
 from classroom_sync.canonical import sha256_json
 from classroom_sync.domain.schemas import ClassroomSchemaRegistry
 from classroom_sync.errors import ConflictError, PublicationGateBlockedError
-from classroom_sync.models import Base, PlanAuthoringSession, PlanVersion, StudentAssignment
+from classroom_sync.models import (
+    Base,
+    ExperimentPlanBinding,
+    PlanAuthoringSession,
+    PlanSeries,
+    PlanVersion,
+    StudentAssignment,
+)
 from classroom_sync.services import plans as plans_module
 from classroom_sync.services.assignments import AssignmentService
 from classroom_sync.services.plans import PlanDraftInput, PlanService
@@ -426,12 +433,77 @@ def test_successive_authoring_sessions_reuse_plan_series_and_publish_exact_retry
     retried = plan_service.publish_draft(
         second_draft.id,
         teacher_id="teacher-1",
-        materials=materials,
+        materials=None,
     )
 
     assert retried.id == second.id
     with session_factory() as session:
         assert session.query(PlanVersion).filter_by(plan_id=first.plan_id).count() == 2
+
+
+def test_authoring_draft_rejects_binding_plan_series_from_another_scope():
+    """A current binding cannot pull a draft into another material scope's series."""
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    repository_root = Path(__file__).resolve().parents[4]
+    schema_registry = ClassroomSchemaRegistry(repository_root / "contracts" / "classroom" / "v1")
+    now = datetime(2026, 8, 29, 9, 0, tzinfo=UTC)
+    materials = real_bundle("linked-list")
+    with session_factory.begin() as session:
+        session.add_all(
+            [
+                PlanAuthoringSession(
+                    id="authoring-wrong-series",
+                    teacher_id="teacher-1",
+                    space_id=materials.space_id,
+                    parent_algorithm_id=materials.parent_algorithm_id,
+                    status="open",
+                    active_slot=1,
+                    suggestion_job_id=None,
+                    published_plan_id=None,
+                    created_at=now,
+                    updated_at=now,
+                    closed_at=None,
+                ),
+                PlanSeries(
+                    id="foreign-plan",
+                    profile_id="foreign-profile",
+                    space_id="another-space",
+                    parent_algorithm_id="another-parent",
+                    latest_version=1,
+                ),
+                ExperimentPlanBinding(
+                    id="wrong-series-binding",
+                    space_id=materials.space_id,
+                    parent_algorithm_id=materials.parent_algorithm_id,
+                    plan_id="foreign-plan",
+                    plan_version=1,
+                    teacher_id="teacher-1",
+                    created_at=now,
+                    updated_at=None,
+                ),
+            ]
+        )
+    service = PlanService(session_factory, schema_registry, clock=lambda: now)
+
+    with pytest.raises(ConflictError, match="plan_series_scope_mismatch"):
+        service.create_draft(
+            PlanDraftInput(
+                authoring_session_id="authoring-wrong-series",
+                space_id=materials.space_id,
+                parent_algorithm_id=materials.parent_algorithm_id,
+                title="wrong linked list lesson",
+                profile=profile_for(
+                    materials,
+                    ("REQ_LINK_TAIL_INSERT", "REQ_LINK_REVERSE"),
+                ),
+                scheduled_start_at=now,
+                scheduled_end_at=now + timedelta(minutes=30),
+                ai_policy="prohibited",
+            ),
+            teacher_id="teacher-1",
+        )
 
 
 def test_v3_publish_requires_the_draft_to_be_linked_to_an_authoring_session():

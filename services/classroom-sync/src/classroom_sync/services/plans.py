@@ -99,6 +99,11 @@ class PlanService:
                     series = repository.get_plan_series(binding.plan_id, for_update=True)
                     if series is None:
                         raise ConflictError("plan_series_not_found")
+                    if (
+                        series.space_id != draft.space_id
+                        or series.parent_algorithm_id != draft.parent_algorithm_id
+                    ):
+                        raise ConflictError("plan_series_scope_mismatch")
                 else:
                     series = PlanSeries(
                         id=draft.id,
@@ -196,6 +201,31 @@ class PlanService:
             is_v3 = draft.profile.get("schema_version") == 3
             authoring: PlanAuthoringSession | None = None
             if is_v3:
+                if draft.authoring_session_id is None:
+                    raise ConflictError("plan_authoring_session_required")
+                authoring = repository.get_authoring_session(
+                    draft.authoring_session_id,
+                    for_update=True,
+                )
+                self._validate_authoring_for_publish(
+                    authoring,
+                    draft=draft,
+                    teacher_id=teacher_id,
+                )
+
+            series = repository.get_plan_series(draft.plan_id, for_update=True)
+            if series is None:
+                raise ConflictError("plan_series_not_found")
+            existing = repository.get_plan_version_for_source(draft.id, draft.revision)
+            if existing is not None:
+                if authoring is not None and authoring.status == "open":
+                    self._close_authoring(authoring, draft=draft, now=now)
+                return existing
+
+            if authoring is not None and authoring.status != "open":
+                raise ConflictError("plan_authoring_session_closed")
+
+            if is_v3:
                 if materials is None:
                     raise UpstreamUnavailableError(
                         "assessment_materials_not_configured",
@@ -209,30 +239,7 @@ class PlanService:
                         "assessment_materials_scope_invalid",
                         retryable=False,
                     )
-                if draft.authoring_session_id is None:
-                    raise ConflictError("plan_authoring_session_required")
-                authoring = repository.get_authoring_session(
-                    draft.authoring_session_id,
-                    for_update=True,
-                )
-                self._validate_authoring_for_publish(
-                    authoring,
-                    draft=draft,
-                    teacher_id=teacher_id,
-                )
                 self._publication_gate.require_ready(draft.profile, materials)
-
-            series = repository.get_plan_series(draft.plan_id, for_update=True)
-            if series is None:
-                raise ConflictError("plan_series_not_found")
-            existing = repository.get_plan_version_for_source(draft.id, draft.revision)
-            if existing is not None:
-                if authoring is not None and authoring.status == "open":
-                    self._close_authoring(authoring, draft=draft, now=now)
-                return existing
-
-            if authoring is not None and authoring.status != "open":
-                raise ConflictError("plan_authoring_session_closed")
 
             version = series.latest_version + 1
             profile_content = {

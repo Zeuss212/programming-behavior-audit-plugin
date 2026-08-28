@@ -94,4 +94,3 @@
 - 同一草稿 revision 重试返回相同版本 ID，失败事务不消耗版本号。
 - v1 已接受任务不变，v1 未接受任务同步后移动到 v2。
 - 后端 pytest、Ruff、mypy 和 `git diff --check` 全部通过。
-

@@ -254,4 +254,3 @@ Expected: exit 0 with no output.
 
 Report the branch, commits, test counts and migration result. Do not merge, deploy, alter the dirty
 source worktree, or push the backend branch until the remote target is explicitly confirmed.
-

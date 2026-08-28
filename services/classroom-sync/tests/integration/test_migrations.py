@@ -16,6 +16,7 @@ from classroom_sync.models import (
 )
 
 CORE_TABLES = {
+    "plan_series",
     "plan_drafts",
     "plan_versions",
     "experiment_plan_bindings",
@@ -71,6 +72,7 @@ def test_core_migration_round_trip_and_uniqueness(tmp_path: Path):
                 "plan_id": "plan-1",
                 "profile_id": "profile-1",
                 "version": 1,
+                "source_draft_id": "plan-1",
                 "source_draft_revision": 0,
                 "space_id": "space-1",
                 "parent_algorithm_id": "parent-1",
@@ -525,6 +527,159 @@ def test_plan_authoring_session_migration_preserves_legacy_rows_and_constraints(
         assert connection.execute(
             text("SELECT id FROM classroom_plan_suggestion_jobs WHERE id = 'legacy-job'")
         ).scalar_one() == "legacy-job"
+
+
+def test_plan_series_migration_backfills_legacy_drafts_and_source_versions(
+    tmp_path: Path,
+):
+    """Legacy drafts become reusable series and versions retain their source draft."""
+    database_url = f"sqlite:///{tmp_path / 'classroom-plan-series.db'}"
+    config = migration_config(database_url)
+    now = datetime(2026, 8, 29, 8, 0, tzinfo=UTC)
+
+    command.upgrade(config, "0008_plan_authoring_sessions")
+    engine = create_engine(database_url)
+    legacy_tables = Base.metadata.tables
+    with engine.begin() as connection:
+        connection.execute(
+            legacy_tables["plan_drafts"].insert(),
+            {
+                "id": "legacy-draft",
+                "profile_id": "legacy-profile",
+                "space_id": "space-1",
+                "parent_algorithm_id": "parent-1",
+                "title": "Legacy draft",
+                "profile": {"schema_version": 2},
+                "scheduled_start_at": now,
+                "scheduled_end_at": now,
+                "ai_policy": "prohibited",
+                "revision": 2,
+                "teacher_id": "teacher-1",
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+        for version in (1, 2):
+            connection.execute(
+                legacy_tables["plan_versions"].insert(),
+                {
+                    "id": f"legacy-version-{version}",
+                    "plan_id": "legacy-draft",
+                    "profile_id": "legacy-profile",
+                    "version": version,
+                    "source_draft_revision": version,
+                    "space_id": "space-1",
+                    "parent_algorithm_id": "parent-1",
+                    "profile": {"schema_version": 2},
+                    "content_hash": str(version) * 64,
+                    "scheduled_start_at": now,
+                    "scheduled_end_at": now,
+                    "ai_policy": "prohibited",
+                    "published_at": now,
+                    "teacher_id": "teacher-1",
+                },
+            )
+
+    command.upgrade(config, "head")
+
+    with engine.begin() as connection:
+        assert connection.execute(
+            text("SELECT plan_id FROM plan_drafts WHERE id = 'legacy-draft'")
+        ).scalar_one() == "legacy-draft"
+        assert connection.execute(
+            text("SELECT source_draft_id FROM plan_versions WHERE id = 'legacy-version-2'")
+        ).scalar_one() == "legacy-draft"
+        assert connection.execute(
+            text("SELECT latest_version FROM plan_series WHERE id = 'legacy-draft'")
+        ).scalar_one() == 2
+
+        reflected = Base.metadata.__class__()
+        reflected.reflect(connection)
+        drafts = reflected.tables["plan_drafts"]
+        versions = reflected.tables["plan_versions"]
+
+        connection.execute(
+            drafts.insert(),
+            {
+                "id": "second-draft",
+                "plan_id": "legacy-draft",
+                "profile_id": "legacy-profile",
+                "space_id": "space-1",
+                "parent_algorithm_id": "parent-1",
+                "title": "Second draft",
+                "profile": {"schema_version": 2},
+                "scheduled_start_at": now,
+                "scheduled_end_at": now,
+                "ai_policy": "prohibited",
+                "revision": 0,
+                "teacher_id": "teacher-1",
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+
+        with pytest.raises(IntegrityError):
+            connection.execute(
+                versions.insert(),
+                {
+                    "id": "duplicate-source-revision",
+                    "plan_id": "legacy-draft",
+                    "profile_id": "duplicate-profile",
+                    "version": 3,
+                    "source_draft_id": "legacy-draft",
+                    "source_draft_revision": 1,
+                    "space_id": "space-1",
+                    "parent_algorithm_id": "parent-1",
+                    "profile": {"schema_version": 2},
+                    "content_hash": "d" * 64,
+                    "scheduled_start_at": now,
+                    "scheduled_end_at": now,
+                    "ai_policy": "prohibited",
+                    "published_at": now,
+                    "teacher_id": "teacher-1",
+                },
+            )
+
+
+def test_plan_series_downgrade_requires_backup_for_duplicate_draft_profiles(
+    tmp_path: Path,
+):
+    """Downgrading must not silently discard a profile reused by one plan series."""
+    database_url = f"sqlite:///{tmp_path / 'classroom-plan-series-downgrade.db'}"
+    config = migration_config(database_url)
+    now = datetime(2026, 8, 29, 8, 0, tzinfo=UTC)
+
+    command.upgrade(config, "head")
+    engine = create_engine(database_url)
+    reflected = Base.metadata.__class__()
+    reflected.reflect(engine)
+    drafts = reflected.tables["plan_drafts"]
+    with engine.begin() as connection:
+        for draft_id in ("draft-1", "draft-2"):
+            connection.execute(
+                drafts.insert(),
+                {
+                    "id": draft_id,
+                    "plan_id": "plan-1",
+                    "profile_id": "shared-profile",
+                    "space_id": "space-1",
+                    "parent_algorithm_id": "parent-1",
+                    "title": "Draft sharing profile",
+                    "profile": {"schema_version": 2},
+                    "scheduled_start_at": now,
+                    "scheduled_end_at": now,
+                    "ai_policy": "prohibited",
+                    "revision": 0,
+                    "teacher_id": "teacher-1",
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+
+    with pytest.raises(RuntimeError, match="plan_series_downgrade_requires_backup"):
+        command.downgrade(config, "0008_plan_authoring_sessions")
+
+    assert "plan_series" in inspect(engine).get_table_names()
 
 
 def test_student_brief_migration_has_session_scoped_submission_idempotency_key(

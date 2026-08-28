@@ -40,6 +40,16 @@ class PlanAuthoringSession(Base):
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class PlanSeries(Base):
+    __tablename__ = "plan_series"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    profile_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    space_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    parent_algorithm_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    latest_version: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
 class PlanDraft(Base):
     __tablename__ = "plan_drafts"
     __table_args__ = (
@@ -54,7 +64,8 @@ class PlanDraft(Base):
         ForeignKey("plan_authoring_sessions.id", ondelete="RESTRICT"),
         nullable=True,
     )
-    profile_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    plan_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    profile_id: Mapped[str] = mapped_column(String(64), nullable=False)
     space_id: Mapped[str] = mapped_column(String(128), nullable=False)
     parent_algorithm_id: Mapped[str] = mapped_column(String(128), nullable=False)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -74,12 +85,18 @@ class PlanVersion(Base):
     __table_args__ = (
         UniqueConstraint("profile_id", "version", name="uq_plan_versions_profile_version"),
         UniqueConstraint("plan_id", "version", name="uq_plan_versions_plan_version"),
+        UniqueConstraint(
+            "source_draft_id",
+            "source_draft_revision",
+            name="uq_plan_versions_source_draft_revision",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     plan_id: Mapped[str] = mapped_column(String(64), nullable=False)
     profile_id: Mapped[str] = mapped_column(String(64), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_draft_id: Mapped[str] = mapped_column(String(64), nullable=False)
     source_draft_revision: Mapped[int] = mapped_column(Integer, nullable=False)
     space_id: Mapped[str] = mapped_column(String(128), nullable=False)
     parent_algorithm_id: Mapped[str] = mapped_column(String(128), nullable=False)

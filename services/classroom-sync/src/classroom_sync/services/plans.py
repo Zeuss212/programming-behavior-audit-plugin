@@ -18,7 +18,13 @@ from classroom_sync.errors import (
     UpstreamUnavailableError,
     ValidationError,
 )
-from classroom_sync.models import AuditEvent, PlanAuthoringSession, PlanDraft, PlanVersion
+from classroom_sync.models import (
+    AuditEvent,
+    PlanAuthoringSession,
+    PlanDraft,
+    PlanSeries,
+    PlanVersion,
+)
 from classroom_sync.repositories import ClassroomRepository
 from classroom_sync.services.assessment_materials import AssessmentMaterialBundle
 from classroom_sync.services.publication_gate import PublicationGate
@@ -73,8 +79,8 @@ class PlanService:
         )
         self._validate_draft(draft)
         with self._session_factory.begin() as session:
+            repository = ClassroomRepository(session)
             if draft_input.authoring_session_id is not None:
-                repository = ClassroomRepository(session)
                 authoring = repository.get_authoring_session(
                     draft_input.authoring_session_id,
                     for_update=True,
@@ -85,6 +91,34 @@ class PlanService:
                     draft=draft,
                     teacher_id=teacher_id,
                 )
+                binding = repository.get_binding(
+                    draft.space_id,
+                    draft.parent_algorithm_id,
+                )
+                if binding is not None:
+                    series = repository.get_plan_series(binding.plan_id, for_update=True)
+                    if series is None:
+                        raise ConflictError("plan_series_not_found")
+                else:
+                    series = PlanSeries(
+                        id=draft.id,
+                        profile_id=draft.profile_id,
+                        space_id=draft.space_id,
+                        parent_algorithm_id=draft.parent_algorithm_id,
+                        latest_version=0,
+                    )
+                    session.add(series)
+            else:
+                series = PlanSeries(
+                    id=draft.id,
+                    profile_id=draft.profile_id,
+                    space_id=draft.space_id,
+                    parent_algorithm_id=draft.parent_algorithm_id,
+                    latest_version=0,
+                )
+                session.add(series)
+            draft.plan_id = series.id
+            draft.profile_id = series.profile_id
             session.add(draft)
             session.flush()
             self._audit(session, teacher_id, "plan_draft_created", "plan_draft", draft.id, now)
@@ -188,16 +222,19 @@ class PlanService:
                 )
                 self._publication_gate.require_ready(draft.profile, materials)
 
-            latest = repository.latest_plan_version(draft.id)
-            if latest is not None and latest.source_draft_revision == draft.revision:
+            series = repository.get_plan_series(draft.plan_id, for_update=True)
+            if series is None:
+                raise ConflictError("plan_series_not_found")
+            existing = repository.get_plan_version_for_source(draft.id, draft.revision)
+            if existing is not None:
                 if authoring is not None and authoring.status == "open":
                     self._close_authoring(authoring, draft=draft, now=now)
-                return latest
+                return existing
 
             if authoring is not None and authoring.status != "open":
                 raise ConflictError("plan_authoring_session_closed")
 
-            version = 1 if latest is None else latest.version + 1
+            version = series.latest_version + 1
             profile_content = {
                 **draft.profile,
                 "profile_id": draft.profile_id,
@@ -216,7 +253,7 @@ class PlanService:
             scheduled_end_at = self._utc_storage_instant(draft.scheduled_end_at)
             plan_content = {
                 "schema_version": 1,
-                "plan_id": draft.id,
+                "plan_id": draft.plan_id,
                 "version": version,
                 "space_id": draft.space_id,
                 "parent_algorithm_id": draft.parent_algorithm_id,
@@ -232,9 +269,10 @@ class PlanService:
 
             plan_version = PlanVersion(
                 id=str(uuid4()),
-                plan_id=draft.id,
+                plan_id=draft.plan_id,
                 profile_id=draft.profile_id,
                 version=version,
+                source_draft_id=draft.id,
                 source_draft_revision=draft.revision,
                 space_id=draft.space_id,
                 parent_algorithm_id=draft.parent_algorithm_id,
@@ -247,6 +285,7 @@ class PlanService:
                 teacher_id=teacher_id,
             )
             session.add(plan_version)
+            series.latest_version = version
             session.flush()
             draft.published_revision = draft.revision
             if authoring is not None:
@@ -339,7 +378,7 @@ class PlanService:
             raise ConflictError("plan_authoring_session_closed")
         if (
             authoring.status == "published"
-            and authoring.published_plan_id != draft.id
+            and authoring.published_plan_id != draft.plan_id
         ):
             raise ConflictError("plan_authoring_session_publish_mismatch")
 
@@ -352,7 +391,7 @@ class PlanService:
     ) -> None:
         authoring.status = "published"
         authoring.active_slot = None
-        authoring.published_plan_id = draft.id
+        authoring.published_plan_id = draft.plan_id
         authoring.closed_at = now
         authoring.updated_at = now
 

@@ -329,6 +329,111 @@ def test_v3_publish_closes_its_locked_authoring_session_in_the_same_transaction(
         assert session.get(PlanVersion, published.id) is not None
 
 
+def test_successive_authoring_sessions_reuse_plan_series_and_publish_exact_retry():
+    """Successive v3 authoring sessions publish one stable version lineage."""
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    repository_root = Path(__file__).resolve().parents[4]
+    schema_registry = ClassroomSchemaRegistry(repository_root / "contracts" / "classroom" / "v1")
+    now = datetime(2026, 8, 29, 8, 0, tzinfo=UTC)
+    materials = real_bundle("linked-list")
+    profile = profile_for(
+        materials,
+        ("REQ_LINK_TAIL_INSERT", "REQ_LINK_REVERSE"),
+    )
+    with session_factory.begin() as session:
+        session.add(
+            PlanAuthoringSession(
+                id="authoring-first",
+                teacher_id="teacher-1",
+                space_id=materials.space_id,
+                parent_algorithm_id=materials.parent_algorithm_id,
+                status="open",
+                active_slot=1,
+                suggestion_job_id=None,
+                published_plan_id=None,
+                created_at=now,
+                updated_at=now,
+                closed_at=None,
+            )
+        )
+    plan_service = PlanService(session_factory, schema_registry, clock=lambda: now)
+    assignment_service = AssignmentService(session_factory, clock=lambda: now)
+    first_draft = plan_service.create_draft(
+        PlanDraftInput(
+            authoring_session_id="authoring-first",
+            space_id=materials.space_id,
+            parent_algorithm_id=materials.parent_algorithm_id,
+            title="first linked list lesson",
+            profile=profile,
+            scheduled_start_at=now,
+            scheduled_end_at=now + timedelta(minutes=30),
+            ai_policy="prohibited",
+        ),
+        teacher_id="teacher-1",
+    )
+    first = plan_service.publish_draft(
+        first_draft.id,
+        teacher_id="teacher-1",
+        materials=materials,
+    )
+    assignment_service.sync_assignments(
+        first,
+        (StudentChildExperiment("student-1", "student-a", "child-1", "workbench-1"),),
+    )
+
+    with session_factory.begin() as session:
+        session.add(
+            PlanAuthoringSession(
+                id="authoring-second",
+                teacher_id="teacher-1",
+                space_id=materials.space_id,
+                parent_algorithm_id=materials.parent_algorithm_id,
+                status="open",
+                active_slot=1,
+                suggestion_job_id=None,
+                published_plan_id=None,
+                created_at=now,
+                updated_at=now,
+                closed_at=None,
+            )
+        )
+    second_draft = plan_service.create_draft(
+        PlanDraftInput(
+            authoring_session_id="authoring-second",
+            space_id=materials.space_id,
+            parent_algorithm_id=materials.parent_algorithm_id,
+            title="second linked list lesson",
+            profile=profile,
+            scheduled_start_at=now,
+            scheduled_end_at=now + timedelta(minutes=30),
+            ai_policy="prohibited",
+        ),
+        teacher_id="teacher-1",
+    )
+    second = plan_service.publish_draft(
+        second_draft.id,
+        teacher_id="teacher-1",
+        materials=materials,
+    )
+
+    assert first.plan_id == second.plan_id
+    assert first.profile_id == second.profile_id
+    assert (first.version, second.version) == (1, 2)
+    assert second.source_draft_id == second_draft.id
+
+    retried = plan_service.publish_draft(
+        second_draft.id,
+        teacher_id="teacher-1",
+        materials=materials,
+    )
+
+    assert retried.id == second.id
+    with session_factory() as session:
+        assert session.query(PlanVersion).filter_by(plan_id=first.plan_id).count() == 2
+
+
 def test_v3_publish_requires_the_draft_to_be_linked_to_an_authoring_session():
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)

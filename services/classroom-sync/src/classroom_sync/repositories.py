@@ -12,6 +12,7 @@ from classroom_sync.models import (
     MonitorSession,
     PlanAuthoringSession,
     PlanDraft,
+    PlanSeries,
     PlanVersion,
     StudentAssignment,
     StudentBrief,
@@ -67,6 +68,14 @@ class ClassroomRepository:
             )
         )
 
+    def get_plan_series(
+        self, plan_id: str, *, for_update: bool = False
+    ) -> PlanSeries | None:
+        statement = select(PlanSeries).where(PlanSeries.id == plan_id)
+        if for_update:
+            statement = statement.with_for_update()
+        return self.session.scalar(statement)
+
     def get_plan_suggestion_job(
         self, job_id: str, *, for_update: bool = False
     ) -> ClassroomPlanSuggestionJob | None:
@@ -91,6 +100,16 @@ class ClassroomRepository:
             select(PlanVersion).where(
                 PlanVersion.plan_id == plan_id,
                 PlanVersion.version == version,
+            )
+        )
+
+    def get_plan_version_for_source(
+        self, draft_id: str, revision: int
+    ) -> PlanVersion | None:
+        return self.session.scalar(
+            select(PlanVersion).where(
+                PlanVersion.source_draft_id == draft_id,
+                PlanVersion.source_draft_revision == revision,
             )
         )
 

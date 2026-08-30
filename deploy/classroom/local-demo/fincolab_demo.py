@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Lock
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -45,6 +46,26 @@ CODE_TEMPLATES_BY_FRAMEWORK = {
             "id": "template-behavior",
             "name": "BehaviorAudit starter",
             "version": "0.2.2",
+        }
+    ]
+}
+
+DEFAULT_DATASET_RESPONSE = {
+    "data": [
+        {
+            "dataset_name": "default_dataset",
+            "version_datas": [
+                {
+                    "id": "dataset-default",
+                    "name": "default_dataset",
+                    "version": "v1",
+                    "dataset_file_path": "algorithm_data",
+                    "data_type": "image",
+                    "annotation_type": "img_classification",
+                    "label_format": "ImageFolder",
+                    "description": "课程默认数据集",
+                }
+            ],
         }
     ]
 }
@@ -146,6 +167,24 @@ class DemoUser:
     role_name: str
     organization_id: str
     space_id: str
+
+
+@dataclass
+class DemoState:
+    algorithms: dict[str, dict[str, object]] = field(default_factory=dict)
+    workbenches: dict[str, dict[str, object]] = field(default_factory=dict)
+    next_algorithm_id: int = 1
+    lock: Lock = field(default_factory=Lock)
+
+
+class DemoFincolabServer(ThreadingHTTPServer):
+    def __init__(
+        self,
+        server_address: tuple[str, int],
+        handler_class: type[BaseHTTPRequestHandler],
+    ) -> None:
+        super().__init__(server_address, handler_class)
+        self.demo_state = DemoState()
 
 
 USERS = {
@@ -387,6 +426,11 @@ class DemoFincolabHandler(BaseHTTPRequestHandler):
                 {"items": CODE_TEMPLATES_BY_FRAMEWORK.get(framework_id, [])},
             )
             return
+        if parts == ["v1", "spaces", COURSE_ID, "datasets"]:
+            if not self._require_course_access(user):
+                return
+            self._reply(HTTPStatus.OK, DEFAULT_DATASET_RESPONSE)
+            return
         if len(parts) == 6 and parts[:3] == ["v1", "organizations", user.organization_id]:
             if parts[3:5] == ["spaces", user.space_id] and parts[5] == "users":
                 self._reply(HTTPStatus.OK, _pagination(_space_members(user.space_id)))
@@ -554,7 +598,7 @@ class DemoFincolabHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    ThreadingHTTPServer(("0.0.0.0", 8080), DemoFincolabHandler).serve_forever()
+    DemoFincolabServer(("0.0.0.0", 8080), DemoFincolabHandler).serve_forever()
 
 
 if __name__ == "__main__":

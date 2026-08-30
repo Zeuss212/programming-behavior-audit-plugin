@@ -11,7 +11,6 @@ import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from http import HTTPStatus
-from http.server import ThreadingHTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Thread
@@ -71,7 +70,7 @@ class DemoClient:
 @contextmanager
 def demo_client() -> Iterator[DemoClient]:
     facade = _load_facade_module()
-    server = ThreadingHTTPServer(("127.0.0.1", 0), facade.DemoFincolabHandler)
+    server = facade.DemoFincolabServer(("127.0.0.1", 0), facade.DemoFincolabHandler)
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -166,6 +165,36 @@ def test_teacher_can_load_frameworks_and_templates_for_the_create_dialog():
         )
         assert status == HTTPStatus.OK
         assert templates == {"items": []}
+
+
+def test_teacher_can_resolve_the_course_default_dataset_for_creation() -> None:
+    with demo_client() as client:
+        status, payload = client.request(
+            "GET",
+            "/v1/spaces/course-001/datasets?name=&search_mode=like&page=1&limit=100",
+            token="teacher-token",
+        )
+
+    assert status == HTTPStatus.OK
+    assert payload == {
+        "data": [
+            {
+                "dataset_name": "default_dataset",
+                "version_datas": [
+                    {
+                        "id": "dataset-default",
+                        "name": "default_dataset",
+                        "version": "v1",
+                        "dataset_file_path": "algorithm_data",
+                        "data_type": "image",
+                        "annotation_type": "img_classification",
+                        "label_format": "ImageFolder",
+                        "description": "课程默认数据集",
+                    }
+                ],
+            }
+        ]
+    }
 
 
 @pytest.mark.parametrize(

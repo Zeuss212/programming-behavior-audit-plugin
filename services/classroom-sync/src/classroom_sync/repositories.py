@@ -18,6 +18,7 @@ from classroom_sync.models import (
     PlanVersion,
     StudentAssignment,
     StudentBrief,
+    TeacherReview,
 )
 
 
@@ -237,6 +238,21 @@ class ClassroomRepository:
                 select(StudentBrief)
                 .where(StudentBrief.session_id.in_(session_ids))
                 .order_by(StudentBrief.session_id, StudentBrief.revision.desc())
+            )
+        )
+
+    def list_teacher_reviews_for_sessions(self, session_ids: list[str]) -> list[TeacherReview]:
+        if not session_ids:
+            return []
+        return list(
+            self.session.scalars(
+                select(TeacherReview)
+                .where(TeacherReview.session_id.in_(session_ids))
+                .order_by(
+                    TeacherReview.session_id,
+                    TeacherReview.created_at.desc(),
+                    TeacherReview.id.desc(),
+                )
             )
         )
 

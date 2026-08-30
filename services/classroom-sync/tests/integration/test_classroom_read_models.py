@@ -25,6 +25,7 @@ from classroom_sync.models import (
     PlanVersion,
     StudentAssignment,
     StudentBrief,
+    TeacherReview,
 )
 from classroom_sync.services.assignments import AssignmentService
 from classroom_sync.services.briefs import BriefService
@@ -183,8 +184,50 @@ def classroom_read_app():
                 status="completed",
                 data_completeness="complete",
                 submission_reason="student_manual",
-                payload={"summary": "学生完成字典读取练习。"},
+                payload={
+                    "summary": "学生完成字典读取练习。",
+                    "knowledge_points": [
+                        {
+                            "knowledge_point_id": "KP_DICT",
+                            "name": "字典读取",
+                            "status": "partial",
+                            "evidence_refs": ["chunk-1#event-1"],
+                            "gap": "还需确认缺失键处理。",
+                        },
+                        {
+                            "knowledge_point_id": "KP_QUERY",
+                            "name": "安全查询",
+                            "status": "partial",
+                            "evidence_refs": ["chunk-1#event-2"],
+                            "gap": "尚未覆盖默认值场景。",
+                        },
+                        {
+                            "knowledge_point_id": "KP_BOUNDARY",
+                            "name": "边界处理",
+                            "status": "not_demonstrated",
+                            "evidence_refs": ["session#missing-evidence"],
+                            "gap": "缺少相关运行证据。",
+                        },
+                    ],
+                },
                 generated_at=NOW + timedelta(minutes=11),
+            )
+        )
+        session.add(
+            TeacherReview(
+                id="review-1",
+                session_id=OWN_SESSION_ID,
+                teacher_id="teacher-1",
+                payload={
+                    "knowledge_point_reviews": [
+                        {
+                            "knowledge_point_id": "KP_DICT",
+                            "status": "mastered",
+                            "reason": "课堂追问能够解释缺失键处理。",
+                        }
+                    ]
+                },
+                created_at=NOW + timedelta(minutes=12),
             )
         )
 
@@ -248,6 +291,33 @@ def test_teacher_reads_own_experiment_plan_and_allowlisted_monitoring(classroom_
                 "status": "completed",
                 "revision": 1,
                 "ai_analysis_status": "not_requested",
+                "mastery_overview": {
+                    "counts": {
+                        "mastered": 1,
+                        "partial": 1,
+                        "not_mastered": 0,
+                        "evidence_insufficient": 1,
+                        "review_required": 0,
+                    },
+                    "attention_items": [
+                        {
+                            "knowledge_point_id": "KP_QUERY",
+                            "name": "安全查询",
+                            "status": "partial",
+                            "reason": "尚未覆盖默认值场景。",
+                            "evidence_count": 1,
+                        },
+                        {
+                            "knowledge_point_id": "KP_BOUNDARY",
+                            "name": "边界处理",
+                            "status": "evidence_insufficient",
+                            "reason": "缺少相关运行证据。",
+                            "evidence_count": 0,
+                        },
+                    ],
+                    "data_completeness": "complete",
+                    "source": "teacher",
+                },
             },
         },
         {

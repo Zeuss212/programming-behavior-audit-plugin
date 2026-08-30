@@ -57,6 +57,8 @@ cp deploy/classroom/local-demo/.env.ai.example deploy/classroom/local-demo/.env.
 
 ## 教师—学生演示顺序
 
+教师端的三步“创建实验”弹窗可在本地演示中完整使用：它会为所选学生创建关联实验和本地工作台。这些新建记录只保存在 `demo-fincolab` 进程内；重启该容器后会恢复本文档所述的固定演示数据。
+
 1. 在独立浏览器 profile A 打开 http://127.0.0.1:5175，以 `1 / 1` 登录教师端。
 2. 打开 admin/projects，找到 parent-experiment-001 的“课堂方案”，填写计划并发布，然后同步学生任务。
 3. 在独立浏览器 profile B 打开相同地址，以 `2 / 2` 登录学生端，进入课堂任务。

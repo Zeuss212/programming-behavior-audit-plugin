@@ -125,6 +125,49 @@ def test_student_short_login_returns_stable_student_identity():
     assert login["role"] == "student"
 
 
+def test_teacher_can_load_frameworks_and_templates_for_the_create_dialog():
+    with demo_client() as client:
+        status, frameworks = client.request(
+            "GET",
+            "/v1/ai_framework",
+            token="teacher-token",
+        )
+        assert status == HTTPStatus.OK
+        assert frameworks == {
+            "data": [
+                {
+                    "id": "framework-behavior",
+                    "name": "PyTorch-2.5.1-JupyterLab4-BehaviorAudit-0.2.2",
+                    "frame_type": "PyTorch",
+                }
+            ]
+        }
+
+        status, templates = client.request(
+            "GET",
+            "/v1/spaces/course-001/template?framework_id=framework-behavior",
+            token="teacher-token",
+        )
+        assert status == HTTPStatus.OK
+        assert templates == {
+            "items": [
+                {
+                    "id": "template-behavior",
+                    "name": "BehaviorAudit starter",
+                    "version": "0.2.2",
+                }
+            ]
+        }
+
+        status, templates = client.request(
+            "GET",
+            "/v1/spaces/course-001/template?framework_id=unknown-framework",
+            token="teacher-token",
+        )
+        assert status == HTTPStatus.OK
+        assert templates == {"items": []}
+
+
 @pytest.mark.parametrize(
     "parent_algorithm_id",
     ["sequence-list-experiment-001", "linked-list-experiment-002"],

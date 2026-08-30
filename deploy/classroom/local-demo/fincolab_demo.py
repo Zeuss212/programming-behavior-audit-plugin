@@ -13,7 +13,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 LOCAL_ORGANIZATION_ID = "local-org"
 NEGATIVE_ORGANIZATION_ID = "local-org-negative"
@@ -29,6 +29,24 @@ PARENT_PROJECT_NAMES = {
     PARENT_ALGORITHM_ID: "字典读取课堂练习",
     SEQUENCE_LIST_PARENT_ALGORITHM_ID: "顺序表基本操作",
     LINKED_LIST_PARENT_ALGORITHM_ID: "链表尾插与逆置",
+}
+
+AI_FRAMEWORKS = [
+    {
+        "id": "framework-behavior",
+        "name": "PyTorch-2.5.1-JupyterLab4-BehaviorAudit-0.2.2",
+        "frame_type": "PyTorch",
+    }
+]
+
+CODE_TEMPLATES_BY_FRAMEWORK = {
+    "framework-behavior": [
+        {
+            "id": "template-behavior",
+            "name": "BehaviorAudit starter",
+            "version": "0.2.2",
+        }
+    ]
 }
 
 MATERIAL_BUNDLE_RESOURCES = {
@@ -338,6 +356,9 @@ class DemoFincolabHandler(BaseHTTPRequestHandler):
         if parsed.path == "/v1/organizations/spaces":
             self._reply(HTTPStatus.OK, visible_spaces(user))
             return
+        if parsed.path == "/v1/ai_framework":
+            self._reply(HTTPStatus.OK, {"data": AI_FRAMEWORKS})
+            return
         if parsed.path == "/v1/quota/spec/all":
             self._reply(
                 HTTPStatus.OK,
@@ -357,6 +378,15 @@ class DemoFincolabHandler(BaseHTTPRequestHandler):
             return
 
         parts = [part for part in parsed.path.split("/") if part]
+        if parts == ["v1", "spaces", COURSE_ID, "template"]:
+            if not self._require_course_access(user):
+                return
+            framework_id = parse_qs(parsed.query).get("framework_id", [""])[0]
+            self._reply(
+                HTTPStatus.OK,
+                {"items": CODE_TEMPLATES_BY_FRAMEWORK.get(framework_id, [])},
+            )
+            return
         if len(parts) == 6 and parts[:3] == ["v1", "organizations", user.organization_id]:
             if parts[3:5] == ["spaces", user.space_id] and parts[5] == "users":
                 self._reply(HTTPStatus.OK, _pagination(_space_members(user.space_id)))

@@ -103,6 +103,39 @@ def profile_draft(question: str) -> dict[str, object]:
     }
 
 
+def test_create_draft_persists_plan_series_before_foreign_key_draft() -> None:
+    engine = create_engine("sqlite://")
+
+    @event.listens_for(engine, "connect")
+    def enable_foreign_keys(dbapi_connection: object, _record: object) -> None:
+        dbapi_connection.execute("PRAGMA foreign_keys = ON")  # type: ignore[attr-defined]
+
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    repository_root = Path(__file__).resolve().parents[4]
+    schema_registry = ClassroomSchemaRegistry(repository_root / "contracts" / "classroom" / "v1")
+    now = datetime(2026, 8, 30, 14, 0, tzinfo=UTC)
+    service = PlanService(session_factory, schema_registry, clock=lambda: now)
+
+    draft = service.create_draft(
+        PlanDraftInput(
+            space_id="course-001",
+            parent_algorithm_id="demo-algorithm-0001",
+            title="local experiment",
+            profile=profile_draft("local experiment"),
+            scheduled_start_at=now,
+            scheduled_end_at=now + timedelta(days=30),
+            ai_policy="prohibited",
+        ),
+        teacher_id="teacher001",
+    )
+
+    with session_factory() as session:
+        series = session.get(PlanSeries, draft.plan_id)
+        assert series is not None
+        assert series.id == draft.plan_id
+
+
 @pytest.mark.parametrize("existing_binding", [False, True])
 def test_plan_scope_lock_serializes_existing_and_absent_bindings_on_sqlite(
     tmp_path: Path,

@@ -129,6 +129,7 @@ class PlanService:
                     latest_version=0,
                 )
                 session.add(series)
+            session.flush([series])
             draft.plan_id = series.id
             draft.profile_id = series.profile_id
             session.add(draft)

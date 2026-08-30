@@ -371,6 +371,13 @@ def _student_project(
     }
 
 
+def _parent_id_from_description(description: object) -> str:
+    if not isinstance(description, str):
+        return ""
+    match = re.match(r"^\[FINCOLAB_PARENT_PROJECT_ID:([^\]]+)\]", description)
+    return match.group(1) if match is not None else ""
+
+
 def _pagination(rows: list[dict[str, object]]) -> dict[str, object]:
     return {"data": rows, "current_page": 1, "total_page": 1, "total_count": len(rows)}
 
@@ -680,11 +687,27 @@ class DemoFincolabHandler(BaseHTTPRequestHandler):
             ]
             state = self._demo_state()
             with state.lock:
+                dynamic_algorithms = [
+                    dict(algorithm) for algorithm in state.algorithms.values()
+                ]
+            if user.role_name == "teacher":
+                rows.extend(dynamic_algorithms)
+            else:
+                own_algorithms = [
+                    algorithm
+                    for algorithm in dynamic_algorithms
+                    if algorithm.get("username") == user.username
+                ]
+                referenced_parent_ids = {
+                    parent_id
+                    for algorithm in own_algorithms
+                    if (parent_id := _parent_id_from_description(algorithm.get("description")))
+                }
                 rows.extend(
-                    dict(algorithm)
-                    for algorithm in state.algorithms.values()
-                    if user.role_name == "teacher"
-                    or algorithm.get("username") == user.username
+                    algorithm
+                    for algorithm in dynamic_algorithms
+                    if algorithm.get("username") == user.username
+                    or algorithm.get("id") in referenced_parent_ids
                 )
             self._reply(HTTPStatus.OK, _pagination(rows))
             return

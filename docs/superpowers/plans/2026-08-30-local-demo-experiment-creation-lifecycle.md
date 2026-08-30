@@ -138,7 +138,7 @@ student_payload = {
 }
 ```
 
-Assert parent owner `teacher001`; student owner `student001`; workbench preserves `{cpu: 2, memory: 4, gpu: 0}` and returns `RUNNING`; the teacher list contains both; the student list contains its child but not the dynamic parent; deleting child and parent removes them and the child workbench.
+Assert parent owner `teacher001`; student owner `student001`; workbench preserves `{cpu: 2, memory: 4, gpu: 0}` and returns `RUNNING`; the teacher list contains both; the student list contains its child and the referenced parent metadata while direct parent detail remains forbidden; deleting child and parent removes them and the child workbench.
 
 - [ ] **Step 2: Run the lifecycle test and verify RED**
 
@@ -171,7 +171,7 @@ Reject student writes with HTTP 403 `demo_resource_access_denied`. Reject missin
 
 - [ ] **Step 5: Implement workbench creation and dynamic reads/deletion**
 
-Create `workbench-{algorithm_id}` with `project_id`, `space_id`, owner, `RUNNING`, the local Jupyter URL, and exact `container_resource_json`. Update the algorithm workbench fields. Teachers see all dynamic records; students see only records whose owner equals their username. Delete only dynamic records and their workbench; fixed projects remain protected.
+Create `workbench-{algorithm_id}` with `project_id`, `space_id`, owner, `RUNNING`, the local Jupyter URL, and exact `container_resource_json`. Update the algorithm workbench fields. Teachers see all dynamic records; students see their own records plus only the parent metadata referenced by those records, while dynamic parent detail stays teacher-only. Delete only dynamic records and their workbench; fixed projects remain protected.
 
 - [ ] **Step 6: Add denial and state-isolation tests**
 

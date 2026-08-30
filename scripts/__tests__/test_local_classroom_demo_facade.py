@@ -266,7 +266,15 @@ def test_teacher_can_create_list_and_rollback_a_parent_and_student_experiment() 
         assert status == HTTPStatus.OK
         student_project_ids = {str(item["id"]) for item in student_projects["data"]}
         assert student_id in student_project_ids
-        assert parent_id not in student_project_ids
+        assert parent_id in student_project_ids
+
+        status, payload = client.request(
+            "GET",
+            f"/v1/spaces/course-001/algorithm_development/{parent_id}",
+            token="student001-token",
+        )
+        assert status == HTTPStatus.FORBIDDEN
+        assert payload == {"detail": "demo_resource_access_denied"}
 
         status, student_workbench = client.request(
             "GET",

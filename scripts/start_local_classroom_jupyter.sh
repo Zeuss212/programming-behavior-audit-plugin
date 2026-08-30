@@ -19,6 +19,15 @@ export JUPYTERLAB_BEHAVIOR_AUDIT_PLATFORM_MODE=student
 export JUPYTERLAB_BEHAVIOR_AUDIT_SYNC_BASE_URL=http://127.0.0.1:18081/classroom-api
 export JUPYTERLAB_BEHAVIOR_AUDIT_ALLOW_INSECURE_LOOPBACK=true
 export JUPYTERLAB_BEHAVIOR_AUDIT_LOG_DIR="$demo_root/behavior-audit"
+local_no_proxy=127.0.0.1,localhost
+if [ -n "${NO_PROXY:-}" ]; then
+  local_no_proxy="$local_no_proxy,$NO_PROXY"
+fi
+if [ -n "${no_proxy:-}" ]; then
+  local_no_proxy="$local_no_proxy,$no_proxy"
+fi
+export NO_PROXY="$local_no_proxy"
+export no_proxy="$local_no_proxy"
 
 exec uv run --refresh --no-project --with "$wheel" --with 'jupyterlab>=4,<5' jupyter lab \
   --ServerApp.ip=127.0.0.1 \

@@ -87,10 +87,11 @@ def test_teacher_login_returns_usable_roster_and_parent_project():
         status, login = client.request(
             "POST",
             "/v1/login",
-            payload={"username": "teacher001", "password": "local-demo-teacher"},
+            payload={"username": "1", "password": "1"},
         )
         assert status == HTTPStatus.OK
         assert login["token"] == "teacher-token"
+        assert login["username"] == "teacher001"
 
         status, roster = client.request(
             "GET",
@@ -108,6 +109,20 @@ def test_teacher_login_returns_usable_roster_and_parent_project():
         assert status == HTTPStatus.OK
         assert parent["id"] == "parent-experiment-001"
         assert parent["username"] == "teacher001"
+
+
+def test_student_short_login_returns_stable_student_identity():
+    with demo_client() as client:
+        status, login = client.request(
+            "POST",
+            "/v1/login",
+            payload={"username": "2", "password": "2"},
+        )
+
+    assert status == HTTPStatus.OK
+    assert login["token"] == "student001-token"
+    assert login["username"] == "student001"
+    assert login["role"] == "student"
 
 
 @pytest.mark.parametrize(
@@ -496,16 +511,29 @@ def test_facade_rejects_cross_course_and_unknown_bearers(
         assert payload == {"detail": expected_detail}
 
 
-def test_facade_rejects_invalid_login_and_preserves_legacy_student_token_alias():
+@pytest.mark.parametrize(
+    ("username", "password"),
+    [
+        ("teacher001", "local-demo-teacher"),
+        ("student001", "local-demo-student"),
+    ],
+)
+def test_facade_rejects_old_login_credentials(
+    username: str,
+    password: str,
+):
     with demo_client() as client:
         status, payload = client.request(
             "POST",
             "/v1/login",
-            payload={"username": "student001", "password": "incorrect"},
+            payload={"username": username, "password": password},
         )
         assert status == HTTPStatus.UNAUTHORIZED
         assert payload == {"detail": "demo_login_rejected"}
 
+
+def test_facade_preserves_legacy_student_token_alias():
+    with demo_client() as client:
         status, user = client.request("GET", "/v1/user/info", token="student-token")
         assert status == HTTPStatus.OK
         assert user["username"] == "student001"

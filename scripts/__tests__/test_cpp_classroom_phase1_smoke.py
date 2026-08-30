@@ -88,8 +88,8 @@ class FixtureBackend:
         assert token is None
         assert (method, path) == ("POST", "/v1/login")
         assert payload == {
-            "username": "teacher001",
-            "password": "local-demo-teacher",
+            "username": "1",
+            "password": "1",
         }
         return 200, {"token": "teacher-token"}
 

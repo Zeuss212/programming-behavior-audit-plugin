@@ -302,7 +302,7 @@ def run_phase_one_smoke(
         "POST",
         "/v1/login",
         200,
-        payload={"username": "teacher001", "password": "local-demo-teacher"},
+        payload={"username": "1", "password": "1"},
     )
     teacher_token = _required_string(login, "token", "teacher login")
 

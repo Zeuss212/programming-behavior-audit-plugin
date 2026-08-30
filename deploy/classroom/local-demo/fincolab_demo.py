@@ -131,19 +131,19 @@ class DemoUser:
 
 
 USERS = {
-    "teacher001": DemoUser(
+    "1": DemoUser(
         "teacher001",
         "teacher001",
-        "local-demo-teacher",
+        "1",
         "teacher-token",
         "teacher",
         LOCAL_ORGANIZATION_ID,
         COURSE_ID,
     ),
-    "student001": DemoUser(
+    "2": DemoUser(
         "student001",
         "student001",
-        "local-demo-student",
+        "2",
         "student001-token",
         "student",
         LOCAL_ORGANIZATION_ID,
@@ -183,7 +183,7 @@ for _index in range(3, _local_student_count() + 2):
         COURSE_ID,
     )
 
-TOKEN_ALIASES = {"student-token": USERS["student001"]}
+TOKEN_ALIASES = {"student-token": USERS["2"]}
 
 
 def authenticate_bearer(token: str) -> DemoUser | None:

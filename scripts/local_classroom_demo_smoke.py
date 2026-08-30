@@ -237,8 +237,8 @@ def run_local_demo_smoke(
     health = _require_status(facade_base_url, "GET", "/health/live", 200)
     if health.get("status") != "live":
         raise LocalDemoSmokeFailure("local façade health payload is invalid")
-    _require_login(facade_base_url, "teacher001", "local-demo-teacher", expected_teacher_token)
-    _require_login(facade_base_url, "student001", "local-demo-student", "student001-token")
+    _require_login(facade_base_url, "1", "1", expected_teacher_token)
+    _require_login(facade_base_url, "2", "2", "student001-token")
     denied = _require_status(
         facade_base_url,
         "GET",

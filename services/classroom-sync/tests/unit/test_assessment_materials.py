@@ -17,7 +17,7 @@ from pydantic import ValidationError as PydanticValidationError
 from classroom_sync.auth.fincolab import Principal
 from classroom_sync.auth.fincolab_materials import FincolabAssessmentMaterialGateway
 from classroom_sync.canonical import sha256_json
-from classroom_sync.errors import UpstreamContractError, UpstreamUnavailableError
+from classroom_sync.errors import NotFoundError, UpstreamContractError, UpstreamUnavailableError
 from classroom_sync.services.assessment_materials import (
     AssessmentMaterialBundle,
     AssessmentMaterialService,
@@ -427,3 +427,25 @@ def test_fincolab_gateway_maps_transport_and_schema_failures_to_stable_codes(
             "space-1",
             "parent-1",
         )
+
+
+def test_fincolab_gateway_maps_missing_optional_materials_to_legacy_fallback() -> None:
+    gateway = FincolabAssessmentMaterialGateway(
+        base_url="https://fincolab.example",
+        client=httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _: streamed_json_response(
+                    {"detail": "demo_endpoint_not_found"}, status_code=404
+                )
+            )
+        ),
+    )
+
+    with pytest.raises(NotFoundError, match="assessment_materials_not_found") as error:
+        gateway.get_bundle(
+            Principal("teacher-1", "teacher-a", "resolved-token"),
+            "course-001",
+            "demo-algorithm-0001",
+        )
+
+    assert error.value.retryable is False

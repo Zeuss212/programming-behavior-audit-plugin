@@ -13,6 +13,7 @@ from classroom_sync.auth.fincolab import Principal
 from classroom_sync.errors import (
     AuthenticationError,
     AuthorizationError,
+    NotFoundError,
     UpstreamContractError,
     UpstreamUnavailableError,
 )
@@ -112,6 +113,8 @@ class FincolabAssessmentMaterialGateway:
             raise AuthenticationError("upstream_unauthorized")
         if response.status_code == 403:
             raise AuthorizationError("upstream_forbidden")
+        if response.status_code == 404:
+            raise NotFoundError("assessment_materials_not_found")
         if response.status_code >= 500:
             raise UpstreamUnavailableError("assessment_materials_upstream_unavailable")
         if not response.is_success:

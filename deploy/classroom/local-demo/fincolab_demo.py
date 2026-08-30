@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import time
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -469,6 +471,26 @@ class DemoFincolabHandler(BaseHTTPRequestHandler):
             if self._require_user() is not None:
                 self._reply(HTTPStatus.OK, {})
             return
+
+        user = self._require_user()
+        if user is None:
+            return
+        parts = [part for part in parsed.path.split("/") if part]
+        if len(parts) >= 3 and parts[:3] == ["v1", "spaces", COURSE_ID]:
+            if not self._require_course_access(user):
+                return
+            if not self._require_teacher_write(user):
+                return
+            if parts == ["v1", "spaces", COURSE_ID, "algorithm_development"]:
+                self._create_algorithm()
+                return
+            if (
+                len(parts) == 6
+                and parts[:4] == ["v1", "spaces", COURSE_ID, "algorithm_development"]
+                and parts[5] == "workbench"
+            ):
+                self._create_workbench(parts[4])
+                return
         self._reply(HTTPStatus.METHOD_NOT_ALLOWED, {"detail": "demo_method_not_allowed"})
 
     def do_PUT(self) -> None:  # noqa: N802
@@ -478,17 +500,26 @@ class DemoFincolabHandler(BaseHTTPRequestHandler):
         self._reply(HTTPStatus.METHOD_NOT_ALLOWED, {"detail": "demo_method_not_allowed"})
 
     def do_DELETE(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        user = self._require_user()
+        if user is None:
+            return
+        parts = [part for part in parsed.path.split("/") if part]
+        if (
+            len(parts) == 5
+            and parts[:4] == ["v1", "spaces", COURSE_ID, "algorithm_development"]
+        ):
+            if not self._require_course_access(user):
+                return
+            if not self._require_teacher_write(user):
+                return
+            self._delete_algorithm(parts[4])
+            return
         self._reply(HTTPStatus.METHOD_NOT_ALLOWED, {"detail": "demo_method_not_allowed"})
 
     def _login(self) -> None:
-        try:
-            length = int(self.headers.get("Content-Length", "0"))
-            payload = json.loads(self.rfile.read(length).decode("utf-8"))
-        except (UnicodeDecodeError, ValueError):
-            self._reply(HTTPStatus.BAD_REQUEST, {"detail": "demo_login_payload_invalid"})
-            return
-        if not isinstance(payload, dict):
-            self._reply(HTTPStatus.BAD_REQUEST, {"detail": "demo_login_payload_invalid"})
+        payload = self._read_json_object("demo_login_payload_invalid")
+        if payload is None:
             return
         username = payload.get("username")
         password = payload.get("password")
@@ -507,6 +538,132 @@ class DemoFincolabHandler(BaseHTTPRequestHandler):
             },
         )
 
+    def _create_algorithm(self) -> None:
+        payload = self._read_json_object("demo_payload_invalid")
+        if payload is None:
+            return
+        required_fields = ("name", "framework_id", "project_type", "dataset_id")
+        if any(
+            not isinstance(payload.get(field_name), str)
+            or not str(payload[field_name]).strip()
+            for field_name in required_fields
+        ):
+            self._reply(HTTPStatus.BAD_REQUEST, {"detail": "demo_payload_invalid"})
+            return
+
+        now = str(int(time.time()))
+        name = str(payload["name"]).strip()
+        owner = self._algorithm_owner(name)
+        state = self._demo_state()
+        with state.lock:
+            algorithm_id = f"demo-algorithm-{state.next_algorithm_id:04d}"
+            state.next_algorithm_id += 1
+            algorithm = {
+                "id": algorithm_id,
+                "name": name,
+                "username": owner,
+                "description": str(payload.get("description") or ""),
+                "framework_id": str(payload["framework_id"]),
+                "project_type": str(payload["project_type"]),
+                "dataset_id": str(payload["dataset_id"]),
+                "dataset_name": str(payload.get("dataset_name") or ""),
+                "template_id": str(payload.get("template_id") or ""),
+                "upload_id": str(payload.get("upload_id") or ""),
+                "workbench_id": "",
+                "workbench_status": "NOT_STARTED",
+                "created_at": now,
+                "updated_at": now,
+            }
+            state.algorithms[algorithm_id] = algorithm
+        self._reply(HTTPStatus.CREATED, algorithm)
+
+    def _create_workbench(self, algorithm_id: str) -> None:
+        payload = self._read_json_object("demo_payload_invalid")
+        if payload is None:
+            return
+        resource = payload.get("container_resource_json")
+        if not isinstance(resource, dict) or any(
+            not isinstance(resource.get(field_name), (int, float))
+            for field_name in ("cpu", "memory", "gpu")
+        ):
+            self._reply(HTTPStatus.BAD_REQUEST, {"detail": "demo_payload_invalid"})
+            return
+
+        state = self._demo_state()
+        with state.lock:
+            algorithm = state.algorithms.get(algorithm_id)
+            if algorithm is None:
+                self._reply(HTTPStatus.NOT_FOUND, {"detail": "demo_endpoint_not_found"})
+                return
+            workbench_id = f"workbench-{algorithm_id}"
+            now = str(int(time.time()))
+            workbench = {
+                "id": workbench_id,
+                "project_id": algorithm_id,
+                "space_id": COURSE_ID,
+                "username": algorithm["username"],
+                "workbench_status": "RUNNING",
+                "jupyter_url": "http://127.0.0.1:8888/lab",
+                "container_resource_json": {
+                    field_name: resource[field_name]
+                    for field_name in ("cpu", "memory", "gpu")
+                },
+                "created_at": now,
+                "updated_at": now,
+            }
+            state.workbenches[workbench_id] = workbench
+            algorithm.update(
+                {
+                    "workbench_id": workbench_id,
+                    "workbench_status": "RUNNING",
+                    "jupyter_url": workbench["jupyter_url"],
+                    "updated_at": now,
+                }
+            )
+        self._reply(HTTPStatus.CREATED, workbench)
+
+    def _delete_algorithm(self, algorithm_id: str) -> None:
+        state = self._demo_state()
+        with state.lock:
+            algorithm = state.algorithms.pop(algorithm_id, None)
+            if algorithm is None:
+                detail = (
+                    "demo_resource_access_denied"
+                    if algorithm_id in PARENT_PROJECT_NAMES
+                    else "demo_endpoint_not_found"
+                )
+                status = (
+                    HTTPStatus.FORBIDDEN
+                    if algorithm_id in PARENT_PROJECT_NAMES
+                    else HTTPStatus.NOT_FOUND
+                )
+                self._reply(status, {"detail": detail})
+                return
+            workbench_id = algorithm.get("workbench_id")
+            if isinstance(workbench_id, str) and workbench_id:
+                state.workbenches.pop(workbench_id, None)
+        self._reply(HTTPStatus.OK, {})
+
+    def _read_json_object(self, invalid_detail: str) -> dict[str, object] | None:
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            self._reply(HTTPStatus.BAD_REQUEST, {"detail": invalid_detail})
+            return None
+        if not isinstance(payload, dict):
+            self._reply(HTTPStatus.BAD_REQUEST, {"detail": invalid_detail})
+            return None
+        return payload
+
+    def _algorithm_owner(self, name: str) -> str:
+        match = re.fullmatch(r"exp-(.+)-([A-Za-z0-9]{4})", name)
+        if match is not None:
+            username = match.group(1)
+            if any(student.username == username for student in _course_students()):
+                return username
+        return "teacher001"
+
     def _handle_course_algorithm_get(self, user: DemoUser, tail: list[str]) -> None:
         if not tail:
             # The student UI matches its private child against the teacher's
@@ -521,9 +678,46 @@ class DemoFincolabHandler(BaseHTTPRequestHandler):
                     for parent_id in PARENT_PROJECT_NAMES
                 ],
             ]
+            state = self._demo_state()
+            with state.lock:
+                rows.extend(
+                    dict(algorithm)
+                    for algorithm in state.algorithms.values()
+                    if user.role_name == "teacher"
+                    or algorithm.get("username") == user.username
+                )
             self._reply(HTTPStatus.OK, _pagination(rows))
             return
         algorithm_id = tail[0]
+        state = self._demo_state()
+        with state.lock:
+            dynamic_algorithm = state.algorithms.get(algorithm_id)
+            algorithm = dict(dynamic_algorithm) if dynamic_algorithm is not None else None
+            if len(tail) == 3 and tail[1] == "workbench":
+                dynamic_workbench = state.workbenches.get(tail[2])
+                workbench = (
+                    dict(dynamic_workbench) if dynamic_workbench is not None else None
+                )
+            else:
+                workbench = None
+        if algorithm is not None:
+            if user.role_name != "teacher" and algorithm.get("username") != user.username:
+                self._reply(HTTPStatus.FORBIDDEN, {"detail": "demo_resource_access_denied"})
+                return
+            if len(tail) == 1:
+                self._reply(HTTPStatus.OK, algorithm)
+                return
+            if tail[1:2] == ["workbench"]:
+                if len(tail) == 3 and workbench is not None:
+                    self._reply(HTTPStatus.OK, workbench)
+                else:
+                    self._reply(HTTPStatus.NOT_FOUND, {"detail": "demo_endpoint_not_found"})
+                return
+            self._reply(HTTPStatus.NOT_FOUND, {"detail": "demo_endpoint_not_found"})
+            return
+        if algorithm_id.startswith("demo-algorithm-"):
+            self._reply(HTTPStatus.NOT_FOUND, {"detail": "demo_endpoint_not_found"})
+            return
         if algorithm_id in PARENT_PROJECT_NAMES:
             if user.role_name != "teacher":
                 self._reply(HTTPStatus.FORBIDDEN, {"detail": "demo_resource_access_denied"})
@@ -584,6 +778,18 @@ class DemoFincolabHandler(BaseHTTPRequestHandler):
             return True
         self._reply(HTTPStatus.FORBIDDEN, {"detail": "demo_course_access_denied"})
         return False
+
+    def _require_teacher_write(self, user: DemoUser) -> bool:
+        if user.role_name == "teacher":
+            return True
+        self._reply(HTTPStatus.FORBIDDEN, {"detail": "demo_resource_access_denied"})
+        return False
+
+    def _demo_state(self) -> DemoState:
+        server = self.server
+        if not isinstance(server, DemoFincolabServer):
+            raise RuntimeError("demo handler requires DemoFincolabServer")
+        return server.demo_state
 
     def _reply(self, status: HTTPStatus, payload: dict[str, Any] | list[dict[str, object]]) -> None:
         body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")

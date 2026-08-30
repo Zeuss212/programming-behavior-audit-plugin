@@ -197,6 +197,177 @@ def test_teacher_can_resolve_the_course_default_dataset_for_creation() -> None:
     }
 
 
+def test_teacher_can_create_list_and_rollback_a_parent_and_student_experiment() -> None:
+    parent_payload = {
+        "name": "本地闭环实验",
+        "description": "教师创建验收",
+        "framework_id": "framework-behavior",
+        "project_type": "notebook",
+        "dataset_id": "dataset-default",
+        "dataset_name": "default_dataset",
+        "template_id": "template-behavior",
+        "upload_id": "",
+    }
+
+    with demo_client() as client:
+        status, parent = client.request(
+            "POST",
+            "/v1/spaces/course-001/algorithm_development",
+            token="teacher-token",
+            payload=parent_payload,
+        )
+        assert status == HTTPStatus.CREATED
+        assert parent["username"] == "teacher001"
+        parent_id = str(parent["id"])
+
+        status, student = client.request(
+            "POST",
+            "/v1/spaces/course-001/algorithm_development",
+            token="teacher-token",
+            payload={
+                **parent_payload,
+                "name": "exp-student001-abcd",
+                "description": (
+                    f"[FINCOLAB_PARENT_PROJECT_ID:{parent_id}]\n"
+                    "实验名称：本地闭环实验"
+                ),
+            },
+        )
+        assert status == HTTPStatus.CREATED
+        assert student["username"] == "student001"
+        student_id = str(student["id"])
+
+        resource = {"cpu": 2, "memory": 4, "gpu": 0}
+        status, workbench = client.request(
+            "POST",
+            f"/v1/spaces/course-001/algorithm_development/{student_id}/workbench",
+            token="teacher-token",
+            payload={"container_resource_json": resource},
+        )
+        assert status == HTTPStatus.CREATED
+        assert workbench["workbench_status"] == "RUNNING"
+        assert workbench["container_resource_json"] == resource
+        workbench_id = str(workbench["id"])
+
+        status, teacher_projects = client.request(
+            "GET",
+            "/v1/spaces/course-001/algorithm_development",
+            token="teacher-token",
+        )
+        assert status == HTTPStatus.OK
+        teacher_project_ids = {str(item["id"]) for item in teacher_projects["data"]}
+        assert {parent_id, student_id} <= teacher_project_ids
+
+        status, student_projects = client.request(
+            "GET",
+            "/v1/spaces/course-001/algorithm_development",
+            token="student001-token",
+        )
+        assert status == HTTPStatus.OK
+        student_project_ids = {str(item["id"]) for item in student_projects["data"]}
+        assert student_id in student_project_ids
+        assert parent_id not in student_project_ids
+
+        status, student_workbench = client.request(
+            "GET",
+            f"/v1/spaces/course-001/algorithm_development/{student_id}/workbench/"
+            f"{workbench_id}",
+            token="student001-token",
+        )
+        assert status == HTTPStatus.OK
+        assert student_workbench == workbench
+
+        status, payload = client.request(
+            "DELETE",
+            f"/v1/spaces/course-001/algorithm_development/{student_id}",
+            token="teacher-token",
+        )
+        assert status == HTTPStatus.OK
+        assert payload == {}
+
+        status, payload = client.request(
+            "GET",
+            f"/v1/spaces/course-001/algorithm_development/{student_id}/workbench/"
+            f"{workbench_id}",
+            token="teacher-token",
+        )
+        assert status == HTTPStatus.NOT_FOUND
+        assert payload == {"detail": "demo_endpoint_not_found"}
+
+        status, payload = client.request(
+            "DELETE",
+            f"/v1/spaces/course-001/algorithm_development/{parent_id}",
+            token="teacher-token",
+        )
+        assert status == HTTPStatus.OK
+        assert payload == {}
+
+        status, projects_after_rollback = client.request(
+            "GET",
+            "/v1/spaces/course-001/algorithm_development",
+            token="teacher-token",
+        )
+        assert status == HTTPStatus.OK
+        remaining_ids = {str(item["id"]) for item in projects_after_rollback["data"]}
+        assert parent_id not in remaining_ids
+        assert student_id not in remaining_ids
+
+
+@pytest.mark.parametrize(
+    ("token", "expected_detail"),
+    [
+        ("student001-token", "demo_resource_access_denied"),
+        ("student002-token", "demo_course_access_denied"),
+    ],
+)
+def test_students_cannot_create_course_algorithms(
+    token: str,
+    expected_detail: str,
+) -> None:
+    with demo_client() as client:
+        status, payload = client.request(
+            "POST",
+            "/v1/spaces/course-001/algorithm_development",
+            token=token,
+            payload={
+                "name": "exp-student001-abcd",
+                "framework_id": "framework-behavior",
+                "project_type": "notebook",
+                "dataset_id": "dataset-default",
+            },
+        )
+
+    assert status == HTTPStatus.FORBIDDEN
+    assert payload == {"detail": expected_detail}
+
+
+def test_dynamic_experiments_are_isolated_to_one_demo_server() -> None:
+    with demo_client() as client:
+        status, created = client.request(
+            "POST",
+            "/v1/spaces/course-001/algorithm_development",
+            token="teacher-token",
+            payload={
+                "name": "仅当前进程可见",
+                "framework_id": "framework-behavior",
+                "project_type": "notebook",
+                "dataset_id": "dataset-default",
+            },
+        )
+        assert status == HTTPStatus.CREATED
+        created_id = str(created["id"])
+
+    with demo_client() as fresh_client:
+        status, projects = fresh_client.request(
+            "GET",
+            "/v1/spaces/course-001/algorithm_development",
+            token="teacher-token",
+        )
+
+    assert status == HTTPStatus.OK
+    assert created_id not in {str(item["id"]) for item in projects["data"]}
+
+
 @pytest.mark.parametrize(
     "parent_algorithm_id",
     ["sequence-list-experiment-001", "linked-list-experiment-002"],

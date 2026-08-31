@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from collections.abc import Iterator
 from contextlib import contextmanager
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
-from typing import Iterator
 
 import pytest
 
@@ -71,6 +71,20 @@ def test_local_smoke_checks_real_facade_then_runs_contract_state_machine_twice(t
     }
     assert calls == [False, True]
     assert not state_path.exists()
+
+
+def test_local_smoke_bypasses_system_proxy_for_loopback(monkeypatch):
+    smoke = _load_module(SMOKE_PATH, "local_classroom_demo_smoke_proxy_bypass")
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
+    monkeypatch.setenv("http_proxy", "http://127.0.0.1:9")
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
+
+    with demo_facade_url() as facade_url:
+        status, body = smoke._request_json(facade_url, "GET", "/health/live")
+
+    assert status == 200
+    assert body == {"status": "live"}
 
 
 def test_local_smoke_rejects_an_unexpected_facade_login_token(tmp_path: Path):

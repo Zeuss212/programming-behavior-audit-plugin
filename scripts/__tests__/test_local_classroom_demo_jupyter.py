@@ -8,7 +8,6 @@ import pytest
 
 from myextension.platform_config import PlatformConfig
 
-
 ROOT = Path(__file__).resolve().parents[2]
 LAUNCHER = ROOT / "scripts" / "start_local_classroom_jupyter.sh"
 
@@ -47,13 +46,14 @@ def _launcher_environment(tmp_path: Path, *, port_busy: bool = False) -> tuple[d
 
 def test_jupyter_launcher_starts_only_loopback_student_mode(tmp_path: Path):
     environment, trace, exported = _launcher_environment(tmp_path)
+    release_wheel = ROOT / "deploy" / "bluedot" / "release-0.4.0" / "artifacts" / "myextension-0.4.0-py3-none-any.whl"
 
     completed = subprocess.run(["sh", str(LAUNCHER)], cwd=ROOT, env=environment, check=False, text=True, capture_output=True)
 
     assert completed.returncode == 0, completed.stderr
     invocation = trace.read_text(encoding="utf-8")
     assert "--refresh --no-project --with " in invocation
-    assert "--with " + str(ROOT / "dist" / "myextension-0.4.0-py3-none-any.whl") in invocation
+    assert "--with " + str(release_wheel) in invocation
     assert "jupyter lab --ServerApp.ip=127.0.0.1 --ServerApp.port=8888" in invocation
     assert "--ServerApp.open_browser=False --ServerApp.token= --ServerApp.password=" in invocation
     assert exported.read_text(encoding="utf-8").splitlines() == [

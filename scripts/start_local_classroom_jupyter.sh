@@ -2,7 +2,7 @@
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-wheel="$root/dist/myextension-0.4.0-py3-none-any.whl"
+wheel="$root/deploy/bluedot/release-0.4.0/artifacts/myextension-0.4.0-py3-none-any.whl"
 demo_root=/private/tmp/classroom-local-demo-jupyter
 
 if lsof -nP -iTCP:8888 -sTCP:LISTEN; then

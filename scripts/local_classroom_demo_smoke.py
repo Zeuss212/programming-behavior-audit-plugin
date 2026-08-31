@@ -4,15 +4,14 @@ from __future__ import annotations
 
 import argparse
 import json
-from time import monotonic, sleep
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable
+from time import monotonic, sleep
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 
 from classroom_contract_smoke import HttpSmokeClient, run_smoke
-
 
 FACADE_BASE_URL = "http://127.0.0.1:18082"
 SYNC_BASE_URL = "http://127.0.0.1:18080"
@@ -23,6 +22,7 @@ SAFE_KNOWLEDGE_POINT_STATUSES = EVIDENCE_REQUIRED_AI_STATUSES | {"not_observed"}
 SENSITIVE_MONITORING_FIELDS = frozenset({"api_key", "access_token", "object_key", "evidence_refs"})
 AI_POLL_TIMEOUT_SECONDS = 180
 AI_POLL_INTERVAL_SECONDS = 1
+LOCAL_OPENER = build_opener(ProxyHandler({}))
 
 
 class LocalDemoSmokeFailure(RuntimeError):
@@ -46,7 +46,7 @@ def _request_json(
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     request = Request(f"{base_url.rstrip('/')}{path}", data=body, headers=headers, method=method)
     try:
-        with urlopen(request, timeout=5) as response:  # nosec B310 - caller uses the fixed local URLs.
+        with LOCAL_OPENER.open(request, timeout=5) as response:  # nosec B310 - fixed local URLs.
             status = response.status
             raw = response.read()
     except HTTPError as error:

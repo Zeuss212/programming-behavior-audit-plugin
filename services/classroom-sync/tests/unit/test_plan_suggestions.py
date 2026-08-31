@@ -18,6 +18,25 @@ from classroom_sync.services.plan_suggestions import (
     PlanSuggestionInput,
 )
 
+MATERIAL_BUNDLE_HASH = "b" * 64
+
+
+def cpp_input(*, requirement_count: int = 2) -> PlanSuggestionInput:
+    return PlanSuggestionInput(
+        profile_kind="cpp_v3",
+        title="C++ 循环练习",
+        statement="读入整数并计算累加值。",
+        material_bundle_hash=MATERIAL_BUNDLE_HASH,
+        material_requirements=tuple(
+            {
+                "id": f"requirement-{index}",
+                "name": f"要求 {index}",
+                "source_statement": f"学生完成第 {index} 项任务。",
+            }
+            for index in range(1, requirement_count + 1)
+        ),
+    )
+
 
 def configured_settings(**overrides: object) -> Settings:
     values: dict[str, object] = {
@@ -162,6 +181,158 @@ def test_adapter_uses_standard_chat_completions_profile_for_plan_endpoint() -> N
     system_content = body["messages"][0]["content"]
     assert "automatic_evaluation" not in system_content
     assert "dict_get_with_default" not in system_content
+    assert body["messages"][1]["content"] == json.dumps(
+        {"title": "", "statement": "实现字典查询"}, ensure_ascii=False
+    )
+
+
+def test_cpp_adapter_returns_only_points_linked_to_submitted_material_requirements() -> None:
+    recorded: list[httpx.Request] = []
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        recorded.append(request)
+        return response_with(
+            json.dumps(
+                {
+                    "title": "C++ 循环练习",
+                    "knowledge_points": [
+                        {
+                            "material_requirement_id": "requirement-1",
+                            "name": "循环累加",
+                            "description": "根据材料要求完成有界循环。",
+                        },
+                        {
+                            "material_requirement_id": "requirement-2",
+                            "name": "输入输出",
+                            "description": "根据材料要求读取并输出结果。",
+                        },
+                    ],
+                },
+                ensure_ascii=False,
+            )
+        )
+
+    service = OpenAiPlanSuggestionService(
+        AiSuggestionSettings.from_settings(configured_settings()),
+        httpx.Client(transport=httpx.MockTransport(responder)),
+    )
+
+    result = service.generate(cpp_input())
+
+    assert [point.material_requirement_id for point in result.knowledge_points] == [
+        "requirement-1",
+        "requirement-2",
+    ]
+    body = json.loads(recorded[0].content)
+    assert "requirement-1" in body["messages"][1]["content"]
+    assert MATERIAL_BUNDLE_HASH in body["messages"][1]["content"]
+    assert "assessment_tests" not in body["messages"][1]["content"]
+    assert "starter_source" not in body["messages"][1]["content"]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "title": "C++ 练习",
+            "knowledge_points": [
+                {
+                    "material_requirement_id": "unknown-requirement",
+                    "name": "未知要求",
+                    "description": "不允许引用未提交的材料要求。",
+                }
+            ],
+        },
+        {
+            "title": "C++ 练习",
+            "knowledge_points": [
+                {
+                    "material_requirement_id": "requirement-1",
+                    "name": "要求一",
+                    "description": "第一次引用。",
+                },
+                {
+                    "material_requirement_id": "requirement-1",
+                    "name": "要求一重复",
+                    "description": "不允许重复引用。",
+                },
+            ],
+        },
+        {
+            "title": "C++ 练习",
+            "knowledge_points": [
+                {
+                    "material_requirement_id": "requirement-1",
+                    "name": "要求一",
+                    "description": "不允许模型生成测试。",
+                    "tests": [{"input": "1", "expected_stdout": "1"}],
+                }
+            ],
+        },
+        {
+            "title": "C++ 练习",
+            "knowledge_points": [
+                {
+                    "material_requirement_id": "requirement-1",
+                    "name": "要求一",
+                    "description": "不允许额外字段。",
+                    "provider_metadata": {"model": "unsafe"},
+                }
+            ],
+        },
+        {
+            "title": "C++ 练习",
+            "knowledge_points": [
+                {
+                    "material_requirement_id": "requirement-1",
+                    "name": "要求一",
+                    "description": "不允许额外顶层字段。",
+                }
+            ],
+            "explanation": "非契约字段",
+        },
+    ],
+    ids=["unknown-id", "duplicate-id", "generated-tests", "point-extra", "top-extra"],
+)
+def test_cpp_adapter_rejects_output_outside_the_material_requirement_contract(
+    payload: dict[str, object],
+) -> None:
+    service = OpenAiPlanSuggestionService(
+        AiSuggestionSettings.from_settings(configured_settings()),
+        httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _request: response_with(json.dumps(payload, ensure_ascii=False))
+            )
+        ),
+    )
+
+    with pytest.raises(UpstreamUnavailableError, match="ai_suggestion_response_invalid"):
+        service.generate(cpp_input())
+
+
+def test_cpp_adapter_rejects_more_than_ten_material_requirement_points() -> None:
+    payload = {
+        "title": "C++ 练习",
+        "knowledge_points": [
+            {
+                "material_requirement_id": f"requirement-{index}",
+                "name": f"要求 {index}",
+                "description": f"对应材料要求 {index}。",
+            }
+            for index in range(1, 12)
+        ],
+    }
+    service = OpenAiPlanSuggestionService(
+        AiSuggestionSettings.from_settings(configured_settings()),
+        httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _request: response_with(json.dumps(payload, ensure_ascii=False))
+            )
+        ),
+    )
+
+    with pytest.raises(UpstreamUnavailableError, match="ai_suggestion_response_invalid"):
+        service.generate(cpp_input(requirement_count=11))
 
 
 def test_adapter_keeps_a_complete_standard_plan_response_without_a_second_provider_call() -> None:

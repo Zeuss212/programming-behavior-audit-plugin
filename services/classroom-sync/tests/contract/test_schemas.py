@@ -9,11 +9,22 @@ from jsonschema import ValidationError
 
 from classroom_sync.domain.schemas import ClassroomSchemaRegistry
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
+_PROFILE_V3_FIXTURES_SPEC = importlib.util.spec_from_file_location(
+    "profile_v3_fixtures",
+    REPOSITORY_ROOT / "myextension" / "tests" / "profile_v3_fixtures.py",
+)
+assert _PROFILE_V3_FIXTURES_SPEC is not None
+assert _PROFILE_V3_FIXTURES_SPEC.loader is not None
+_PROFILE_V3_FIXTURES = importlib.util.module_from_spec(_PROFILE_V3_FIXTURES_SPEC)
+_PROFILE_V3_FIXTURES_SPEC.loader.exec_module(_PROFILE_V3_FIXTURES)
+profile_v3_draft = _PROFILE_V3_FIXTURES.profile_v3_draft
+profile_v3_version = _PROFILE_V3_FIXTURES.profile_v3_version
+
 
 @pytest.fixture
 def schema_registry() -> ClassroomSchemaRegistry:
-    repository_root = Path(__file__).resolve().parents[4]
-    return ClassroomSchemaRegistry(repository_root / "contracts" / "classroom" / "v1")
+    return ClassroomSchemaRegistry(REPOSITORY_ROOT / "contracts" / "classroom" / "v1")
 
 
 def valid_student_brief() -> dict[str, object]:
@@ -227,6 +238,83 @@ def valid_contract_payloads() -> dict[str, dict[str, object]]:
             },
         },
     }
+
+
+def valid_v3_plan_payloads() -> dict[str, dict[str, object]]:
+    """Plan envelopes for the frozen linked-list Profile v3 contract."""
+    return {
+        "plan-draft": {
+            "schema_version": 1,
+            "draft_id": "09e4e1cc-9155-42dd-a951-632148040bd8",
+            "space_id": "classroom-space",
+            "parent_algorithm_id": "linked-list-experiment-002",
+            "title": "链表课堂练习",
+            "profile": profile_v3_draft(),
+            "scheduled_start_at": "2026-08-12T08:00:00Z",
+            "scheduled_end_at": "2026-08-12T08:30:00Z",
+            "ai_policy": "prohibited",
+            "revision": 0,
+            "updated_at": "2026-08-12T07:50:00Z",
+        },
+        "plan-version": {
+            "schema_version": 1,
+            "plan_id": "2b16b5c0-4e58-48f9-9448-9067de005e4a",
+            "version": 1,
+            "space_id": "classroom-space",
+            "parent_algorithm_id": "linked-list-experiment-002",
+            "profile": profile_v3_version(),
+            "content_hash": "b" * 64,
+            "scheduled_start_at": "2026-08-12T08:00:00Z",
+            "scheduled_end_at": "2026-08-12T08:30:00Z",
+            "ai_policy": "prohibited",
+            "published_at": "2026-08-12T07:55:00Z",
+        },
+    }
+
+
+@pytest.mark.parametrize("schema_name", ["plan-draft", "plan-version"])
+def test_plan_contracts_accept_both_profile_v2_and_v3(
+    schema_registry: ClassroomSchemaRegistry,
+    schema_name: str,
+):
+    """The plan boundary must preserve v2 while explicitly admitting C++ v3."""
+    schema_registry.validate(schema_name, valid_contract_payloads()[schema_name])
+    schema_registry.validate(schema_name, valid_v3_plan_payloads()[schema_name])
+
+
+def test_error_contract_accepts_only_safe_publication_gate_details(
+    schema_registry: ClassroomSchemaRegistry,
+):
+    payload = deepcopy(valid_contract_payloads()["error"])
+    error = payload["error"]
+    assert isinstance(error, dict)
+    error["code"] = "publication_gate_blocked"
+    error["details"] = {
+        "status": "blocked",
+        "blocking_count": 1,
+        "warning_count": 0,
+        "issues": [
+            {
+                "code": "criterion_binding_missing",
+                "severity": "blocking",
+                "scope": "requirement",
+                "knowledge_point_id": "KP_LINKTAL1",
+                "requirement_id": "REQ_LINK_TAIL_INSERT",
+                "message": "必需证据标准缺少可验证绑定。",
+            }
+        ],
+    }
+
+    schema_registry.validate("error", payload)
+
+    error["code"] = "assignment_not_found"
+    with pytest.raises(ValidationError):
+        schema_registry.validate("error", payload)
+
+    error["code"] = "publication_gate_blocked"
+    error["details"] = {"profile": {"title": "must not leak"}}
+    with pytest.raises(ValidationError):
+        schema_registry.validate("error", payload)
 
 
 def test_student_brief_rejects_unknown_mastery_status(

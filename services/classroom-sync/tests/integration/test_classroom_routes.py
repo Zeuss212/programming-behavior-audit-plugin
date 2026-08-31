@@ -1,9 +1,12 @@
 import asyncio
 import gzip
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import cast
 
 import httpx
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -12,12 +15,15 @@ from classroom_sync.application import ClassroomServices
 from classroom_sync.auth.fincolab import Principal, StudentChildExperiment
 from classroom_sync.config import Settings
 from classroom_sync.domain.schemas import ClassroomSchemaRegistry
+from classroom_sync.errors import UpstreamUnavailableError
 from classroom_sync.main import create_app
-from classroom_sync.models import Base
+from classroom_sync.models import Base, PlanAuthoringSession, PlanDraft
+from classroom_sync.services.assessment_materials import AssessmentMaterialService
 from classroom_sync.services.assignments import AssignmentService
 from classroom_sync.services.plans import PlanDraftInput, PlanService
 from classroom_sync.services.sessions import PluginSessionService
 from tests.integration.test_plan_assignment_flow import profile_draft
+from tests.unit.test_publication_gate import profile_for, real_bundle
 
 
 class FakeIdentityGateway:
@@ -30,6 +36,8 @@ class FakeIdentityGateway:
             return Principal("teacher-1", "teacher-a", bearer_token)
         if bearer_token == "student-token":
             return Principal("student-1", "student-a", bearer_token)
+        if bearer_token == "other-teacher-token":
+            return Principal("teacher-2", "teacher-b", bearer_token)
         raise AssertionError(f"Unexpected token: {bearer_token}")
 
     def require_teacher_owner(
@@ -257,3 +265,697 @@ def test_student_launches_plugin_with_one_time_ticket_and_uploads_evidence():
     )
     assert missing_token_response.status_code == 401
     schema_registry.validate("error", missing_token_response.json())
+
+
+def test_draft_get_and_atomic_revisioned_put_recover_the_latest_server_state():
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    repository_root = Path(__file__).resolve().parents[4]
+    schema_registry = ClassroomSchemaRegistry(repository_root / "contracts" / "classroom" / "v1")
+    now = datetime(2026, 8, 28, 8, 0, tzinfo=UTC)
+    application = create_app(
+        Settings(database_url="sqlite://"),
+        classroom_services=ClassroomServices(
+            identity_gateway=FakeIdentityGateway(),
+            plan_service=PlanService(session_factory, schema_registry, clock=lambda: now),
+            assignment_service=AssignmentService(session_factory, clock=lambda: now),
+        ),
+    )
+    headers = {"Authorization": "Bearer teacher-token"}
+    create_response = request(
+        application,
+        "POST",
+        "/v1/classroom/plans/drafts",
+        headers=headers,
+        json={
+            "space_id": "space-1",
+            "parent_algorithm_id": "parent-1",
+            "title": "initial title",
+            "profile": profile_draft("initial question"),
+            "scheduled_start_at": now.isoformat(),
+            "scheduled_end_at": (now + timedelta(minutes=30)).isoformat(),
+            "ai_policy": "prohibited",
+        },
+    )
+    assert create_response.status_code == 201
+    draft_id = create_response.json()["draft_id"]
+
+    get_response = request(
+        application,
+        "GET",
+        f"/v1/classroom/plans/drafts/{draft_id}",
+        headers=headers,
+    )
+    assert get_response.status_code == 200
+    assert get_response.json()["publication_gate"] == {
+        "status": "ready",
+        "blocking_count": 0,
+        "warning_count": 0,
+        "issues": [],
+    }
+
+    updated_profile = profile_draft("updated question")
+    update_response = request(
+        application,
+        "PUT",
+        f"/v1/classroom/plans/drafts/{draft_id}",
+        headers=headers,
+        json={
+            "expected_revision": 0,
+            "title": "updated title",
+            "profile": updated_profile,
+            "scheduled_start_at": (now + timedelta(hours=1)).isoformat(),
+            "scheduled_end_at": (now + timedelta(hours=2)).isoformat(),
+            "ai_policy": "allowed",
+        },
+    )
+    assert update_response.status_code == 200
+    assert update_response.json() == {
+        **get_response.json(),
+        "title": "updated title",
+        "profile": updated_profile,
+        "scheduled_start_at": "2026-08-28T09:00:00Z",
+        "scheduled_end_at": "2026-08-28T10:00:00Z",
+        "ai_policy": "allowed",
+        "revision": 1,
+    }
+
+    conflict_response = request(
+        application,
+        "PUT",
+        f"/v1/classroom/plans/drafts/{draft_id}",
+        headers=headers,
+        json={
+            "expected_revision": 0,
+            "title": "must not overwrite",
+            "profile": profile_draft("must not overwrite"),
+            "scheduled_start_at": now.isoformat(),
+            "scheduled_end_at": (now + timedelta(minutes=10)).isoformat(),
+            "ai_policy": "prohibited",
+        },
+    )
+    assert conflict_response.status_code == 409
+    assert conflict_response.json()["error"]["code"] == "plan_draft_revision_conflict"
+    assert "details" not in conflict_response.json()["error"]
+    recovered = request(
+        application,
+        "GET",
+        f"/v1/classroom/plans/drafts/{draft_id}",
+        headers=headers,
+    ).json()
+    assert recovered == update_response.json()
+
+
+def test_draft_schedule_offsets_preserve_the_same_utc_instants_after_sqlite_recovery():
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    repository_root = Path(__file__).resolve().parents[4]
+    schema_registry = ClassroomSchemaRegistry(repository_root / "contracts" / "classroom" / "v1")
+    now = datetime(2026, 8, 28, 8, 0, tzinfo=UTC)
+    application = create_app(
+        Settings(database_url="sqlite://"),
+        classroom_services=ClassroomServices(
+            identity_gateway=FakeIdentityGateway(),
+            plan_service=PlanService(session_factory, schema_registry, clock=lambda: now),
+            assignment_service=AssignmentService(session_factory, clock=lambda: now),
+        ),
+    )
+    headers = {"Authorization": "Bearer teacher-token"}
+
+    created = request(
+        application,
+        "POST",
+        "/v1/classroom/plans/drafts",
+        headers=headers,
+        json={
+            "space_id": "space-1",
+            "parent_algorithm_id": "parent-1",
+            "title": "offset draft",
+            "profile": profile_draft("offset create"),
+            "scheduled_start_at": "2026-08-28T16:00:00+08:00",
+            "scheduled_end_at": "2026-08-28T16:30:00+08:00",
+            "ai_policy": "prohibited",
+        },
+    )
+
+    assert created.status_code == 201
+    draft_id = created.json()["draft_id"]
+    assert created.json()["scheduled_start_at"] == "2026-08-28T08:00:00Z"
+    assert created.json()["scheduled_end_at"] == "2026-08-28T08:30:00Z"
+    recovered_create = request(
+        application,
+        "GET",
+        f"/v1/classroom/plans/drafts/{draft_id}",
+        headers=headers,
+    )
+    assert recovered_create.json()["scheduled_start_at"] == "2026-08-28T08:00:00Z"
+
+    updated = request(
+        application,
+        "PUT",
+        f"/v1/classroom/plans/drafts/{draft_id}",
+        headers=headers,
+        json={
+            "expected_revision": 0,
+            "title": "offset updated",
+            "profile": profile_draft("offset update"),
+            "scheduled_start_at": "2026-08-28T04:30:00-04:00",
+            "scheduled_end_at": "2026-08-28T05:00:00-04:00",
+            "ai_policy": "prohibited",
+        },
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()["scheduled_start_at"] == "2026-08-28T08:30:00Z"
+    assert updated.json()["scheduled_end_at"] == "2026-08-28T09:00:00Z"
+    recovered_update = request(
+        application,
+        "GET",
+        f"/v1/classroom/plans/drafts/{draft_id}",
+        headers=headers,
+    )
+    assert recovered_update.json()["scheduled_start_at"] == "2026-08-28T08:30:00Z"
+    assert recovered_update.json()["scheduled_end_at"] == "2026-08-28T09:00:00Z"
+
+
+@pytest.mark.parametrize("invalid_revision", (True, "0"))
+def test_put_requires_an_exact_integer_revision(invalid_revision: object):
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    repository_root = Path(__file__).resolve().parents[4]
+    schema_registry = ClassroomSchemaRegistry(repository_root / "contracts" / "classroom" / "v1")
+    now = datetime(2026, 8, 28, 8, 0, tzinfo=UTC)
+    plan_service = PlanService(session_factory, schema_registry, clock=lambda: now)
+    application = create_app(
+        Settings(database_url="sqlite://"),
+        classroom_services=ClassroomServices(
+            identity_gateway=FakeIdentityGateway(),
+            plan_service=plan_service,
+            assignment_service=AssignmentService(session_factory, clock=lambda: now),
+        ),
+    )
+    draft = plan_service.create_draft(
+        PlanDraftInput(
+            space_id="space-1",
+            parent_algorithm_id="parent-1",
+            title="strict revision",
+            profile=profile_draft("strict revision"),
+            scheduled_start_at=now,
+            scheduled_end_at=now + timedelta(minutes=30),
+            ai_policy="prohibited",
+        ),
+        teacher_id="teacher-1",
+    )
+
+    response = request(
+        application,
+        "PUT",
+        f"/v1/classroom/plans/drafts/{draft.id}",
+        headers={"Authorization": "Bearer teacher-token"},
+        json={
+            "expected_revision": invalid_revision,
+            "title": "must not update",
+            "profile": profile_draft("must not update"),
+            "scheduled_start_at": now.isoformat(),
+            "scheduled_end_at": (now + timedelta(minutes=30)).isoformat(),
+            "ai_policy": "prohibited",
+        },
+    )
+
+    assert response.status_code == 422
+    with session_factory() as session:
+        persisted = session.get(PlanDraft, draft.id)
+        assert persisted is not None
+        assert persisted.title == "strict revision"
+        assert persisted.revision == 0
+
+
+def test_draft_routes_reject_a_non_owner_before_returning_or_overwriting_state():
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    repository_root = Path(__file__).resolve().parents[4]
+    schema_registry = ClassroomSchemaRegistry(repository_root / "contracts" / "classroom" / "v1")
+    now = datetime(2026, 8, 28, 8, 0, tzinfo=UTC)
+    plan_service = PlanService(session_factory, schema_registry, clock=lambda: now)
+    application = create_app(
+        Settings(database_url="sqlite://"),
+        classroom_services=ClassroomServices(
+            identity_gateway=FakeIdentityGateway(),
+            plan_service=plan_service,
+            assignment_service=AssignmentService(session_factory, clock=lambda: now),
+        ),
+    )
+    draft = plan_service.create_draft(
+        PlanDraftInput(
+            space_id="space-1",
+            parent_algorithm_id="parent-1",
+            title="private draft",
+            profile=profile_draft("private question"),
+            scheduled_start_at=now,
+            scheduled_end_at=now + timedelta(minutes=30),
+            ai_policy="prohibited",
+        ),
+        teacher_id="teacher-1",
+    )
+    other_headers = {"Authorization": "Bearer other-teacher-token"}
+
+    get_response = request(
+        application,
+        "GET",
+        f"/v1/classroom/plans/drafts/{draft.id}",
+        headers=other_headers,
+    )
+    put_response = request(
+        application,
+        "PUT",
+        f"/v1/classroom/plans/drafts/{draft.id}",
+        headers=other_headers,
+        json={
+            "expected_revision": 0,
+            "title": "stolen",
+            "profile": profile_draft("stolen"),
+            "scheduled_start_at": now.isoformat(),
+            "scheduled_end_at": (now + timedelta(minutes=30)).isoformat(),
+            "ai_policy": "prohibited",
+        },
+    )
+
+    assert get_response.status_code == 403
+    assert put_response.status_code == 403
+    assert get_response.json()["error"]["code"] == "plan_draft_owner_mismatch"
+    assert put_response.json()["error"]["code"] == "plan_draft_owner_mismatch"
+    with session_factory() as session:
+        persisted = session.get(PlanDraft, draft.id)
+        assert persisted is not None
+        assert persisted.title == "private draft"
+        assert persisted.revision == 0
+
+
+@pytest.mark.parametrize(
+    ("failure_mode", "expected_status", "expected_code"),
+    (
+        ("unavailable", 503, "assessment_materials_unavailable"),
+        ("invalid_scope", 503, "assessment_materials_scope_invalid"),
+        ("gate_blocked", 409, "publication_gate_blocked"),
+    ),
+)
+def test_v3_create_failure_never_persists_or_consumes_the_authoring_slot(
+    failure_mode: str,
+    expected_status: int,
+    expected_code: str,
+):
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    repository_root = Path(__file__).resolve().parents[4]
+    schema_registry = ClassroomSchemaRegistry(repository_root / "contracts" / "classroom" / "v1")
+    now = datetime(2026, 8, 28, 8, 0, tzinfo=UTC)
+    bundle_name = "sequence-list" if failure_mode == "gate_blocked" else "linked-list"
+    materials = real_bundle(bundle_name)
+    requirement_ids = (
+        tuple(requirement.id for requirement in materials.requirements)
+        if failure_mode == "gate_blocked"
+        else ("REQ_LINK_TAIL_INSERT", "REQ_LINK_REVERSE")
+    )
+    profile = profile_for(materials, requirement_ids)
+
+    class CreateMaterialService:
+        def get_bundle(
+            self,
+            _principal: Principal,
+            _space_id: str,
+            _parent_algorithm_id: str,
+        ):
+            if failure_mode == "unavailable":
+                raise UpstreamUnavailableError("assessment_materials_unavailable")
+            if failure_mode == "invalid_scope":
+                return materials.model_copy(update={"space_id": "wrong-space"})
+            return materials
+
+    application = create_app(
+        Settings(database_url="sqlite://"),
+        classroom_services=ClassroomServices(
+            identity_gateway=FakeIdentityGateway(),
+            plan_service=PlanService(session_factory, schema_registry, clock=lambda: now),
+            assignment_service=AssignmentService(session_factory, clock=lambda: now),
+            assessment_material_service=cast(
+                AssessmentMaterialService,
+                CreateMaterialService(),
+            ),
+        ),
+    )
+    with session_factory.begin() as session:
+        session.add(
+            PlanAuthoringSession(
+                id=f"create-{failure_mode}",
+                teacher_id="teacher-1",
+                space_id=materials.space_id,
+                parent_algorithm_id=materials.parent_algorithm_id,
+                status="open",
+                active_slot=1,
+                suggestion_job_id=None,
+                published_plan_id=None,
+                created_at=now,
+                updated_at=now,
+                closed_at=None,
+            )
+        )
+
+    response = request(
+        application,
+        "POST",
+        "/v1/classroom/plans/drafts",
+        headers={"Authorization": "Bearer teacher-token"},
+        json={
+            "authoring_session_id": f"create-{failure_mode}",
+            "space_id": materials.space_id,
+            "parent_algorithm_id": materials.parent_algorithm_id,
+            "title": "must not persist",
+            "profile": profile,
+            "scheduled_start_at": now.isoformat(),
+            "scheduled_end_at": (now + timedelta(minutes=30)).isoformat(),
+            "ai_policy": "prohibited",
+        },
+    )
+
+    assert response.status_code == expected_status
+    assert response.json()["error"]["code"] == expected_code
+    with session_factory() as session:
+        assert session.query(PlanDraft).count() == 0
+        authoring = session.get(PlanAuthoringSession, f"create-{failure_mode}")
+        assert authoring is not None
+        assert authoring.status == "open"
+        assert authoring.active_slot == 1
+        assert authoring.published_plan_id is None
+
+
+def test_stale_v3_put_returns_revision_conflict_before_material_io():
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    repository_root = Path(__file__).resolve().parents[4]
+    schema_registry = ClassroomSchemaRegistry(repository_root / "contracts" / "classroom" / "v1")
+    now = datetime(2026, 8, 28, 8, 0, tzinfo=UTC)
+    materials = real_bundle("linked-list")
+    profile = profile_for(
+        materials,
+        ("REQ_LINK_TAIL_INSERT", "REQ_LINK_REVERSE"),
+    )
+    plan_service = PlanService(session_factory, schema_registry, clock=lambda: now)
+    draft = plan_service.create_draft(
+        PlanDraftInput(
+            space_id=materials.space_id,
+            parent_algorithm_id=materials.parent_algorithm_id,
+            title="current title",
+            profile=profile,
+            scheduled_start_at=now,
+            scheduled_end_at=now + timedelta(minutes=30),
+            ai_policy="prohibited",
+        ),
+        teacher_id="teacher-1",
+    )
+    plan_service.update_draft(
+        draft.id,
+        profile=profile,
+        teacher_id="teacher-1",
+        title="revision one",
+        expected_revision=0,
+    )
+
+    class OutageMaterialService:
+        calls = 0
+
+        def get_bundle(
+            self,
+            _principal: Principal,
+            _space_id: str,
+            _parent_algorithm_id: str,
+        ):
+            self.calls += 1
+            raise UpstreamUnavailableError("assessment_materials_unavailable")
+
+    outage = OutageMaterialService()
+    application = create_app(
+        Settings(database_url="sqlite://"),
+        classroom_services=ClassroomServices(
+            identity_gateway=FakeIdentityGateway(),
+            plan_service=plan_service,
+            assignment_service=AssignmentService(session_factory, clock=lambda: now),
+            assessment_material_service=cast(AssessmentMaterialService, outage),
+        ),
+    )
+    response = request(
+        application,
+        "PUT",
+        f"/v1/classroom/plans/drafts/{draft.id}",
+        headers={"Authorization": "Bearer teacher-token"},
+        json={
+            "expected_revision": 0,
+            "title": "must not overwrite",
+            "profile": profile,
+            "scheduled_start_at": now.isoformat(),
+            "scheduled_end_at": (now + timedelta(minutes=45)).isoformat(),
+            "ai_policy": "allowed",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "plan_draft_revision_conflict"
+    assert outage.calls == 0
+    persisted = plan_service.get_draft(draft.id, teacher_id="teacher-1")
+    assert persisted.title == "revision one"
+    assert persisted.revision == 1
+
+
+def test_v3_publish_fetches_latest_materials_after_ownership_and_returns_safe_gate_details():
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    repository_root = Path(__file__).resolve().parents[4]
+    schema_registry = ClassroomSchemaRegistry(repository_root / "contracts" / "classroom" / "v1")
+    now = datetime(2026, 8, 28, 8, 0, tzinfo=UTC)
+    materials = real_bundle("sequence-list")
+    profile = profile_for(
+        materials,
+        tuple(requirement.id for requirement in materials.requirements),
+    )
+    identity = FakeIdentityGateway()
+
+    class LatestMaterialService:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get_bundle(
+            self,
+            principal: Principal,
+            space_id: str,
+            parent_algorithm_id: str,
+        ):
+            assert identity.teacher_checks[-1] == (
+                principal.user_id,
+                space_id,
+                parent_algorithm_id,
+            )
+            self.calls += 1
+            return materials
+
+    latest_materials = LatestMaterialService()
+    plan_service = PlanService(session_factory, schema_registry, clock=lambda: now)
+    application = create_app(
+        Settings(database_url="sqlite://"),
+        classroom_services=ClassroomServices(
+            identity_gateway=identity,
+            plan_service=plan_service,
+            assignment_service=AssignmentService(session_factory, clock=lambda: now),
+            assessment_material_service=cast(
+                AssessmentMaterialService,
+                latest_materials,
+            ),
+        ),
+    )
+    with session_factory.begin() as session:
+        session.add(
+            PlanAuthoringSession(
+                id="blocked-authoring",
+                teacher_id="teacher-1",
+                space_id=materials.space_id,
+                parent_algorithm_id=materials.parent_algorithm_id,
+                status="open",
+                active_slot=1,
+                suggestion_job_id=None,
+                published_plan_id=None,
+                created_at=now,
+                updated_at=now,
+                closed_at=None,
+            )
+        )
+    draft = plan_service.create_draft(
+        PlanDraftInput(
+            authoring_session_id="blocked-authoring",
+            space_id=materials.space_id,
+            parent_algorithm_id=materials.parent_algorithm_id,
+            title="blocked sequence lesson",
+            profile=profile,
+            scheduled_start_at=now,
+            scheduled_end_at=now + timedelta(minutes=30),
+            ai_policy="prohibited",
+        ),
+        teacher_id="teacher-1",
+    )
+
+    response = request(
+        application,
+        "POST",
+        f"/v1/classroom/plans/drafts/{draft.id}/publish",
+        headers={"Authorization": "Bearer teacher-token"},
+    )
+
+    assert response.status_code == 409
+    error = response.json()["error"]
+    assert error["code"] == "publication_gate_blocked"
+    assert error["retryable"] is False
+    assert error["details"]["status"] == "blocked"
+    assert error["details"]["blocking_count"] == 3
+    serialized = json.dumps(error["details"], ensure_ascii=False)
+    assert len(serialized.encode("utf-8")) <= 32_768
+    assert "teacher prose is not a gate key" not in serialized
+    assert "expected_stdout" not in serialized
+    assert "input" not in serialized
+    schema_registry.validate("error", response.json())
+    assert latest_materials.calls == 1
+    with session_factory() as session:
+        authoring = session.get(PlanAuthoringSession, "blocked-authoring")
+        assert authoring is not None
+        assert authoring.status == "open"
+        assert authoring.active_slot == 1
+        assert authoring.published_plan_id is None
+        assert authoring.closed_at is None
+
+
+def test_v3_publish_retry_returns_existing_version_when_materials_are_unavailable():
+    """A lost publish response must be recoverable through the HTTP endpoint."""
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    repository_root = Path(__file__).resolve().parents[4]
+    schema_registry = ClassroomSchemaRegistry(repository_root / "contracts" / "classroom" / "v1")
+    now = datetime(2026, 8, 29, 10, 0, tzinfo=UTC)
+    materials = real_bundle("linked-list")
+    profile = profile_for(
+        materials,
+        ("REQ_LINK_TAIL_INSERT", "REQ_LINK_REVERSE"),
+    )
+
+    class RecoveringMaterialService:
+        def __init__(self) -> None:
+            self.available = True
+            self.calls = 0
+
+        def get_bundle(
+            self,
+            _principal: Principal,
+            _space_id: str,
+            _parent_algorithm_id: str,
+        ):
+            self.calls += 1
+            if not self.available:
+                raise UpstreamUnavailableError("assessment_materials_unavailable")
+            return materials
+
+    material_service = RecoveringMaterialService()
+    plan_service = PlanService(session_factory, schema_registry, clock=lambda: now)
+    application = create_app(
+        Settings(database_url="sqlite://"),
+        classroom_services=ClassroomServices(
+            identity_gateway=FakeIdentityGateway(),
+            plan_service=plan_service,
+            assignment_service=AssignmentService(session_factory, clock=lambda: now),
+            assessment_material_service=cast(AssessmentMaterialService, material_service),
+        ),
+    )
+    with session_factory.begin() as session:
+        session.add(
+            PlanAuthoringSession(
+                id="retry-authoring",
+                teacher_id="teacher-1",
+                space_id=materials.space_id,
+                parent_algorithm_id=materials.parent_algorithm_id,
+                status="open",
+                active_slot=1,
+                suggestion_job_id=None,
+                published_plan_id=None,
+                created_at=now,
+                updated_at=now,
+                closed_at=None,
+            )
+        )
+    draft = plan_service.create_draft(
+        PlanDraftInput(
+            authoring_session_id="retry-authoring",
+            space_id=materials.space_id,
+            parent_algorithm_id=materials.parent_algorithm_id,
+            title="retry linked list lesson",
+            profile=profile,
+            scheduled_start_at=now,
+            scheduled_end_at=now + timedelta(minutes=30),
+            ai_policy="prohibited",
+        ),
+        teacher_id="teacher-1",
+    )
+    headers = {"Authorization": "Bearer teacher-token"}
+    first = request(
+        application,
+        "POST",
+        f"/v1/classroom/plans/drafts/{draft.id}/publish",
+        headers=headers,
+    )
+
+    material_service.available = False
+    retried = request(
+        application,
+        "POST",
+        f"/v1/classroom/plans/drafts/{draft.id}/publish",
+        headers=headers,
+    )
+
+    assert first.status_code == 200
+    assert retried.status_code == 200
+    assert retried.json()["plan_version_id"] == first.json()["plan_version_id"]
+    assert retried.json()["version"] == 1
+    assert material_service.calls == 1

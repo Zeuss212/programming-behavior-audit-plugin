@@ -24,7 +24,10 @@
     "parent_algorithm_id": {"type": "string", "minLength": 1, "maxLength": 128},
     "title": {"type": "string", "minLength": 1, "maxLength": 200},
     "profile": {
-      "$ref": "https://classroom.local/plugin/api-schemas/profile-draft-v2.json"
+      "oneOf": [
+        {"$ref": "https://classroom.local/plugin/api-schemas/profile-draft-v2.json"},
+        {"$ref": "https://classroom.local/plugin/api-schemas/profile-draft-v3.json"}
+      ]
     },
     "scheduled_start_at": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/timestamp"},
     "scheduled_end_at": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/timestamp"},

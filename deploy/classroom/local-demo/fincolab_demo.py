@@ -8,20 +8,156 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict, dataclass
+import re
+import time
+from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from threading import Lock
 from typing import Any
-from urllib.parse import urlparse
-
+from urllib.parse import parse_qs, urlparse
 
 LOCAL_ORGANIZATION_ID = "local-org"
 NEGATIVE_ORGANIZATION_ID = "local-org-negative"
 COURSE_ID = "course-001"
 NEGATIVE_COURSE_ID = "course-002"
 PARENT_ALGORITHM_ID = "parent-experiment-001"
+SEQUENCE_LIST_PARENT_ALGORITHM_ID = "sequence-list-experiment-001"
+LINKED_LIST_PARENT_ALGORITHM_ID = "linked-list-experiment-002"
 CHILD_ALGORITHM_ID = "child-experiment-001"
 WORKBENCH_ID = "workbench-student001"
+
+PARENT_PROJECT_NAMES = {
+    PARENT_ALGORITHM_ID: "字典读取课堂练习",
+    SEQUENCE_LIST_PARENT_ALGORITHM_ID: "顺序表基本操作",
+    LINKED_LIST_PARENT_ALGORITHM_ID: "链表尾插与逆置",
+}
+
+AI_FRAMEWORKS = [
+    {
+        "id": "framework-behavior",
+        "name": "PyTorch-2.5.1-JupyterLab4-BehaviorAudit-0.2.2",
+        "frame_type": "PyTorch",
+    }
+]
+
+CODE_TEMPLATES_BY_FRAMEWORK = {
+    "framework-behavior": [
+        {
+            "id": "template-behavior",
+            "name": "BehaviorAudit starter",
+            "version": "0.2.2",
+        }
+    ]
+}
+
+DEFAULT_DATASET_RESPONSE = {
+    "data": [
+        {
+            "dataset_name": "default_dataset",
+            "version_datas": [
+                {
+                    "id": "dataset-default",
+                    "name": "default_dataset",
+                    "version": "v1",
+                    "dataset_file_path": "algorithm_data",
+                    "data_type": "image",
+                    "annotation_type": "img_classification",
+                    "label_format": "ImageFolder",
+                    "description": "课程默认数据集",
+                }
+            ],
+        }
+    ]
+}
+
+MATERIAL_BUNDLE_RESOURCES = {
+    SEQUENCE_LIST_PARENT_ALGORITHM_ID: ("materials", "sequence-list", "bundle.json"),
+    LINKED_LIST_PARENT_ALGORITHM_ID: ("materials", "linked-list", "bundle.json"),
+}
+
+# The private adapter validates these artifact bytes against the sealed hashes.
+# They are intentionally embedded so the demo image never contains raw C++ paths.
+MATERIAL_SOURCE_BASE64 = {
+    SEQUENCE_LIST_PARENT_ALGORITHM_ID: (
+        "Lyq/zrrzz7DM4g0KDQoJYS4JzerJxrTmtKLV+9DNyv2+3bXEy7PQ8rHttcTA4Lao0uWjrM3q"
+        "yca7+bG+tcSzydSxuq/K/aOssqK4+LP20tTPwrmmxNy6r8r9tcS+38zlyrXP1qGjDQoJCWku"
+        "CbTTy7PQ8rHt1tDJvrP9vt/T0Nfu0KHWtbXE1KrL2LKi08m6r8r9t7W72LG7yb7UqsvYtcTW"
+        "taOsv9Wz9rXEzrvWw9PJ1+6689K7uPbUqsvYzO6yuQ0KCQkJaW50IGRlbGV0ZW1pbigpOw0K"
+        "DQoJCWlpLgm008uz0PKx7dbQyb6z/dPruPi2qHjP4LXItcTL+dPQ1KrL2A0KCQkJdm9pZCBk"
+        "ZWxldGVTYW1lKGludCB4KTsNCg0KCQlpaWkutNPLs9Dyse3W0Mm+s/3G5Na11Nq4+LaoIHPT"
+        "63TWrrzko6hzIDwgdKOptcTL+dPQ1KrL2Cyyu7D8wKhzus10DQoJCQl2b2lkIGRlbGV0ZVNv"
+        "bWUoaW50IHMsIGludCB0KTsNCiovDQojaW5jbHVkZSA8aW9zdHJlYW0+DQp1c2luZyBuYW1l"
+        "c3BhY2Ugc3RkOw0KY2xhc3MgIFNlcUFycmF5ICAvL8uz0PKx7Q0Kew0KcHJpdmF0ZToNCiAg"
+        "ICBpbnQqIGFycjsgLy/K/dfptcTG8Mq8tdjWtw0KICAgIGludCBOOy8vyv3X6bnmxKMNCiAg"
+        "ICBpbnQgbjsvL8r91+m1scew1KrL2Lj2yv0NCnB1YmxpYzoNCiAgICBTZXFBcnJheShpbnQg"
+        "Tk49MTApOw0KICAgIH5TZXFBcnJheSgpOw0KICAgIGJvb2wgaW5zZXJ0RWxlbWVudChpbnQg"
+        "dmFsdWUpOy8vz/LLs9Dyse3W0LLlyOt2YWx1ZSzI57n7s8m5pre1u9h0cnVlo6y38dTyt7W7"
+        "2GZhbHNlDQogICAgaW50IGRlbGV0ZW1pbigpOw0KICAgIHZvaWQgZGVsZXRlU2FtZShpbnQg"
+        "eCk7DQogICAgdm9pZCBkZWxldGVTb21lKGludCBzLCBpbnQgdCk7DQogICAgdm9pZCBwcmlu"
+        "dCgpOyAvL8rks/bLs9Dyse21xMr9vt0NCn07DQovL8fruPiz9rj3uPazydSxuq/K/bXEvt/M"
+        "5cq1z9YNClNlcUFycmF5OjpTZXFBcnJheShpbnQgTk4pDQp7DQogICAgLy90b2RvLcfruPiz"
+        "9r7fzOXKtc/WtPrC6w0KDQp9DQpTZXFBcnJheTo6flNlcUFycmF5KCkNCnsNCiAgIC8vdG9k"
+        "by3H67j4s/a+38zlyrXP1rT6wusNCn0NCmJvb2wgU2VxQXJyYXk6Omluc2VydEVsZW1lbnQo"
+        "aW50IHZhbHVlKQ0Kew0KICAgIC8vdG9kby3H67j4s/a+38zlyrXP1rT6wusNCn0NCmludCBT"
+        "ZXFBcnJheTo6ZGVsZXRlbWluKCkNCnsNCiAgLy90b2RvLcfruPiz9r7fzOXKtc/WtPrC6w0K"
+        "fQ0Kdm9pZCAgU2VxQXJyYXk6OmRlbGV0ZVNhbWUoaW50IHgpDQp7DQogICAgLy90b2RvLcfr"
+        "uPiz9r7fzOXKtc/WtPrC6w0KfQ0Kdm9pZCAgU2VxQXJyYXk6OmRlbGV0ZVNvbWUoaW50IHMs"
+        "aW50IHQpDQp7DQogICAgLy90b2RvLcfruPiz9r7fzOXKtc/WtPrC6w0KfQ0Kdm9pZCBTZXFB"
+        "cnJheTo6cHJpbnQoKQ0Kew0KLy90b2RvLcfruPiz9r7fzOXKtc/WtPrC6w0KDQp9DQoNCi8v"
+        "x+uyu9Kq0N64xM/Cw+ZtYWluuq/K/bXEuq/K/czlDQppbnQgbWFpbigpDQp7DQogICAgLy8g"
+        "biCx7cq+0qrK5MjrtcTK/b7d1KrL2Lj2yv2jrCBtaW52YWy8x8K8yb6z/bXE1+7Qoda1o6wN"
+        "CiAgICAvL3NhbWV2YWx1ZbHtyr7WuLaoyb6z/bXEyv2+3aOsc6GidLHtyr7Sqsm+s/21xMr9"
+        "vt21xLe2zqdzPHQNCiAgICBpbnQgbixtaW52YWwsc2FtZXZhbHVlLCBzLCB0Ow0KDQogICAg"
+        "U2VxQXJyYXkgYSgyMCk7DQogICAgY2luPj5uOw0KICAgIGZvciAoaW50IGkgPSAwOyBpIDwg"
+        "bjsgaSsrKSB7DQogICAgICAgIGNpbiA+PiB2YWx1ZTsNCiAgICAgICAgYS5pbnNlcnRFbGVt"
+        "ZW50KHZhbHVlKTsNCiAgICB9DQoNCiAgICBjb3V0IDw8ICLLs9Dyse3K/b7dzqo6IjsNCiAg"
+        "ICBhLnByaW50KCk7DQogICAgbWludmFsID0gYS5kZWxldGVtaW4oKTsNCiAgICBjb3V0IDw8"
+        "ICLJvrP91+7Qoda1uvPOqjoiOw0KICAgIGEucHJpbnQoKTsNCiAgICBjb3V0IDw8ICLX7tCh"
+        "1rU6IiA8PCBtaW52YWwgPDwgZW5kbDsNCiAgICBjaW4gPj4gc2FtZXZhbHVlOw0KICAgIGEu"
+        "ZGVsZXRlU2FtZShzYW1ldmFsdWUpOw0KICAgIGNvdXQgPDwgIsm+s/3P4M2s1rW6886qOiI7"
+        "DQogICAgYS5wcmludCgpOw0KICAgIGNpbiA+PiBzID4+IHQ7DQogICAgYS5kZWxldGVTb21l"
+        "KHMsIHQpOw0KICAgIGNvdXQgPDwgIsm+s/3WuLaot7bOp8r91rW6886qOiI7DQogICAgYS5w"
+        "cmludCgpOw0KICAgIHJldHVybiAwOw0KfQ0K"
+    ),
+    LINKED_LIST_PARENT_ALGORITHM_ID: (
+        "Lyror77lkI7kuaDpopgNCgnljZXpk77ooajmk43kvZzvvJoNCgnlrozlloTkuIvpnaLnmoTl"
+        "uKblpLTnu5PngrnnmoTljZXlkJHpk77ooajnsbvnmoTnm7jlhbPmiJDlkZjlh73mlbDvvIwN"
+        "CgkoMSnlkJHpk77ooajlsL7pg6jmj5LlhaXnmoTmiJDlkZjlh73mlbANCgkgICB2b2lkIGlu"
+        "c2VydFRvVGFpbChpbnQgdmFsKTsNCgkoMinlhpnlh7rlsIbpk77ooajlgJLnva7nmoTmiJDl"
+        "kZjlh73mlbANCgkJdm9pZCBSZXZlcnNlKCk7DQoqLw0KI2luY2x1ZGUgPGlvc3RyZWFtPg0K"
+        "dXNpbmcgbmFtZXNwYWNlIHN0ZDsNCmNsYXNzIE5vZGUgLy/pk77ooajnmoTnu5Pngrnlrprk"
+        "uYkNCnsNCnB1YmxpYzoNCiAgICBOb2RlKGludCB4KQ0KICAgIHsNCiAgICAgICAgZGF0YSA9"
+        "IHg7DQogICAgICAgIG5leHQgPSBOVUxMOw0KICAgIH0NCiAgICBpbnQgZGF0YTsNCiAgICBO"
+        "b2RlKiBuZXh0Ow0KfTsNCmNsYXNzIE1MaXN0IC8v5bim5pyJ5aS057uT54K555qE5Y2V5ZCR"
+        "6ZO+6KGo57G75a6a5LmJDQp7DQpwcml2YXRlOg0KICAgIE5vZGUqIGhlYWQ7Ly/mjIflkJHl"
+        "pLTnu5PngrnvvIzkuI3mmK/lrp7pmYXnmoTmlbDmja7nu5PngrkNCg0KcHVibGljOg0KICAg"
+        "IE1MaXN0KCk7DQogICAgfk1MaXN0KCk7DQogICAgdm9pZCBpbnNlcnRUb1RhaWwoaW50IHZh"
+        "bCk7Ly9UT0RPMTrlnKjnsbvlpJbnu5nlh7ror6Xlh73mlbDlrp7njrDigJTigJTlkJHlsL7p"
+        "g6jmj5LlhaXmlbDmja52YWwNCiAgICB2b2lkIFJldmVyc2UoKTsvL1RPRE8yOuWcqOexu+Wk"
+        "lue7meWHuuivpeWHveaVsOWunueOsOKAlOKAlOe/u+i9rOmTvuihqA0KICAgIHZvaWQgcHJp"
+        "bnQoKTsNCn07DQovL+S4jemcgOimgeaUueWPmOS4i+mdoueahOaehOmAoOWHveaVsA0KTUxp"
+        "c3Q6Ok1MaXN0KCkNCnsNCiAgICBoZWFkID0gbmV3IE5vZGUoMCk7Ly9oZWFkIOaMh+WQkee"
+        "ahOaYr+WktOe7k+eCuQ0KfQ0KLy/kuI3pnIDopoHmlLnlj5jkuIvpnaLnmoTmnpDmnoTlh73"
+        "mlbANCk1MaXN0Ojp+TUxpc3QoKQ0Kew0KICAgIE5vZGUqIHRlbXAgPSBoZWFkOw0KICAgIHdo"
+        "aWxlKHRlbXApIC8v6YCQ5Liq6YeK5pS+57uT54K556m66Ze0DQogICAgew0KICAgICAgICBo"
+        "ZWFkID0gaGVhZCAtPm5leHQ7DQogICAgICAgIGRlbGV0ZSB0ZW1wOw0KICAgICAgICB0ZW1w"
+        "ID0gaGVhZDsNCiAgICB9DQogICAgaGVhZCA9IE5VTEw7DQp9DQoNCi8v5LiN6KaB5pS55Y+"
+        "Y5LiL6Z2i55qEcHJpbnTlh73mlbANCnZvaWQgTUxpc3Q6OnByaW50KCkNCnsNCiAgICBOb2Rl"
+        "KiBwID0gaGVhZC0+bmV4dDsNCiAgICB3aGlsZSAocCkgew0KICAgICAgICBjb3V0IDw8IHAt"
+        "PmRhdGE8PCAiICI7DQogICAgICAgIHAgPSBwIC0+bmV4dDsNCiAgICB9DQp9DQovL+S4jeim"
+        "geaUueWPmOS4i+mdoueahG1haW7lh73mlbANCmludCBtYWluKCkNCnsNCiAgICBNTGlzdCBs"
+        "dDsvL+WIm+W7uumTvuihqOWvueixoSBsdA0KICAgIGludCBOdW07Ly9OdW0g6KGo56S66KaB"
+        "6L6T5YWl55qE5YWD57Sg55qE5Liq5pWwDQogICAgY2luID4+IE51bTsNCiAgICBmb3IgKGlud"
+        "CBpID0gMDsgaSA8IE51bTsgaSsrKSB7DQogICAgICAgIGludCB2YWw7DQogICAgICAgIGNpbi"
+        "A+PiB2YWw7DQogICAgICAgIGx0Lmluc2VydFRvVGFpbCh2YWwpOw0KICAgIH0NCiAgICBjb3"
+        "V0IDw8ICLlgJLnva7liY3kuLrvvJoiOw0KICAgIGx0LnByaW50KCk7DQogICAgY291dCA8PC"
+        "BlbmRsOw0KICAgIGx0LlJldmVyc2UoKTsNCiAgICBjb3V0IDw8ICLlgJLnva7lkI7kuLrvvJ"
+        "oiOw0KICAgIGx0LnByaW50KCk7DQogICAgY291dCA8PCBlbmRsOw0KICAgIHJldHVybiAwOw0K"
+        "fQ0K"
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -35,20 +171,38 @@ class DemoUser:
     space_id: str
 
 
+@dataclass
+class DemoState:
+    algorithms: dict[str, dict[str, object]] = field(default_factory=dict)
+    workbenches: dict[str, dict[str, object]] = field(default_factory=dict)
+    next_algorithm_id: int = 1
+    lock: Lock = field(default_factory=Lock)
+
+
+class DemoFincolabServer(ThreadingHTTPServer):
+    def __init__(
+        self,
+        server_address: tuple[str, int],
+        handler_class: type[BaseHTTPRequestHandler],
+    ) -> None:
+        super().__init__(server_address, handler_class)
+        self.demo_state = DemoState()
+
+
 USERS = {
-    "teacher001": DemoUser(
+    "1": DemoUser(
         "teacher001",
         "teacher001",
-        "local-demo-teacher",
+        "1",
         "teacher-token",
         "teacher",
         LOCAL_ORGANIZATION_ID,
         COURSE_ID,
     ),
-    "student001": DemoUser(
+    "2": DemoUser(
         "student001",
         "student001",
-        "local-demo-student",
+        "2",
         "student001-token",
         "student",
         LOCAL_ORGANIZATION_ID,
@@ -88,7 +242,7 @@ for _index in range(3, _local_student_count() + 2):
         COURSE_ID,
     )
 
-TOKEN_ALIASES = {"student-token": USERS["student001"]}
+TOKEN_ALIASES = {"student-token": USERS["2"]}
 
 
 def authenticate_bearer(token: str) -> DemoUser | None:
@@ -149,10 +303,10 @@ def _space_members(space_id: str) -> list[dict[str, str]]:
     ]
 
 
-def _parent_project() -> dict[str, object]:
+def _parent_project(parent_algorithm_id: str = PARENT_ALGORITHM_ID) -> dict[str, object]:
     return {
-        "id": PARENT_ALGORITHM_ID,
-        "name": "字典读取课堂练习",
+        "id": parent_algorithm_id,
+        "name": PARENT_PROJECT_NAMES[parent_algorithm_id],
         "username": "teacher001",
         "description": "教师本地课堂实验",
         "project_type": "notebook",
@@ -160,31 +314,68 @@ def _parent_project() -> dict[str, object]:
     }
 
 
-def _child_algorithm_id(student_id: str) -> str:
-    return CHILD_ALGORITHM_ID if student_id == "student001" else f"child-experiment-{student_id}"
+def _assessment_material_bundle(parent_algorithm_id: str) -> dict[str, object]:
+    resource = MATERIAL_BUNDLE_RESOURCES[parent_algorithm_id]
+    payload = json.loads(
+        Path(__file__).resolve().parent.joinpath(*resource).read_text(encoding="utf-8")
+    )
+    if not isinstance(payload, dict) or not isinstance(payload.get("starter_source"), dict):
+        raise TypeError("sealed material bundle is invalid")
+    payload["starter_source"]["content_base64"] = MATERIAL_SOURCE_BASE64[parent_algorithm_id]
+    return payload
 
 
-def _workbench_id(student_id: str) -> str:
-    return WORKBENCH_ID if student_id == "student001" else f"workbench-{student_id}"
+def _child_algorithm_id(
+    student_id: str,
+    parent_algorithm_id: str = PARENT_ALGORITHM_ID,
+) -> str:
+    if parent_algorithm_id == PARENT_ALGORITHM_ID:
+        return CHILD_ALGORITHM_ID if student_id == "student001" else f"child-experiment-{student_id}"
+    return f"child-{parent_algorithm_id}-{student_id}"
+
+
+def _workbench_id(
+    student_id: str,
+    parent_algorithm_id: str = PARENT_ALGORITHM_ID,
+) -> str:
+    if parent_algorithm_id == PARENT_ALGORITHM_ID:
+        return WORKBENCH_ID if student_id == "student001" else f"workbench-{student_id}"
+    return f"workbench-{parent_algorithm_id}-{student_id}"
 
 
 def _course_students() -> list[DemoUser]:
-    return [user for user in USERS.values() if user.role_name == "student" and user.space_id == COURSE_ID]
+    return [
+        user
+        for user in USERS.values()
+        if user.role_name == "student" and user.space_id == COURSE_ID
+    ]
 
 
-def _student_project(student_id: str = "student001") -> dict[str, object]:
-    child_algorithm_id = _child_algorithm_id(student_id)
-    workbench_id = _workbench_id(student_id)
+def _student_project(
+    student_id: str = "student001",
+    parent_algorithm_id: str = PARENT_ALGORITHM_ID,
+) -> dict[str, object]:
+    child_algorithm_id = _child_algorithm_id(student_id, parent_algorithm_id)
+    workbench_id = _workbench_id(student_id, parent_algorithm_id)
     return {
         "id": child_algorithm_id,
         "name": f"exp-{student_id}-a1b2",
         "username": student_id,
-        "description": f"[FINCOLAB_PARENT_PROJECT_ID:{PARENT_ALGORITHM_ID}] 本地课堂学生任务",
+        "description": (
+            f"[FINCOLAB_PARENT_PROJECT_ID:{parent_algorithm_id}] 本地课堂学生任务"
+        ),
         "project_type": "notebook",
         "workbench_id": workbench_id,
         "workbench_status": "RUNNING",
         "jupyter_url": "http://127.0.0.1:8888/lab",
     }
+
+
+def _parent_id_from_description(description: object) -> str:
+    if not isinstance(description, str):
+        return ""
+    match = re.match(r"^\[FINCOLAB_PARENT_PROJECT_ID:([^\]]+)\]", description)
+    return match.group(1) if match is not None else ""
 
 
 def _pagination(rows: list[dict[str, object]]) -> dict[str, object]:
@@ -213,14 +404,42 @@ class DemoFincolabHandler(BaseHTTPRequestHandler):
         if parsed.path == "/v1/organizations/spaces":
             self._reply(HTTPStatus.OK, visible_spaces(user))
             return
+        if parsed.path == "/v1/ai_framework":
+            self._reply(HTTPStatus.OK, {"data": AI_FRAMEWORKS})
+            return
         if parsed.path == "/v1/quota/spec/all":
             self._reply(
                 HTTPStatus.OK,
-                {"data": [{"id": 1, "name": "本地 CPU", "desc": "本地课堂演示资源", "cpu": 2, "memory": 4, "gpu": 0}]},
+                {
+                    "data": [
+                        {
+                            "id": 1,
+                            "name": "本地 CPU",
+                            "desc": "本地课堂演示资源",
+                            "cpu": 2,
+                            "memory": 4,
+                            "gpu": 0,
+                        }
+                    ]
+                },
             )
             return
 
         parts = [part for part in parsed.path.split("/") if part]
+        if parts == ["v1", "spaces", COURSE_ID, "template"]:
+            if not self._require_course_access(user):
+                return
+            framework_id = parse_qs(parsed.query).get("framework_id", [""])[0]
+            self._reply(
+                HTTPStatus.OK,
+                {"items": CODE_TEMPLATES_BY_FRAMEWORK.get(framework_id, [])},
+            )
+            return
+        if parts == ["v1", "spaces", COURSE_ID, "datasets"]:
+            if not self._require_course_access(user):
+                return
+            self._reply(HTTPStatus.OK, DEFAULT_DATASET_RESPONSE)
+            return
         if len(parts) == 6 and parts[:3] == ["v1", "organizations", user.organization_id]:
             if parts[3:5] == ["spaces", user.space_id] and parts[5] == "users":
                 self._reply(HTTPStatus.OK, _pagination(_space_members(user.space_id)))
@@ -229,7 +448,11 @@ class DemoFincolabHandler(BaseHTTPRequestHandler):
             self._reply(HTTPStatus.FORBIDDEN, {"detail": "demo_course_access_denied"})
             return
 
-        if len(parts) >= 4 and parts[:3] == ["v1", "spaces", COURSE_ID] and parts[3] == "algorithm_development":
+        if (
+            len(parts) >= 4
+            and parts[:3] == ["v1", "spaces", COURSE_ID]
+            and parts[3] == "algorithm_development"
+        ):
             if not self._require_course_access(user):
                 return
             self._handle_course_algorithm_get(user, parts[4:])
@@ -255,6 +478,26 @@ class DemoFincolabHandler(BaseHTTPRequestHandler):
             if self._require_user() is not None:
                 self._reply(HTTPStatus.OK, {})
             return
+
+        user = self._require_user()
+        if user is None:
+            return
+        parts = [part for part in parsed.path.split("/") if part]
+        if len(parts) >= 3 and parts[:3] == ["v1", "spaces", COURSE_ID]:
+            if not self._require_course_access(user):
+                return
+            if not self._require_teacher_write(user):
+                return
+            if parts == ["v1", "spaces", COURSE_ID, "algorithm_development"]:
+                self._create_algorithm()
+                return
+            if (
+                len(parts) == 6
+                and parts[:4] == ["v1", "spaces", COURSE_ID, "algorithm_development"]
+                and parts[5] == "workbench"
+            ):
+                self._create_workbench(parts[4])
+                return
         self._reply(HTTPStatus.METHOD_NOT_ALLOWED, {"detail": "demo_method_not_allowed"})
 
     def do_PUT(self) -> None:  # noqa: N802
@@ -264,17 +507,26 @@ class DemoFincolabHandler(BaseHTTPRequestHandler):
         self._reply(HTTPStatus.METHOD_NOT_ALLOWED, {"detail": "demo_method_not_allowed"})
 
     def do_DELETE(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        user = self._require_user()
+        if user is None:
+            return
+        parts = [part for part in parsed.path.split("/") if part]
+        if (
+            len(parts) == 5
+            and parts[:4] == ["v1", "spaces", COURSE_ID, "algorithm_development"]
+        ):
+            if not self._require_course_access(user):
+                return
+            if not self._require_teacher_write(user):
+                return
+            self._delete_algorithm(parts[4])
+            return
         self._reply(HTTPStatus.METHOD_NOT_ALLOWED, {"detail": "demo_method_not_allowed"})
 
     def _login(self) -> None:
-        try:
-            length = int(self.headers.get("Content-Length", "0"))
-            payload = json.loads(self.rfile.read(length).decode("utf-8"))
-        except (UnicodeDecodeError, ValueError):
-            self._reply(HTTPStatus.BAD_REQUEST, {"detail": "demo_login_payload_invalid"})
-            return
-        if not isinstance(payload, dict):
-            self._reply(HTTPStatus.BAD_REQUEST, {"detail": "demo_login_payload_invalid"})
+        payload = self._read_json_object("demo_login_payload_invalid")
+        if payload is None:
             return
         username = payload.get("username")
         password = payload.get("password")
@@ -293,29 +545,234 @@ class DemoFincolabHandler(BaseHTTPRequestHandler):
             },
         )
 
+    def _create_algorithm(self) -> None:
+        payload = self._read_json_object("demo_payload_invalid")
+        if payload is None:
+            return
+        required_fields = ("name", "framework_id", "project_type", "dataset_id")
+        if any(
+            not isinstance(payload.get(field_name), str)
+            or not str(payload[field_name]).strip()
+            for field_name in required_fields
+        ):
+            self._reply(HTTPStatus.BAD_REQUEST, {"detail": "demo_payload_invalid"})
+            return
+
+        now = str(int(time.time()))
+        name = str(payload["name"]).strip()
+        owner = self._algorithm_owner(name)
+        state = self._demo_state()
+        with state.lock:
+            algorithm_id = f"demo-algorithm-{state.next_algorithm_id:04d}"
+            state.next_algorithm_id += 1
+            algorithm = {
+                "id": algorithm_id,
+                "name": name,
+                "username": owner,
+                "description": str(payload.get("description") or ""),
+                "framework_id": str(payload["framework_id"]),
+                "project_type": str(payload["project_type"]),
+                "dataset_id": str(payload["dataset_id"]),
+                "dataset_name": str(payload.get("dataset_name") or ""),
+                "template_id": str(payload.get("template_id") or ""),
+                "upload_id": str(payload.get("upload_id") or ""),
+                "workbench_id": "",
+                "workbench_status": "NOT_STARTED",
+                "created_at": now,
+                "updated_at": now,
+            }
+            state.algorithms[algorithm_id] = algorithm
+        self._reply(HTTPStatus.CREATED, algorithm)
+
+    def _create_workbench(self, algorithm_id: str) -> None:
+        payload = self._read_json_object("demo_payload_invalid")
+        if payload is None:
+            return
+        resource = payload.get("container_resource_json")
+        if not isinstance(resource, dict) or any(
+            not isinstance(resource.get(field_name), (int, float))
+            for field_name in ("cpu", "memory", "gpu")
+        ):
+            self._reply(HTTPStatus.BAD_REQUEST, {"detail": "demo_payload_invalid"})
+            return
+
+        state = self._demo_state()
+        with state.lock:
+            algorithm = state.algorithms.get(algorithm_id)
+            if algorithm is None:
+                self._reply(HTTPStatus.NOT_FOUND, {"detail": "demo_endpoint_not_found"})
+                return
+            workbench_id = f"workbench-{algorithm_id}"
+            now = str(int(time.time()))
+            workbench = {
+                "id": workbench_id,
+                "project_id": algorithm_id,
+                "space_id": COURSE_ID,
+                "username": algorithm["username"],
+                "workbench_status": "RUNNING",
+                "jupyter_url": "http://127.0.0.1:8888/lab",
+                "container_resource_json": {
+                    field_name: resource[field_name]
+                    for field_name in ("cpu", "memory", "gpu")
+                },
+                "created_at": now,
+                "updated_at": now,
+            }
+            state.workbenches[workbench_id] = workbench
+            algorithm.update(
+                {
+                    "workbench_id": workbench_id,
+                    "workbench_status": "RUNNING",
+                    "jupyter_url": workbench["jupyter_url"],
+                    "updated_at": now,
+                }
+            )
+        self._reply(HTTPStatus.CREATED, workbench)
+
+    def _delete_algorithm(self, algorithm_id: str) -> None:
+        state = self._demo_state()
+        with state.lock:
+            algorithm = state.algorithms.pop(algorithm_id, None)
+            if algorithm is None:
+                detail = (
+                    "demo_resource_access_denied"
+                    if algorithm_id in PARENT_PROJECT_NAMES
+                    else "demo_endpoint_not_found"
+                )
+                status = (
+                    HTTPStatus.FORBIDDEN
+                    if algorithm_id in PARENT_PROJECT_NAMES
+                    else HTTPStatus.NOT_FOUND
+                )
+                self._reply(status, {"detail": detail})
+                return
+            workbench_id = algorithm.get("workbench_id")
+            if isinstance(workbench_id, str) and workbench_id:
+                state.workbenches.pop(workbench_id, None)
+        self._reply(HTTPStatus.OK, {})
+
+    def _read_json_object(self, invalid_detail: str) -> dict[str, object] | None:
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            self._reply(HTTPStatus.BAD_REQUEST, {"detail": invalid_detail})
+            return None
+        if not isinstance(payload, dict):
+            self._reply(HTTPStatus.BAD_REQUEST, {"detail": invalid_detail})
+            return None
+        return payload
+
+    def _algorithm_owner(self, name: str) -> str:
+        match = re.fullmatch(r"exp-(.+)-([A-Za-z0-9]{4})", name)
+        if match is not None:
+            username = match.group(1)
+            if any(student.username == username for student in _course_students()):
+                return username
+        return "teacher001"
+
     def _handle_course_algorithm_get(self, user: DemoUser, tail: list[str]) -> None:
         if not tail:
             # The student UI matches its private child against the teacher's
             # parent metadata.  Listing the parent permits that local
             # association; its detail endpoint remains teacher-only below.
-            rows = [_parent_project(), *[_student_project(student.username) for student in _course_students()]]
+            visible_students = _course_students() if user.role_name == "teacher" else [user]
+            rows = [
+                *[_parent_project(parent_id) for parent_id in PARENT_PROJECT_NAMES],
+                *[
+                    _student_project(student.username, parent_id)
+                    for student in visible_students
+                    for parent_id in PARENT_PROJECT_NAMES
+                ],
+            ]
+            state = self._demo_state()
+            with state.lock:
+                dynamic_algorithms = [
+                    dict(algorithm) for algorithm in state.algorithms.values()
+                ]
+            if user.role_name == "teacher":
+                rows.extend(dynamic_algorithms)
+            else:
+                own_algorithms = [
+                    algorithm
+                    for algorithm in dynamic_algorithms
+                    if algorithm.get("username") == user.username
+                ]
+                referenced_parent_ids = {
+                    parent_id
+                    for algorithm in own_algorithms
+                    if (parent_id := _parent_id_from_description(algorithm.get("description")))
+                }
+                rows.extend(
+                    algorithm
+                    for algorithm in dynamic_algorithms
+                    if algorithm.get("username") == user.username
+                    or algorithm.get("id") in referenced_parent_ids
+                )
             self._reply(HTTPStatus.OK, _pagination(rows))
             return
         algorithm_id = tail[0]
-        if algorithm_id == PARENT_ALGORITHM_ID and user.role_name == "teacher" and len(tail) == 1:
-            self._reply(HTTPStatus.OK, _parent_project())
+        state = self._demo_state()
+        with state.lock:
+            dynamic_algorithm = state.algorithms.get(algorithm_id)
+            algorithm = dict(dynamic_algorithm) if dynamic_algorithm is not None else None
+            if len(tail) == 3 and tail[1] == "workbench":
+                dynamic_workbench = state.workbenches.get(tail[2])
+                workbench = (
+                    dict(dynamic_workbench) if dynamic_workbench is not None else None
+                )
+            else:
+                workbench = None
+        if algorithm is not None:
+            if user.role_name != "teacher" and algorithm.get("username") != user.username:
+                self._reply(HTTPStatus.FORBIDDEN, {"detail": "demo_resource_access_denied"})
+                return
+            if len(tail) == 1:
+                self._reply(HTTPStatus.OK, algorithm)
+                return
+            if tail[1:2] == ["workbench"]:
+                if len(tail) == 3 and workbench is not None:
+                    self._reply(HTTPStatus.OK, workbench)
+                else:
+                    self._reply(HTTPStatus.NOT_FOUND, {"detail": "demo_endpoint_not_found"})
+                return
+            self._reply(HTTPStatus.NOT_FOUND, {"detail": "demo_endpoint_not_found"})
             return
-        student = next(
-            (candidate for candidate in _course_students() if _child_algorithm_id(candidate.username) == algorithm_id),
+        if algorithm_id.startswith("demo-algorithm-"):
+            self._reply(HTTPStatus.NOT_FOUND, {"detail": "demo_endpoint_not_found"})
+            return
+        if algorithm_id in PARENT_PROJECT_NAMES:
+            if user.role_name != "teacher":
+                self._reply(HTTPStatus.FORBIDDEN, {"detail": "demo_resource_access_denied"})
+                return
+            if len(tail) == 1:
+                self._reply(HTTPStatus.OK, _parent_project(algorithm_id))
+                return
+            if (
+                tail == [algorithm_id, "assessment_materials"]
+                and algorithm_id in MATERIAL_BUNDLE_RESOURCES
+            ):
+                self._reply(HTTPStatus.OK, _assessment_material_bundle(algorithm_id))
+                return
+            self._reply(HTTPStatus.NOT_FOUND, {"detail": "demo_endpoint_not_found"})
+            return
+        student_context = next(
+            (
+                (candidate, parent_id)
+                for candidate in _course_students()
+                for parent_id in PARENT_PROJECT_NAMES
+                if _child_algorithm_id(candidate.username, parent_id) == algorithm_id
+            ),
             None,
         )
-        if student is None or user.username != student.username:
+        if student_context is None or user.username != student_context[0].username:
             self._reply(HTTPStatus.FORBIDDEN, {"detail": "demo_resource_access_denied"})
             return
+        student, parent_id = student_context
         if len(tail) == 1:
-            self._reply(HTTPStatus.OK, _student_project(student.username))
+            self._reply(HTTPStatus.OK, _student_project(student.username, parent_id))
             return
-        workbench_id = _workbench_id(student.username)
+        workbench_id = _workbench_id(student.username, parent_id)
         if tail == [algorithm_id, "workbench", workbench_id]:
             self._reply(
                 HTTPStatus.OK,
@@ -345,6 +802,18 @@ class DemoFincolabHandler(BaseHTTPRequestHandler):
         self._reply(HTTPStatus.FORBIDDEN, {"detail": "demo_course_access_denied"})
         return False
 
+    def _require_teacher_write(self, user: DemoUser) -> bool:
+        if user.role_name == "teacher":
+            return True
+        self._reply(HTTPStatus.FORBIDDEN, {"detail": "demo_resource_access_denied"})
+        return False
+
+    def _demo_state(self) -> DemoState:
+        server = self.server
+        if not isinstance(server, DemoFincolabServer):
+            raise RuntimeError("demo handler requires DemoFincolabServer")
+        return server.demo_state
+
     def _reply(self, status: HTTPStatus, payload: dict[str, Any] | list[dict[str, object]]) -> None:
         body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         self.send_response(status)
@@ -358,7 +827,7 @@ class DemoFincolabHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    ThreadingHTTPServer(("0.0.0.0", 8080), DemoFincolabHandler).serve_forever()
+    DemoFincolabServer(("0.0.0.0", 8080), DemoFincolabHandler).serve_forever()
 
 
 if __name__ == "__main__":

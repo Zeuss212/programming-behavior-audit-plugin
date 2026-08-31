@@ -2,26 +2,46 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Header, Request, status
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from classroom_sync.application import ClassroomServices
 from classroom_sync.auth.fincolab import Principal
-from classroom_sync.errors import AuthenticationError
+from classroom_sync.errors import (
+    AuthenticationError,
+    ConflictError,
+    UpstreamUnavailableError,
+)
+from classroom_sync.models import PlanDraft
+from classroom_sync.services.assessment_materials import AssessmentMaterialBundle
 from classroom_sync.services.plans import PlanDraftInput
+from classroom_sync.services.publication_gate import PublicationGate, PublicationGateResult
 from classroom_sync.services.read_models import ClassroomReadService
 
 router = APIRouter(prefix="/v1/classroom/plans", tags=["classroom-teacher"])
+publication_gate = PublicationGate()
 
 
 class CreatePlanDraftRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    authoring_session_id: str | None = None
     space_id: str
     parent_algorithm_id: str
+    title: str
+    profile: dict[str, object]
+    scheduled_start_at: datetime
+    scheduled_end_at: datetime
+    ai_policy: str
+
+
+class UpdatePlanDraftRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: int = Field(strict=True, ge=0)
     title: str
     profile: dict[str, object]
     scheduled_start_at: datetime
@@ -54,6 +74,79 @@ def resolve_bearer_principal(
     return services.identity_gateway.resolve_principal(authorization.removeprefix("Bearer "))
 
 
+def _latest_materials(
+    services: ClassroomServices,
+    principal: Principal,
+    *,
+    space_id: str,
+    parent_algorithm_id: str,
+) -> AssessmentMaterialBundle:
+    material_service = services.assessment_material_service
+    if material_service is None:
+        raise UpstreamUnavailableError(
+            "assessment_materials_not_configured",
+            retryable=False,
+        )
+    materials = material_service.get_bundle(principal, space_id, parent_algorithm_id)
+    if (
+        materials.space_id != space_id
+        or materials.parent_algorithm_id != parent_algorithm_id
+    ):
+        raise UpstreamUnavailableError(
+            "assessment_materials_scope_invalid",
+            retryable=False,
+        )
+    return materials
+
+
+def _gate_for_draft(
+    services: ClassroomServices,
+    principal: Principal,
+    draft: PlanDraft,
+) -> PublicationGateResult:
+    if draft.profile.get("schema_version") != 3:
+        return PublicationGateResult(
+            status="ready",
+            blocking_count=0,
+            warning_count=0,
+            issues=(),
+        )
+    materials = _latest_materials(
+        services,
+        principal,
+        space_id=draft.space_id,
+        parent_algorithm_id=draft.parent_algorithm_id,
+    )
+    return publication_gate.evaluate(draft.profile, materials)
+
+
+def _draft_response(
+    draft: PlanDraft,
+    gate: PublicationGateResult,
+) -> dict[str, object]:
+    return {
+        "draft_id": draft.id,
+        "authoring_session_id": draft.authoring_session_id,
+        "space_id": draft.space_id,
+        "parent_algorithm_id": draft.parent_algorithm_id,
+        "title": draft.title,
+        "profile": draft.profile,
+        "scheduled_start_at": _wire_datetime(draft.scheduled_start_at),
+        "scheduled_end_at": _wire_datetime(draft.scheduled_end_at),
+        "ai_policy": draft.ai_policy,
+        "revision": draft.revision,
+        "publication_gate": gate.model_dump(mode="json"),
+    }
+
+
+def _wire_datetime(value: datetime) -> datetime:
+    """Serialize normalized storage instants despite timezone-poor databases."""
+
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 @router.get("/experiments/{space_id}/{parent_algorithm_id}")
 def get_experiment_plan(
     space_id: str,
@@ -80,8 +173,24 @@ def create_plan_draft(
     services.identity_gateway.require_teacher_owner(
         principal, payload.space_id, payload.parent_algorithm_id
     )
+    gate = PublicationGateResult(
+        status="ready",
+        blocking_count=0,
+        warning_count=0,
+        issues=(),
+    )
+    if payload.profile.get("schema_version") == 3:
+        materials = _latest_materials(
+            services,
+            principal,
+            space_id=payload.space_id,
+            parent_algorithm_id=payload.parent_algorithm_id,
+        )
+        publication_gate.require_ready(payload.profile, materials)
+        gate = publication_gate.evaluate(payload.profile, materials)
     draft = services.plan_service.create_draft(
         PlanDraftInput(
+            authoring_session_id=payload.authoring_session_id,
             space_id=payload.space_id,
             parent_algorithm_id=payload.parent_algorithm_id,
             title=payload.title,
@@ -92,7 +201,78 @@ def create_plan_draft(
         ),
         teacher_id=principal.user_id,
     )
-    return {"draft_id": draft.id, "revision": draft.revision}
+    return _draft_response(draft, gate)
+
+
+@router.get("/drafts/{draft_id}")
+def get_plan_draft(
+    draft_id: str,
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, object]:
+    services = get_services(request)
+    principal = resolve_bearer_principal(services, authorization)
+    draft = services.plan_service.get_draft(
+        draft_id,
+        teacher_id=principal.user_id,
+    )
+    services.identity_gateway.require_teacher_owner(
+        principal,
+        draft.space_id,
+        draft.parent_algorithm_id,
+    )
+    return _draft_response(draft, _gate_for_draft(services, principal, draft))
+
+
+@router.put("/drafts/{draft_id}")
+def update_plan_draft(
+    draft_id: str,
+    payload: UpdatePlanDraftRequest,
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, object]:
+    services = get_services(request)
+    principal = resolve_bearer_principal(services, authorization)
+    current = services.plan_service.get_draft(
+        draft_id,
+        teacher_id=principal.user_id,
+    )
+    services.identity_gateway.require_teacher_owner(
+        principal,
+        current.space_id,
+        current.parent_algorithm_id,
+    )
+    if current.revision != payload.expected_revision:
+        raise ConflictError("plan_draft_revision_conflict")
+    materials = None
+    if payload.profile.get("schema_version") == 3:
+        materials = _latest_materials(
+            services,
+            principal,
+            space_id=current.space_id,
+            parent_algorithm_id=current.parent_algorithm_id,
+        )
+    draft = services.plan_service.update_draft(
+        draft_id,
+        profile=payload.profile,
+        teacher_id=principal.user_id,
+        title=payload.title,
+        scheduled_start_at=payload.scheduled_start_at,
+        scheduled_end_at=payload.scheduled_end_at,
+        ai_policy=payload.ai_policy,
+        expected_revision=payload.expected_revision,
+    )
+    gate = (
+        publication_gate.evaluate(draft.profile, materials)
+        if materials is not None
+        else PublicationGateResult(
+            status="ready",
+            blocking_count=0,
+            warning_count=0,
+            issues=(),
+        )
+    )
+    return _draft_response(draft, gate)
 
 
 @router.post("/drafts/{draft_id}/publish")
@@ -103,11 +283,29 @@ def publish_plan_draft(
 ) -> dict[str, object]:
     services = get_services(request)
     principal = resolve_bearer_principal(services, authorization)
-    draft = services.plan_service.get_draft(draft_id)
+    draft = services.plan_service.get_draft(
+        draft_id,
+        teacher_id=principal.user_id,
+    )
     services.identity_gateway.require_teacher_owner(
         principal, draft.space_id, draft.parent_algorithm_id
     )
-    published = services.plan_service.publish_draft(draft_id, teacher_id=principal.user_id)
+    materials = None
+    if (
+        draft.profile.get("schema_version") == 3
+        and draft.published_revision != draft.revision
+    ):
+        materials = _latest_materials(
+            services,
+            principal,
+            space_id=draft.space_id,
+            parent_algorithm_id=draft.parent_algorithm_id,
+        )
+    published = services.plan_service.publish_draft(
+        draft_id,
+        teacher_id=principal.user_id,
+        materials=materials,
+    )
     return {
         "plan_version_id": published.id,
         "plan_id": published.plan_id,

@@ -16,11 +16,11 @@
 
 | 角色 | 用户名 | 密码 | 可见课程 |
 | --- | --- | --- | --- |
-| 教师 | teacher001 | local-demo-teacher | course-001 |
-| 学生 | student001 | local-demo-student | course-001 |
+| 教师 | 1 | 1 | course-001 |
+| 学生 | 2 | 2 | course-001 |
 | 隔离负例 | student002 | local-demo-student2 | course-002 |
 
-这些密码和令牌均为本地固定测试数据，不能用于任何其他环境。
+教师和学生登录后仍分别使用内部身份 `teacher001` 与 `student001`，已有课堂数据不变。这些密码和令牌均为本地固定测试数据，不能用于任何其他环境。
 
 ## 启动
 
@@ -53,13 +53,15 @@ cp deploy/classroom/local-demo/.env.ai.example deploy/classroom/local-demo/.env.
 
 在 `.env.ai` 的 `CLASSROOM_AI_API_KEY=` 后粘贴你的 GLM Coding Plan Key，保留默认的 `https://open.bigmodel.cn/api/coding/paas/v4` 与 `glm-5.2`，再停止并重新启动本地 demo。该 Key 只会被 `sync-api` 和 `deadline-worker` 容器读取；不要粘贴到聊天、Jupyter、浏览器存储或 Git。`.env.ai` 已被忽略，不能提交。
 
-重新启动后，以 `student001` 提交本节简报，在教师课堂监控页刷新：会先显示“AI 分析生成中”，成功后显示“AI 分析已完成”，失败三次后显示“AI 分析不可用”。无论失败与否，学生的基础简报都会保留；AI 内容仅作辅助教学分析，不自动评分。
+重新启动后，以学生账号 `2`（内部身份 `student001`）提交本节简报，在教师课堂监控页刷新：会先显示“AI 分析生成中”，成功后显示“AI 分析已完成”，失败三次后显示“AI 分析不可用”。无论失败与否，学生的基础简报都会保留；AI 内容仅作辅助教学分析，不自动评分。
 
 ## 教师—学生演示顺序
 
-1. 在独立浏览器 profile A 打开 http://127.0.0.1:5175，登录 teacher001。
+教师端的三步“创建实验”弹窗可在本地演示中完整使用：它会为所选学生创建关联实验和本地工作台。这些新建记录只保存在 `demo-fincolab` 进程内；重启该容器后会恢复本文档所述的固定演示数据。
+
+1. 在独立浏览器 profile A 打开 http://127.0.0.1:5175，以 `1 / 1` 登录教师端。
 2. 打开 admin/projects，找到 parent-experiment-001 的“课堂方案”，填写计划并发布，然后同步学生任务。
-3. 在独立浏览器 profile B 打开相同地址，登录 student001，进入课堂任务。
+3. 在独立浏览器 profile B 打开相同地址，以 `2 / 2` 登录学生端，进入课堂任务。
 4. 学生接受任务，点击进入工作台；页面会打开本地 JupyterLab 并把一次性课堂票据放在 URL fragment 中。
 5. 在 JupyterLab 运行任意 notebook 单元，确认插件显示课堂学生模式，然后手动提交。
 6. 回到教师 profile，刷新课堂监控页并打开 student001 的课堂简报。
@@ -68,6 +70,16 @@ cp deploy/classroom/local-demo/.env.ai.example deploy/classroom/local-demo/.env.
 教师、学生和负例必须使用不同 browser profile，因为 Vue 把登录态保存在 profile 的 localStorage 中。
 
 ## 自动验证
+
+启动本地 demo 后，可先执行 C++ 课堂第一阶段后端门禁：
+
+~~~sh
+python3 scripts/cpp_classroom_phase1_smoke.py
+~~~
+
+该命令登录本地教师，核对顺序表阻断项与链表原始维度问题，两次恢复同一个链表备课会话，保存经过修正的 v3 方案并发布，最后确认会话已关闭。它默认不请求 AI，不同步作业，不调用学生运行或插件端点；标准输出只包含状态、标识符和调用计数，不包含材料源文、教师测试内容或任何提供方输出。
+
+完整的 Python 教师—学生交互闭环仍使用：
 
 在课堂服务 worktree 执行：
 

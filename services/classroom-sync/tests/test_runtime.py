@@ -2,15 +2,27 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
+from typing import cast
 
 import pytest
 
+from classroom_sync.application import ClassroomIdentityGateway, ClassroomServices
 from classroom_sync.config import Settings
 from classroom_sync.domain.schemas import ClassroomSchemaRegistry
 from classroom_sync.errors import AiSuggestionUnavailableError
-from classroom_sync.runtime import contract_directory, s3_client_config
+from classroom_sync.main import create_app
+from classroom_sync.runtime import (
+    contract_directory,
+    create_runtime_services,
+    fincolab_http_client,
+    s3_client_config,
+)
+from classroom_sync.services.assignments import AssignmentService
+from classroom_sync.services.plan_authoring import PlanAuthoringService
 from classroom_sync.services.plan_suggestions import AiProviderSettings, AiSuggestionSettings
+from classroom_sync.services.plans import PlanService
 
 
 def test_runtime_configuration_requires_all_trusted_dependencies():
@@ -98,6 +110,91 @@ def test_runtime_uses_bounded_s3_timeouts_for_retryable_storage_outages():
     assert config.retries == {"mode": "standard", "total_max_attempts": 1}
 
 
+def test_runtime_uses_the_existing_ten_second_fincolab_timeout() -> None:
+    """Identity, ownership, and material reads share one bounded upstream policy."""
+    client = fincolab_http_client()
+    try:
+        assert client.timeout.connect == 10.0
+        assert client.timeout.read == 10.0
+        assert client.timeout.write == 10.0
+        assert client.timeout.pool == 10.0
+    finally:
+        client.close()
+
+
+def test_runtime_wires_authoring_sessions_to_the_durable_suggestion_jobs() -> None:
+    settings = Settings(
+        database_url="sqlite://",
+        s3_endpoint_url="http://minio.invalid:9000",
+        s3_bucket="classroom-evidence",
+        s3_access_key="local-access-key",
+        s3_secret_key="local-secret-key",
+        fincolab_base_url="http://fincolab.invalid:8080",
+        fincolab_organization_id="local-org",
+        plugin_jwt_secret="local-plugin-secret-at-least-32-chars",
+        ai_base_url="https://ai.example/v1",
+        ai_model="classroom-model",
+        ai_api_key="server-only-secret",
+    )
+
+    services = create_runtime_services(settings)
+    try:
+        assert isinstance(services.plan_authoring_service, PlanAuthoringService)
+        assert services.plan_suggestion_job_service is not None
+    finally:
+        if services.shutdown is not None:
+            services.shutdown()
+
+
+def test_runtime_keeps_authoring_sessions_available_without_optional_ai() -> None:
+    settings = Settings(
+        database_url="sqlite://",
+        s3_endpoint_url="http://minio.invalid:9000",
+        s3_bucket="classroom-evidence",
+        s3_access_key="local-access-key",
+        s3_secret_key="local-secret-key",
+        fincolab_base_url="http://fincolab.invalid:8080",
+        fincolab_organization_id="local-org",
+        plugin_jwt_secret="local-plugin-secret-at-least-32-chars",
+    )
+
+    services = create_runtime_services(settings)
+    try:
+        assert isinstance(services.plan_authoring_service, PlanAuthoringService)
+        assert services.plan_suggestion_job_service is None
+    finally:
+        if services.shutdown is not None:
+            services.shutdown()
+
+
+def test_app_shutdown_closes_shared_runtime_client_once() -> None:
+    close_calls = 0
+
+    def close_shared_client() -> None:
+        nonlocal close_calls
+        close_calls += 1
+
+    app = create_app(
+        Settings(database_url="sqlite://"),
+        classroom_services=ClassroomServices(
+            identity_gateway=cast(ClassroomIdentityGateway, object()),
+            plan_service=cast(PlanService, object()),
+            assignment_service=cast(AssignmentService, object()),
+            shutdown=close_shared_client,
+        ),
+    )
+
+    async def exercise_lifespan_twice() -> None:
+        async with app.router.lifespan_context(app):
+            pass
+        async with app.router.lifespan_context(app):
+            pass
+
+    asyncio.run(exercise_lifespan_twice())
+
+    assert close_calls == 1
+
+
 def test_schema_registry_can_use_an_explicit_plugin_schema_directory(tmp_path):
     contract_directory = tmp_path / "contracts" / "classroom" / "v1"
     plugin_directory = tmp_path / "plugin-schemas"
@@ -106,7 +203,12 @@ def test_schema_registry_can_use_an_explicit_plugin_schema_directory(tmp_path):
     source_root = Path(__file__).resolve().parents[3]
     for source in (source_root / "contracts" / "classroom" / "v1").glob("*.schema.json"):
         (contract_directory / source.name).write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
-    for name in ("profile-draft-v2.json", "profile-version-v2.json"):
+    for name in (
+        "profile-draft-v2.json",
+        "profile-version-v2.json",
+        "profile-draft-v3.json",
+        "profile-version-v3.json",
+    ):
         source = source_root / "myextension" / "api_schemas" / name
         (plugin_directory / name).write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
 

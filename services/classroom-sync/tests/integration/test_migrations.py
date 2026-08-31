@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -8,14 +8,17 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError
 
+from classroom_sync.db import create_database_engine
 from classroom_sync.models import (
     Base,
     ClassroomBriefAnalysisJob,
     ClassroomPlanSuggestionJob,
+    PlanDraft,
     StudentBrief,
 )
 
 CORE_TABLES = {
+    "plan_series",
     "plan_drafts",
     "plan_versions",
     "experiment_plan_bindings",
@@ -71,6 +74,7 @@ def test_core_migration_round_trip_and_uniqueness(tmp_path: Path):
                 "plan_id": "plan-1",
                 "profile_id": "profile-1",
                 "version": 1,
+                "source_draft_id": "plan-1",
                 "source_draft_revision": 0,
                 "space_id": "space-1",
                 "parent_algorithm_id": "parent-1",
@@ -253,6 +257,42 @@ def test_core_migration_round_trip_and_uniqueness(tmp_path: Path):
             )
 
 
+def test_plan_draft_plan_id_requires_an_existing_plan_series():
+    """The production SQLite engine rejects drafts whose plan series is absent."""
+    engine = create_database_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    now = datetime(2026, 8, 29, 8, 0, tzinfo=UTC)
+    tables = Base.metadata.tables
+    plan_id_foreign_keys = {
+        foreign_key.target_fullname
+        for foreign_key in PlanDraft.__table__.c.plan_id.foreign_keys
+    }
+    assert plan_id_foreign_keys == {"plan_series.id"}
+
+    with engine.connect() as connection:
+        assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
+        with pytest.raises(IntegrityError):
+            connection.execute(
+                tables["plan_drafts"].insert(),
+                {
+                    "id": "orphan-draft",
+                    "plan_id": "missing-series",
+                    "profile_id": "orphan-profile",
+                    "space_id": "space-1",
+                    "parent_algorithm_id": "parent-1",
+                    "title": "Orphan direct draft",
+                    "profile": {"schema_version": 2},
+                    "scheduled_start_at": now,
+                    "scheduled_end_at": now,
+                    "ai_policy": "prohibited",
+                    "revision": 0,
+                    "teacher_id": "teacher-1",
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+
+
 def test_analysis_job_migration_has_one_source_brief_idempotency_key(tmp_path: Path):
     database_url = f"sqlite:///{tmp_path / 'classroom-analysis.db'}"
     config = migration_config(database_url)
@@ -282,6 +322,467 @@ def test_plan_suggestion_job_migration_has_owner_scoped_active_request_key(tmp_p
         == ["teacher_id", "space_id", "parent_algorithm_id", "request_hash", "active_slot"]
         for constraint in inspector.get_unique_constraints("classroom_plan_suggestion_jobs")
     )
+
+
+def test_plan_authoring_session_migration_preserves_legacy_rows_and_constraints(
+    tmp_path: Path,
+):
+    """Sessions add nullable one-to-one links without weakening request idempotency."""
+    database_url = f"sqlite:///{tmp_path / 'classroom-plan-authoring-sessions.db'}"
+    config = migration_config(database_url)
+    now = datetime(2026, 8, 27, 8, 0, tzinfo=UTC)
+
+    command.upgrade(config, "0007_evidence_analysis_manifest")
+    engine = create_engine(database_url)
+    metadata = Base.metadata.__class__()
+    metadata.reflect(engine)
+    with engine.begin() as connection:
+        connection.execute(
+            metadata.tables["plan_drafts"].insert(),
+            {
+                "id": "legacy-draft",
+                "profile_id": "legacy-profile",
+                "space_id": "space-1",
+                "parent_algorithm_id": "parent-1",
+                "title": "Legacy draft",
+                "profile": {"schema_version": 2},
+                "scheduled_start_at": now,
+                "scheduled_end_at": now,
+                "ai_policy": "prohibited",
+                "revision": 0,
+                "teacher_id": "teacher-1",
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+        connection.execute(
+            metadata.tables["classroom_plan_suggestion_jobs"].insert(),
+            {
+                "id": "legacy-job",
+                "teacher_id": "teacher-1",
+                "space_id": "space-1",
+                "parent_algorithm_id": "parent-1",
+                "request_hash": "a" * 64,
+                "suggestion_input": {},
+                "run_at": now,
+                "status": "pending",
+                "active_slot": 1,
+                "attempts": 0,
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+
+    command.upgrade(config, "0008_plan_authoring_sessions")
+    authoring_sessions = inspect(engine).get_table_names()
+    assert "plan_authoring_sessions" in authoring_sessions
+
+    reflected = metadata.__class__()
+    reflected.reflect(engine)
+    sessions = reflected.tables["plan_authoring_sessions"]
+    drafts = reflected.tables["plan_drafts"]
+    suggestion_jobs = reflected.tables["classroom_plan_suggestion_jobs"]
+    inspector = inspect(engine)
+    assert {
+        "id",
+        "teacher_id",
+        "space_id",
+        "parent_algorithm_id",
+        "status",
+        "active_slot",
+        "suggestion_job_id",
+        "published_plan_id",
+        "created_at",
+        "updated_at",
+        "closed_at",
+    } <= {column["name"] for column in inspector.get_columns("plan_authoring_sessions")}
+    assert {"authoring_session_id"} <= {
+        column["name"] for column in inspector.get_columns("plan_drafts")
+    }
+    assert {"authoring_session_id"} <= {
+        column["name"]
+        for column in inspector.get_columns("classroom_plan_suggestion_jobs")
+    }
+    assert not inspector.get_foreign_keys("plan_authoring_sessions")
+    assert {index["column_names"][0] for index in inspector.get_indexes("plan_authoring_sessions")} >= {
+        "suggestion_job_id",
+        "published_plan_id",
+    }
+
+    with engine.connect() as connection:
+        connection.execute(text("PRAGMA foreign_keys = ON"))
+        assert connection.execute(
+            text("SELECT authoring_session_id FROM plan_drafts WHERE id = 'legacy-draft'")
+        ).scalar_one() is None
+        assert connection.execute(
+            text(
+                "SELECT authoring_session_id FROM classroom_plan_suggestion_jobs "
+                "WHERE id = 'legacy-job'"
+            )
+        ).scalar_one() is None
+
+        connection.execute(
+            sessions.insert(),
+            {
+                "id": "authoring-session-1",
+                "teacher_id": "teacher-1",
+                "space_id": "space-1",
+                "parent_algorithm_id": "parent-1",
+                "status": "open",
+                "active_slot": 1,
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+        connection.commit()
+        with pytest.raises(IntegrityError):
+            connection.execute(
+                sessions.insert(),
+                {
+                    "id": "authoring-session-duplicate",
+                    "teacher_id": "teacher-1",
+                    "space_id": "space-1",
+                    "parent_algorithm_id": "parent-1",
+                    "status": "open",
+                    "active_slot": 1,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+        connection.rollback()
+
+        for session_id in ("closed-session-1", "closed-session-2"):
+            connection.execute(
+                sessions.insert(),
+                {
+                    "id": session_id,
+                    "teacher_id": "teacher-1",
+                    "space_id": "space-1",
+                    "parent_algorithm_id": "parent-1",
+                    "status": "closed",
+                    "created_at": now,
+                    "updated_at": now,
+                    "closed_at": now,
+                },
+            )
+        connection.commit()
+
+        connection.execute(
+            suggestion_jobs.update()
+            .where(suggestion_jobs.c.id == "legacy-job")
+            .values(authoring_session_id="authoring-session-1")
+        )
+        connection.commit()
+        with pytest.raises(IntegrityError):
+            connection.execute(
+                suggestion_jobs.insert(),
+                {
+                    "id": "job-duplicate-session",
+                    "teacher_id": "teacher-1",
+                    "space_id": "space-1",
+                    "parent_algorithm_id": "parent-1",
+                    "request_hash": "b" * 64,
+                    "suggestion_input": {},
+                    "run_at": now,
+                    "status": "pending",
+                    "active_slot": 2,
+                    "attempts": 0,
+                    "authoring_session_id": "authoring-session-1",
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+        connection.rollback()
+
+        with pytest.raises(IntegrityError):
+            connection.execute(
+                suggestion_jobs.insert(),
+                {
+                    "id": "job-duplicate-request",
+                    "teacher_id": "teacher-1",
+                    "space_id": "space-1",
+                    "parent_algorithm_id": "parent-1",
+                    "request_hash": "a" * 64,
+                    "suggestion_input": {},
+                    "run_at": now,
+                    "status": "pending",
+                    "active_slot": 1,
+                    "attempts": 0,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+        connection.rollback()
+
+        connection.execute(
+            drafts.update()
+            .where(drafts.c.id == "legacy-draft")
+            .values(authoring_session_id="authoring-session-1")
+        )
+        connection.commit()
+        with pytest.raises(IntegrityError):
+            connection.execute(
+                drafts.insert(),
+                {
+                    "id": "draft-duplicate-session",
+                    "profile_id": "other-profile",
+                    "space_id": "space-1",
+                    "parent_algorithm_id": "parent-1",
+                    "title": "Duplicate session draft",
+                    "profile": {"schema_version": 2},
+                    "scheduled_start_at": now,
+                    "scheduled_end_at": now,
+                    "ai_policy": "prohibited",
+                    "revision": 0,
+                    "teacher_id": "teacher-1",
+                    "authoring_session_id": "authoring-session-1",
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+        connection.rollback()
+
+        with pytest.raises(IntegrityError):
+            connection.execute(sessions.delete().where(sessions.c.id == "authoring-session-1"))
+        connection.rollback()
+
+    command.downgrade(config, "0007_evidence_analysis_manifest")
+    inspector = inspect(engine)
+    assert "plan_authoring_sessions" not in inspector.get_table_names()
+    assert "authoring_session_id" not in {
+        column["name"] for column in inspector.get_columns("plan_drafts")
+    }
+    assert "authoring_session_id" not in {
+        column["name"]
+        for column in inspector.get_columns("classroom_plan_suggestion_jobs")
+    }
+    with engine.connect() as connection:
+        assert (
+            connection.execute(
+                text("SELECT id FROM plan_drafts WHERE id = 'legacy-draft'")
+            ).scalar_one()
+            == "legacy-draft"
+        )
+        assert connection.execute(
+            text("SELECT id FROM classroom_plan_suggestion_jobs WHERE id = 'legacy-job'")
+        ).scalar_one() == "legacy-job"
+
+
+def test_plan_series_migration_backfills_legacy_drafts_and_source_versions(
+    tmp_path: Path,
+):
+    """Legacy drafts become reusable series and versions retain their source draft."""
+    database_url = f"sqlite:///{tmp_path / 'classroom-plan-series.db'}"
+    config = migration_config(database_url)
+    now = datetime(2026, 8, 29, 8, 0, tzinfo=UTC)
+
+    command.upgrade(config, "0008_plan_authoring_sessions")
+    engine = create_engine(database_url)
+    legacy_metadata = Base.metadata.__class__()
+    legacy_metadata.reflect(engine)
+    legacy_tables = legacy_metadata.tables
+    with engine.begin() as connection:
+        connection.execute(
+            legacy_tables["plan_drafts"].insert(),
+            {
+                "id": "legacy-draft",
+                "profile_id": "legacy-profile",
+                "space_id": "space-1",
+                "parent_algorithm_id": "parent-1",
+                "title": "Legacy draft",
+                "profile": {"schema_version": 2},
+                "scheduled_start_at": now,
+                "scheduled_end_at": now,
+                "ai_policy": "prohibited",
+                "revision": 2,
+                "teacher_id": "teacher-1",
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+        for version in (1, 2):
+            published_at = now + timedelta(minutes=version)
+            connection.execute(
+                legacy_tables["plan_versions"].insert(),
+                {
+                    "id": f"legacy-version-{version}",
+                    "plan_id": "legacy-draft",
+                    "profile_id": "legacy-profile",
+                    "version": version,
+                    "source_draft_revision": version,
+                    "space_id": "space-1",
+                    "parent_algorithm_id": "parent-1",
+                    "profile": {"schema_version": 2, "historical_version": version},
+                    "content_hash": str(version) * 64,
+                    "scheduled_start_at": now,
+                    "scheduled_end_at": now,
+                    "ai_policy": "prohibited",
+                    "published_at": published_at,
+                    "teacher_id": f"teacher-{version}",
+                },
+            )
+        connection.execute(
+            legacy_tables["plan_versions"].insert(),
+            {
+                "id": "orphan-version-1",
+                "plan_id": "orphan-plan",
+                "profile_id": "orphan-profile",
+                "version": 1,
+                "source_draft_revision": 0,
+                "space_id": "space-2",
+                "parent_algorithm_id": "parent-2",
+                "profile": {"schema_version": 2},
+                "content_hash": "o" * 64,
+                "scheduled_start_at": now,
+                "scheduled_end_at": now,
+                "ai_policy": "prohibited",
+                "published_at": now,
+                "teacher_id": "teacher-2",
+            },
+        )
+
+    command.upgrade(config, "head")
+
+    with engine.begin() as connection:
+        assert connection.execute(
+            text("SELECT plan_id FROM plan_drafts WHERE id = 'legacy-draft'")
+        ).scalar_one() == "legacy-draft"
+        assert connection.execute(
+            text("SELECT source_draft_id FROM plan_versions WHERE id = 'legacy-version-2'")
+        ).scalar_one() == "legacy-draft"
+        assert connection.execute(
+            text("SELECT latest_version FROM plan_series WHERE id = 'legacy-draft'")
+        ).scalar_one() == 2
+        assert connection.execute(
+            text("SELECT latest_version FROM plan_series WHERE id = 'orphan-plan'")
+        ).scalar_one() == 1
+
+        reflected = Base.metadata.__class__()
+        reflected.reflect(connection)
+        drafts = reflected.tables["plan_drafts"]
+        versions = reflected.tables["plan_versions"]
+        preserved_version = connection.execute(
+            versions.select().where(versions.c.id == "legacy-version-2")
+        ).mappings().one()
+        assert preserved_version["content_hash"] == "2" * 64
+        assert preserved_version["profile"] == {
+            "schema_version": 2,
+            "historical_version": 2,
+        }
+        assert preserved_version["published_at"] == (
+            now + timedelta(minutes=2)
+        ).replace(tzinfo=None)
+        assert preserved_version["space_id"] == "space-1"
+        assert preserved_version["parent_algorithm_id"] == "parent-1"
+        assert preserved_version["teacher_id"] == "teacher-2"
+
+        plan_id_foreign_keys = inspect(connection).get_foreign_keys("plan_drafts")
+        assert any(
+            foreign_key["constrained_columns"] == ["plan_id"]
+            and foreign_key["referred_table"] == "plan_series"
+            and foreign_key["referred_columns"] == ["id"]
+            and foreign_key["options"].get("ondelete") == "RESTRICT"
+            for foreign_key in plan_id_foreign_keys
+        )
+
+        connection.execute(
+            drafts.insert(),
+            {
+                "id": "second-draft",
+                "plan_id": "legacy-draft",
+                "profile_id": "legacy-profile",
+                "space_id": "space-1",
+                "parent_algorithm_id": "parent-1",
+                "title": "Second draft",
+                "profile": {"schema_version": 2},
+                "scheduled_start_at": now,
+                "scheduled_end_at": now,
+                "ai_policy": "prohibited",
+                "revision": 0,
+                "teacher_id": "teacher-1",
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+
+        with pytest.raises(IntegrityError):
+            connection.execute(
+                versions.insert(),
+                {
+                    "id": "duplicate-source-revision",
+                    "plan_id": "legacy-draft",
+                    "profile_id": "duplicate-profile",
+                    "version": 3,
+                    "source_draft_id": "legacy-draft",
+                    "source_draft_revision": 1,
+                    "space_id": "space-1",
+                    "parent_algorithm_id": "parent-1",
+                    "profile": {"schema_version": 2},
+                    "content_hash": "d" * 64,
+                    "scheduled_start_at": now,
+                    "scheduled_end_at": now,
+                    "ai_policy": "prohibited",
+                    "published_at": now,
+                    "teacher_id": "teacher-1",
+                },
+            )
+
+    with engine.connect() as connection:
+        connection.execute(text("PRAGMA foreign_keys = ON"))
+        with pytest.raises(IntegrityError):
+            connection.execute(
+                text(
+                    "INSERT INTO plan_drafts "
+                    "(id, plan_id, profile_id, space_id, parent_algorithm_id, title, profile, "
+                    "scheduled_start_at, scheduled_end_at, ai_policy, revision, teacher_id, "
+                    "created_at, updated_at) VALUES "
+                    "('orphan-draft', 'missing-series', 'orphan-profile', 'space-1', "
+                    "'parent-1', 'Orphan', '{}', :now, :now, 'prohibited', 0, "
+                    "'teacher-1', :now, :now)"
+                ),
+                {"now": now},
+            )
+
+
+def test_plan_series_downgrade_requires_backup_for_duplicate_draft_profiles(
+    tmp_path: Path,
+):
+    """Downgrading must not silently discard a profile reused by one plan series."""
+    database_url = f"sqlite:///{tmp_path / 'classroom-plan-series-downgrade.db'}"
+    config = migration_config(database_url)
+    now = datetime(2026, 8, 29, 8, 0, tzinfo=UTC)
+
+    command.upgrade(config, "head")
+    engine = create_engine(database_url)
+    reflected = Base.metadata.__class__()
+    reflected.reflect(engine)
+    drafts = reflected.tables["plan_drafts"]
+    with engine.begin() as connection:
+        for draft_id in ("draft-1", "draft-2"):
+            connection.execute(
+                drafts.insert(),
+                {
+                    "id": draft_id,
+                    "plan_id": "plan-1",
+                    "profile_id": "shared-profile",
+                    "space_id": "space-1",
+                    "parent_algorithm_id": "parent-1",
+                    "title": "Draft sharing profile",
+                    "profile": {"schema_version": 2},
+                    "scheduled_start_at": now,
+                    "scheduled_end_at": now,
+                    "ai_policy": "prohibited",
+                    "revision": 0,
+                    "teacher_id": "teacher-1",
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+
+    with pytest.raises(RuntimeError, match="plan_series_downgrade_requires_backup"):
+        command.downgrade(config, "0008_plan_authoring_sessions")
+
+    assert "plan_series" in inspect(engine).get_table_names()
 
 
 def test_student_brief_migration_has_session_scoped_submission_idempotency_key(

@@ -13,11 +13,17 @@ from fastapi import FastAPI
 
 from classroom_sync.application import ClassroomServices
 from classroom_sync.auth.fincolab import FincolabIdentityGateway
-from classroom_sync.config import Settings
+from classroom_sync.auth.fincolab_materials import FincolabAssessmentMaterialGateway
+from classroom_sync.config import (
+    ASSESSMENT_MATERIAL_MAX_RESPONSE_BYTES,
+    FINCOLAB_HTTP_TIMEOUT_SECONDS,
+    Settings,
+)
 from classroom_sync.db import create_database_engine, create_session_factory
 from classroom_sync.domain.schemas import ClassroomSchemaRegistry
 from classroom_sync.errors import AiSuggestionUnavailableError
 from classroom_sync.main import create_app
+from classroom_sync.services.assessment_materials import AssessmentMaterialService
 from classroom_sync.services.assignments import AssignmentService
 from classroom_sync.services.brief_analysis import (
     BriefAnalysisJobService,
@@ -25,6 +31,7 @@ from classroom_sync.services.brief_analysis import (
 )
 from classroom_sync.services.briefs import BriefService
 from classroom_sync.services.deadlines import DeadlineService
+from classroom_sync.services.plan_authoring import PlanAuthoringService
 from classroom_sync.services.plan_suggestion_jobs import PlanSuggestionJobService
 from classroom_sync.services.plan_suggestions import (
     AiProviderSettings,
@@ -77,6 +84,12 @@ def s3_client_config() -> Config:
     )
 
 
+def fincolab_http_client() -> httpx.Client:
+    """Create the shared bounded client used for identity and material reads."""
+
+    return httpx.Client(timeout=FINCOLAB_HTTP_TIMEOUT_SECONDS)
+
+
 def create_runtime_services(settings: Settings) -> ClassroomServices:
     """Wire only trusted, environment-derived dependencies into route services."""
 
@@ -107,10 +120,18 @@ def create_runtime_services(settings: Settings) -> ClassroomServices:
         config=s3_client_config(),
     )
     storage = Boto3PrivateObjectStorage(storage_client, settings.s3_bucket)
+    fincolab_client = fincolab_http_client()
     identity_gateway = FincolabIdentityGateway(
         base_url=settings.fincolab_base_url,
         organization_id=settings.fincolab_organization_id,
-        client=httpx.Client(timeout=10.0),
+        client=fincolab_client,
+    )
+    assessment_material_service = AssessmentMaterialService(
+        FincolabAssessmentMaterialGateway(
+            base_url=settings.fincolab_base_url,
+            client=fincolab_client,
+            max_response_bytes=ASSESSMENT_MATERIAL_MAX_RESPONSE_BYTES,
+        )
     )
     plan_service = PlanService(session_factory, schema_registry, clock=utc_now)
     assignment_service = AssignmentService(session_factory, clock=utc_now)
@@ -146,6 +167,11 @@ def create_runtime_services(settings: Settings) -> ClassroomServices:
             clock=utc_now,
             max_attempts=settings.ai_max_attempts,
         )
+    plan_authoring_service = PlanAuthoringService(
+        session_factory,
+        plan_suggestion_job_service,
+        clock=utc_now,
+    )
     return ClassroomServices(
         identity_gateway=identity_gateway,
         plan_service=plan_service,
@@ -154,9 +180,12 @@ def create_runtime_services(settings: Settings) -> ClassroomServices:
         brief_service=brief_service,
         deadline_service=deadline_service,
         read_service=ClassroomReadService(session_factory),
+        plan_authoring_service=plan_authoring_service,
         plan_suggestion_service=plan_suggestion_service,
         plan_suggestion_job_service=plan_suggestion_job_service,
         brief_analysis_service=brief_analysis_service,
+        assessment_material_service=assessment_material_service,
+        shutdown=fincolab_client.close,
     )
 
 

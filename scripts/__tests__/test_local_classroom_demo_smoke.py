@@ -87,7 +87,7 @@ def test_local_smoke_rejects_an_unexpected_facade_login_token(tmp_path: Path):
                 expected_teacher_token="wrong-token",
         )
         except smoke.LocalDemoSmokeFailure as error:
-            assert "teacher001 login" in str(error)
+            assert "1 login" in str(error)
         else:
             raise AssertionError("the façade token mismatch must fail before contract smoke")
 

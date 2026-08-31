@@ -1,0 +1,136 @@
+{
+  "assessment_tests": [
+    {
+      "comparison": "normalized_text_v1",
+      "content_hash": "ccdde02080f1fb21e11f3fb97f49481122b9c74c25cb086c2c3639da4ee99241",
+      "enabled": true,
+      "expected_stdout": "倒置前为：1 2 3 4 5 6 \n倒置后为：6 5 4 3 2 1\n",
+      "id": "TEST_LINK0001",
+      "input": "6\n1 2 3 4 5 6\n",
+      "kind": "stdin_stdout",
+      "name": "六元素链表逆置",
+      "order": 0,
+      "source": "teacher",
+      "timeout_ms": 2000
+    },
+    {
+      "comparison": "normalized_text_v1",
+      "content_hash": "703933b23b31de3f4a62b0d0734ca09e9185496c1048a7057f42b574fa2a0bb7",
+      "enabled": true,
+      "expected_stdout": "倒置前为：12 3 14 89 12 54 123 \n倒置后为：123 54 12 89 14 3 12\n",
+      "id": "TEST_LINK0002",
+      "input": "7\n12 3 14 89 12 54 123\n",
+      "kind": "stdin_stdout",
+      "name": "七元素链表逆置",
+      "order": 1,
+      "source": "teacher",
+      "timeout_ms": 2000
+    }
+  ],
+  "bundle_hash": "bbc1ca71257d945752439ed832b769deff44174f3a891c847fec842f73e875bb",
+  "detector_profiles": [
+    {
+      "available": false,
+      "id": "address_undefined_leak_v1"
+    }
+  ],
+  "importer_version": "cpp_assessment_material_importer_v1",
+  "issues": [
+    {
+      "code": "teacher_dimension_not_student_responsibility",
+      "message": "链表遍历由受保护的 print 函数提供，不是学生编辑责任。",
+      "requirement_id": "REQ_LINK_TRAVERSAL",
+      "scope": "requirement",
+      "severity": "blocking"
+    },
+    {
+      "code": "teacher_dimension_outside_task",
+      "message": "链表删除不在题目或学生 TODO 范围内。",
+      "requirement_id": "REQ_LINK_DELETE",
+      "scope": "requirement",
+      "severity": "blocking"
+    },
+    {
+      "code": "required_student_dimension_missing",
+      "message": "教师 TXT 的考查维度缺少学生必须完成的链表逆置。",
+      "requirement_id": "REQ_LINK_REVERSE",
+      "scope": "requirement",
+      "severity": "blocking"
+    },
+    {
+      "code": "boundary_coverage_incomplete",
+      "message": "教师用例未覆盖空链表和单元素场景。",
+      "requirement_id": null,
+      "scope": "test",
+      "severity": "warning"
+    }
+  ],
+  "parent_algorithm_id": "linked-list-experiment-002",
+  "requirements": [
+    {
+      "detector_profile_ids": [],
+      "id": "REQ_LINK_TAIL_INSERT",
+      "name": "链表尾插",
+      "source_statement": "倒置前输出与输入顺序一致。",
+      "student_responsibility": true,
+      "test_ids": [
+        "TEST_LINK0001",
+        "TEST_LINK0002"
+      ]
+    },
+    {
+      "detector_profile_ids": [],
+      "id": "REQ_LINK_REVERSE",
+      "name": "链表逆置",
+      "source_statement": "倒置后输出为输入序列的严格逆序。",
+      "student_responsibility": true,
+      "test_ids": [
+        "TEST_LINK0001",
+        "TEST_LINK0002"
+      ]
+    },
+    {
+      "detector_profile_ids": [],
+      "id": "REQ_LINK_TRAVERSAL",
+      "name": "链表遍历",
+      "source_statement": "链表的遍历操作",
+      "student_responsibility": false,
+      "test_ids": [
+        "TEST_LINK0001",
+        "TEST_LINK0002"
+      ]
+    },
+    {
+      "detector_profile_ids": [],
+      "id": "REQ_LINK_DELETE",
+      "name": "链表删除",
+      "source_statement": "链表的删除操作",
+      "student_responsibility": false,
+      "test_ids": []
+    }
+  ],
+  "schema_version": 1,
+  "space_id": "course-001",
+  "starter_source": {
+    "artifact_id": "ART_LINKED_LIST_CPP_01",
+    "detected_encoding": "utf-8",
+    "display_name": "链表操作练习02.cpp",
+    "file_name": "链表操作练习02.cpp",
+    "preflight": {
+      "accepted_editable_symbols": [
+        "MList::insertToTail",
+        "MList::Reverse"
+      ],
+      "diagnostics": [],
+      "status": "ready"
+    },
+    "sha256": "6468a373fbf602c7c8d5012fca2a5ead4973bb8daf54714c7ef22d84bbd68cb0",
+    "size_bytes": 1788,
+    "source": "fincolab_experiment",
+    "utf8_candidate_sha256": "6468a373fbf602c7c8d5012fca2a5ead4973bb8daf54714c7ef22d84bbd68cb0",
+    "utf8_confirmed": true
+  },
+  "statement": "完善带头结点的单链表类定义，完成尾插与链表倒置。",
+  "title": "链表尾插与逆置",
+  "toolchain_profile": "cpp17_stdio_v1"
+}

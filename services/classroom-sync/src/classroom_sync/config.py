@@ -6,6 +6,9 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
+FINCOLAB_HTTP_TIMEOUT_SECONDS = 10.0
+ASSESSMENT_MATERIAL_MAX_RESPONSE_BYTES = 1_048_576
+
 
 @dataclass(frozen=True)
 class Settings:

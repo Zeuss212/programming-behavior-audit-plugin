@@ -1,22 +1,34 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import importlib.util
 import json
+import os
+import shutil
+import subprocess
 import sys
+from collections.abc import Iterator
 from contextlib import contextmanager
 from http import HTTPStatus
-from http.server import ThreadingHTTPServer
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from threading import Thread
-from typing import Iterator
 from urllib.error import HTTPError
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[2]
 FACADE_PATH = ROOT / "deploy" / "classroom" / "local-demo" / "fincolab_demo.py"
+DOCKERFILE_PATH = ROOT / "deploy" / "classroom" / "local-demo" / "Dockerfile"
+DOCKERIGNORE_PATH = ROOT / ".dockerignore"
+MATERIALS_ROOT = ROOT / "deploy" / "classroom" / "local-demo" / "materials"
+CPP_MATERIALS = {
+    "sequence-list-experiment-001": MATERIALS_ROOT / "sequence-list" / "bundle.json",
+    "linked-list-experiment-002": MATERIALS_ROOT / "linked-list" / "bundle.json",
+}
+LOCAL_OPENER = build_opener(ProxyHandler({}))
 
 
 def _load_facade_module():
@@ -49,7 +61,7 @@ class DemoClient:
             body = json.dumps(payload).encode("utf-8")
         request = Request(f"{self._base_url}{path}", data=body, headers=headers, method=method)
         try:
-            with urlopen(request, timeout=3) as response:  # nosec B310 - localhost test server.
+            with LOCAL_OPENER.open(request, timeout=3) as response:  # nosec B310 - localhost fixture.
                 return response.status, json.loads(response.read().decode("utf-8"))
         except HTTPError as error:
             return error.code, json.loads(error.read().decode("utf-8"))
@@ -58,7 +70,7 @@ class DemoClient:
 @contextmanager
 def demo_client() -> Iterator[DemoClient]:
     facade = _load_facade_module()
-    server = ThreadingHTTPServer(("127.0.0.1", 0), facade.DemoFincolabHandler)
+    server = facade.DemoFincolabServer(("127.0.0.1", 0), facade.DemoFincolabHandler)
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -74,10 +86,11 @@ def test_teacher_login_returns_usable_roster_and_parent_project():
         status, login = client.request(
             "POST",
             "/v1/login",
-            payload={"username": "teacher001", "password": "local-demo-teacher"},
+            payload={"username": "1", "password": "1"},
         )
         assert status == HTTPStatus.OK
         assert login["token"] == "teacher-token"
+        assert login["username"] == "teacher001"
 
         status, roster = client.request(
             "GET",
@@ -97,7 +110,578 @@ def test_teacher_login_returns_usable_roster_and_parent_project():
         assert parent["username"] == "teacher001"
 
 
-def test_student_receives_parent_metadata_and_own_child_for_compatibility_matching():
+def test_student_short_login_returns_stable_student_identity():
+    with demo_client() as client:
+        status, login = client.request(
+            "POST",
+            "/v1/login",
+            payload={"username": "2", "password": "2"},
+        )
+
+    assert status == HTTPStatus.OK
+    assert login["token"] == "student001-token"
+    assert login["username"] == "student001"
+    assert login["role"] == "student"
+
+
+def test_teacher_can_load_frameworks_and_templates_for_the_create_dialog():
+    with demo_client() as client:
+        status, frameworks = client.request(
+            "GET",
+            "/v1/ai_framework",
+            token="teacher-token",
+        )
+        assert status == HTTPStatus.OK
+        assert frameworks == {
+            "data": [
+                {
+                    "id": "framework-behavior",
+                    "name": "PyTorch-2.5.1-JupyterLab4-BehaviorAudit-0.2.2",
+                    "frame_type": "PyTorch",
+                }
+            ]
+        }
+
+        status, templates = client.request(
+            "GET",
+            "/v1/spaces/course-001/template?framework_id=framework-behavior",
+            token="teacher-token",
+        )
+        assert status == HTTPStatus.OK
+        assert templates == {
+            "items": [
+                {
+                    "id": "template-behavior",
+                    "name": "BehaviorAudit starter",
+                    "version": "0.2.2",
+                }
+            ]
+        }
+
+        status, templates = client.request(
+            "GET",
+            "/v1/spaces/course-001/template?framework_id=unknown-framework",
+            token="teacher-token",
+        )
+        assert status == HTTPStatus.OK
+        assert templates == {"items": []}
+
+
+def test_teacher_can_resolve_the_course_default_dataset_for_creation() -> None:
+    with demo_client() as client:
+        status, payload = client.request(
+            "GET",
+            "/v1/spaces/course-001/datasets?name=&search_mode=like&page=1&limit=100",
+            token="teacher-token",
+        )
+
+    assert status == HTTPStatus.OK
+    assert payload == {
+        "data": [
+            {
+                "dataset_name": "default_dataset",
+                "version_datas": [
+                    {
+                        "id": "dataset-default",
+                        "name": "default_dataset",
+                        "version": "v1",
+                        "dataset_file_path": "algorithm_data",
+                        "data_type": "image",
+                        "annotation_type": "img_classification",
+                        "label_format": "ImageFolder",
+                        "description": "课程默认数据集",
+                    }
+                ],
+            }
+        ]
+    }
+
+
+def test_teacher_can_create_list_and_rollback_a_parent_and_student_experiment() -> None:
+    parent_payload = {
+        "name": "本地闭环实验",
+        "description": "教师创建验收",
+        "framework_id": "framework-behavior",
+        "project_type": "notebook",
+        "dataset_id": "dataset-default",
+        "dataset_name": "default_dataset",
+        "template_id": "template-behavior",
+        "upload_id": "",
+    }
+
+    with demo_client() as client:
+        status, parent = client.request(
+            "POST",
+            "/v1/spaces/course-001/algorithm_development",
+            token="teacher-token",
+            payload=parent_payload,
+        )
+        assert status == HTTPStatus.CREATED
+        assert parent["username"] == "teacher001"
+        parent_id = str(parent["id"])
+
+        status, student = client.request(
+            "POST",
+            "/v1/spaces/course-001/algorithm_development",
+            token="teacher-token",
+            payload={
+                **parent_payload,
+                "name": "exp-student001-abcd",
+                "description": (
+                    f"[FINCOLAB_PARENT_PROJECT_ID:{parent_id}]\n"
+                    "实验名称：本地闭环实验"
+                ),
+            },
+        )
+        assert status == HTTPStatus.CREATED
+        assert student["username"] == "student001"
+        student_id = str(student["id"])
+
+        resource = {"cpu": 2, "memory": 4, "gpu": 0}
+        status, workbench = client.request(
+            "POST",
+            f"/v1/spaces/course-001/algorithm_development/{student_id}/workbench",
+            token="teacher-token",
+            payload={"container_resource_json": resource},
+        )
+        assert status == HTTPStatus.CREATED
+        assert workbench["workbench_status"] == "RUNNING"
+        assert workbench["container_resource_json"] == resource
+        workbench_id = str(workbench["id"])
+
+        status, teacher_projects = client.request(
+            "GET",
+            "/v1/spaces/course-001/algorithm_development",
+            token="teacher-token",
+        )
+        assert status == HTTPStatus.OK
+        teacher_project_ids = {str(item["id"]) for item in teacher_projects["data"]}
+        assert {parent_id, student_id} <= teacher_project_ids
+
+        status, student_projects = client.request(
+            "GET",
+            "/v1/spaces/course-001/algorithm_development",
+            token="student001-token",
+        )
+        assert status == HTTPStatus.OK
+        student_project_ids = {str(item["id"]) for item in student_projects["data"]}
+        assert student_id in student_project_ids
+        assert parent_id in student_project_ids
+
+        status, payload = client.request(
+            "GET",
+            f"/v1/spaces/course-001/algorithm_development/{parent_id}",
+            token="student001-token",
+        )
+        assert status == HTTPStatus.FORBIDDEN
+        assert payload == {"detail": "demo_resource_access_denied"}
+
+        status, student_workbench = client.request(
+            "GET",
+            f"/v1/spaces/course-001/algorithm_development/{student_id}/workbench/"
+            f"{workbench_id}",
+            token="student001-token",
+        )
+        assert status == HTTPStatus.OK
+        assert student_workbench == workbench
+
+        status, payload = client.request(
+            "DELETE",
+            f"/v1/spaces/course-001/algorithm_development/{student_id}",
+            token="teacher-token",
+        )
+        assert status == HTTPStatus.OK
+        assert payload == {}
+
+        status, payload = client.request(
+            "GET",
+            f"/v1/spaces/course-001/algorithm_development/{student_id}/workbench/"
+            f"{workbench_id}",
+            token="teacher-token",
+        )
+        assert status == HTTPStatus.NOT_FOUND
+        assert payload == {"detail": "demo_endpoint_not_found"}
+
+        status, payload = client.request(
+            "DELETE",
+            f"/v1/spaces/course-001/algorithm_development/{parent_id}",
+            token="teacher-token",
+        )
+        assert status == HTTPStatus.OK
+        assert payload == {}
+
+        status, projects_after_rollback = client.request(
+            "GET",
+            "/v1/spaces/course-001/algorithm_development",
+            token="teacher-token",
+        )
+        assert status == HTTPStatus.OK
+        remaining_ids = {str(item["id"]) for item in projects_after_rollback["data"]}
+        assert parent_id not in remaining_ids
+        assert student_id not in remaining_ids
+
+
+@pytest.mark.parametrize(
+    ("token", "expected_detail"),
+    [
+        ("student001-token", "demo_resource_access_denied"),
+        ("student002-token", "demo_course_access_denied"),
+    ],
+)
+def test_students_cannot_create_course_algorithms(
+    token: str,
+    expected_detail: str,
+) -> None:
+    with demo_client() as client:
+        status, payload = client.request(
+            "POST",
+            "/v1/spaces/course-001/algorithm_development",
+            token=token,
+            payload={
+                "name": "exp-student001-abcd",
+                "framework_id": "framework-behavior",
+                "project_type": "notebook",
+                "dataset_id": "dataset-default",
+            },
+        )
+
+    assert status == HTTPStatus.FORBIDDEN
+    assert payload == {"detail": expected_detail}
+
+
+def test_dynamic_experiments_are_isolated_to_one_demo_server() -> None:
+    with demo_client() as client:
+        status, created = client.request(
+            "POST",
+            "/v1/spaces/course-001/algorithm_development",
+            token="teacher-token",
+            payload={
+                "name": "仅当前进程可见",
+                "framework_id": "framework-behavior",
+                "project_type": "notebook",
+                "dataset_id": "dataset-default",
+            },
+        )
+        assert status == HTTPStatus.CREATED
+        created_id = str(created["id"])
+
+    with demo_client() as fresh_client:
+        status, projects = fresh_client.request(
+            "GET",
+            "/v1/spaces/course-001/algorithm_development",
+            token="teacher-token",
+        )
+
+    assert status == HTTPStatus.OK
+    assert created_id not in {str(item["id"]) for item in projects["data"]}
+
+
+@pytest.mark.parametrize(
+    "parent_algorithm_id",
+    ["sequence-list-experiment-001", "linked-list-experiment-002"],
+)
+def test_teacher_can_resolve_each_cpp_parent_for_material_ownership(
+    parent_algorithm_id: str,
+) -> None:
+    with demo_client() as client:
+        status, parent = client.request(
+            "GET",
+            f"/v1/spaces/course-001/algorithm_development/{parent_algorithm_id}",
+            token="teacher-token",
+        )
+
+    assert status == HTTPStatus.OK
+    assert parent["id"] == parent_algorithm_id
+    assert parent["username"] == "teacher001"
+
+
+def test_project_listing_keeps_python_parent_and_adds_both_cpp_parents() -> None:
+    with demo_client() as client:
+        status, projects = client.request(
+            "GET",
+            "/v1/spaces/course-001/algorithm_development",
+            token="teacher-token",
+        )
+
+    assert status == HTTPStatus.OK
+    assert [project["id"] for project in projects["data"][:3]] == [
+        "parent-experiment-001",
+        "sequence-list-experiment-001",
+        "linked-list-experiment-002",
+    ]
+
+
+def test_each_parent_gets_a_distinct_student_project_contract() -> None:
+    facade = _load_facade_module()
+
+    projects = [
+        facade._student_project("student001", parent_id)
+        for parent_id in facade.PARENT_PROJECT_NAMES
+    ]
+
+    assert [project["id"] for project in projects] == [
+        "child-experiment-001",
+        "child-sequence-list-experiment-001-student001",
+        "child-linked-list-experiment-002-student001",
+    ]
+    assert len({project["workbench_id"] for project in projects}) == 3
+    assert [project["description"].split("]", 1)[0] for project in projects] == [
+        f"[FINCOLAB_PARENT_PROJECT_ID:{parent_id}"
+        for parent_id in facade.PARENT_PROJECT_NAMES
+    ]
+
+
+def test_teacher_receives_not_found_for_an_unknown_parent_subresource() -> None:
+    with demo_client() as client:
+        status, payload = client.request(
+            "GET",
+            "/v1/spaces/course-001/algorithm_development/"
+            "sequence-list-experiment-001/not-a-resource",
+            token="teacher-token",
+        )
+
+    assert status == HTTPStatus.NOT_FOUND
+    assert payload == {"detail": "demo_endpoint_not_found"}
+
+
+@pytest.mark.parametrize(("parent_algorithm_id", "bundle_path"), CPP_MATERIALS.items())
+def test_teacher_receives_each_exact_sealed_cpp_material_bundle(
+    parent_algorithm_id: str,
+    bundle_path: Path,
+) -> None:
+    sealed_bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+
+    with demo_client() as client:
+        status, private_bundle = client.request(
+            "GET",
+            f"/v1/spaces/course-001/algorithm_development/"
+            f"{parent_algorithm_id}/assessment_materials",
+            token="teacher-token",
+        )
+
+    assert status == HTTPStatus.OK
+    adapter_starter = private_bundle["starter_source"]
+    assert isinstance(adapter_starter, dict)
+    encoded_source = adapter_starter.pop("content_base64")
+    assert isinstance(encoded_source, str)
+    source_bytes = base64.b64decode(encoded_source, validate=True)
+    assert len(source_bytes) == adapter_starter["size_bytes"]
+    assert hashlib.sha256(source_bytes).hexdigest() == adapter_starter["sha256"]
+    assert private_bundle == sealed_bundle
+
+    serialized = json.dumps(private_bundle, ensure_ascii=False)
+    assert str(ROOT) not in serialized
+    assert "import-config.json" not in serialized
+    assert ".txt" not in serialized.casefold()
+
+
+@pytest.mark.parametrize("parent_algorithm_id", CPP_MATERIALS)
+@pytest.mark.parametrize(
+    ("token", "expected_detail"),
+    [
+        ("student001-token", "demo_resource_access_denied"),
+        ("student002-token", "demo_course_access_denied"),
+    ],
+)
+def test_students_cannot_read_cpp_material_bundles(
+    parent_algorithm_id: str,
+    token: str,
+    expected_detail: str,
+) -> None:
+    with demo_client() as client:
+        status, payload = client.request(
+            "GET",
+            f"/v1/spaces/course-001/algorithm_development/"
+            f"{parent_algorithm_id}/assessment_materials",
+            token=token,
+        )
+
+    assert status == HTTPStatus.FORBIDDEN
+    assert payload == {"detail": expected_detail}
+
+
+@pytest.mark.parametrize("parent_algorithm_id", CPP_MATERIALS)
+def test_cpp_material_route_never_serves_a_requested_raw_source_path(
+    parent_algorithm_id: str,
+) -> None:
+    with demo_client() as client:
+        status, payload = client.request(
+            "GET",
+            f"/v1/spaces/course-001/algorithm_development/"
+            f"{parent_algorithm_id}/assessment_materials/raw.cpp",
+            token="teacher-token",
+        )
+
+    assert status == HTTPStatus.NOT_FOUND
+    assert payload == {"detail": "demo_endpoint_not_found"}
+
+
+def test_demo_image_packages_only_the_two_sealed_material_resources() -> None:
+    copy_sources = [
+        line.split()[1]
+        for line in DOCKERFILE_PATH.read_text(encoding="utf-8").splitlines()
+        if line.startswith("COPY ")
+    ]
+    material_sources = [source for source in copy_sources if "/materials/" in source]
+
+    assert material_sources == [
+        "deploy/classroom/local-demo/materials/sequence-list/bundle.json",
+        "deploy/classroom/local-demo/materials/linked-list/bundle.json",
+    ]
+    assert all(Path(source).name == "bundle.json" for source in material_sources)
+    assert not any(
+        source.casefold().endswith((".cpp", ".txt")) or "import-config.json" in source
+        for source in copy_sources
+    )
+
+
+def _dockerignore_includes(relative_path: str, patterns: list[str]) -> bool:
+    """Apply Docker's ordered ignore rules for this repository's closed pattern subset."""
+
+    path_parts = Path(relative_path).parts
+    candidates = ["/".join(path_parts[:index]) for index in range(1, len(path_parts) + 1)]
+    for candidate in candidates:
+        included = True
+        for raw_pattern in patterns:
+            pattern = raw_pattern.strip()
+            if not pattern or pattern.startswith("#"):
+                continue
+            negated = pattern.startswith("!")
+            if negated:
+                pattern = pattern[1:]
+            directory_pattern = pattern.endswith("/")
+            normalized = pattern.strip("/")
+            assert normalized == "*" or normalized.endswith("/**") or "*" not in normalized
+            prefix = normalized.removesuffix("/**")
+            matched = (
+                (normalized == "*" and "/" not in candidate)
+                or candidate == normalized
+                or (normalized.endswith("/**") and candidate.startswith(f"{prefix}/"))
+                or (directory_pattern and candidate.startswith(f"{normalized}/"))
+            )
+            if matched:
+                included = negated
+        if not included:
+            return False
+    return True
+
+
+def _local_demo_context_from_ignore_rules() -> set[str]:
+    patterns = DOCKERIGNORE_PATH.read_text(encoding="utf-8").splitlines()
+    return {
+        path.relative_to(ROOT).as_posix()
+        for path in (ROOT / "deploy" / "classroom" / "local-demo").rglob("*")
+        if path.is_file()
+        and "__pycache__" not in path.parts
+        and _dockerignore_includes(path.relative_to(ROOT).as_posix(), patterns)
+    }
+
+
+def _local_demo_context_from_docker() -> set[str] | None:
+    docker = shutil.which("docker")
+    if docker is None:
+        return None
+    available = subprocess.run(
+        [docker, "info", "--format", "{{.ServerVersion}}"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if available.returncode != 0:
+        return None
+    with TemporaryDirectory() as temporary_directory:
+        temporary = Path(temporary_directory)
+        dockerfile = temporary / "Dockerfile.context-check"
+        dockerfile.write_text(
+            "FROM scratch\nCOPY deploy/classroom/local-demo /context\n",
+            encoding="utf-8",
+        )
+        output = temporary / "output"
+        environment = {**os.environ, "DOCKER_BUILDKIT": "1"}
+        completed = subprocess.run(
+            [
+                docker,
+                "build",
+                "--network=none",
+                "--pull=false",
+                "--output",
+                f"type=local,dest={output}",
+                "--file",
+                str(dockerfile),
+                str(ROOT),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=environment,
+        )
+        assert completed.returncode == 0, completed.stderr
+        return {
+            f"deploy/classroom/local-demo/{path.relative_to(output / 'context').as_posix()}"
+            for path in (output / "context").rglob("*")
+            if path.is_file()
+        }
+
+
+def test_repository_docker_context_includes_copy_sources_and_excludes_private_assets() -> None:
+    copy_sources = {
+        line.split()[1]
+        for line in DOCKERFILE_PATH.read_text(encoding="utf-8").splitlines()
+        if line.startswith("COPY ")
+    }
+    expected_context = {
+        "deploy/classroom/local-demo/Dockerfile",
+        "deploy/classroom/local-demo/fincolab_demo.py",
+        "deploy/classroom/local-demo/materials/sequence-list/bundle.json",
+        "deploy/classroom/local-demo/materials/linked-list/bundle.json",
+    }
+    patterns = DOCKERIGNORE_PATH.read_text(encoding="utf-8").splitlines()
+    context_files = _local_demo_context_from_ignore_rules()
+
+    assert copy_sources <= context_files
+    assert context_files == expected_context
+    assert not any(
+        path.casefold().endswith((".cpp", ".txt"))
+        or path.endswith("import-config.json")
+        or path.endswith("source-manifest.json")
+        or path.endswith("README.md")
+        or path.endswith("docker-compose.yml")
+        or path.endswith(".env.ai.example")
+        for path in context_files
+    )
+
+    docker_context_files = _local_demo_context_from_docker()
+    if docker_context_files is not None:
+        assert docker_context_files == context_files
+
+    guard_cases = {
+        "deploy/classroom/local-demo/**": "deploy/classroom/local-demo/README.md",
+        "deploy/classroom/local-demo/materials/**": (
+            "deploy/classroom/local-demo/materials/source-manifest.json"
+        ),
+        "deploy/classroom/local-demo/materials/sequence-list/**": (
+            "deploy/classroom/local-demo/materials/sequence-list/顺序表操作练习01.cpp"
+        ),
+    }
+    for guard, forbidden_path in guard_cases.items():
+        assert guard in patterns
+        without_guard = [pattern for pattern in patterns if pattern != guard]
+        assert _dockerignore_includes(forbidden_path, without_guard)
+
+
+def test_facade_keeps_request_logging_silent(capsys: pytest.CaptureFixture[str]) -> None:
+    with demo_client() as client:
+        status, _payload = client.request("GET", "/v1/user/info", token="teacher-token")
+
+    assert status == HTTPStatus.OK
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+def test_student_receives_parent_metadata_and_one_own_child_per_parent():
     with demo_client() as client:
         status, projects = client.request(
             "GET",
@@ -107,9 +691,19 @@ def test_student_receives_parent_metadata_and_own_child_for_compatibility_matchi
         assert status == HTTPStatus.OK
         assert [project["id"] for project in projects["data"]] == [
             "parent-experiment-001",
+            "sequence-list-experiment-001",
+            "linked-list-experiment-002",
             "child-experiment-001",
+            "child-sequence-list-experiment-001-student001",
+            "child-linked-list-experiment-002-student001",
         ]
-        assert projects["data"][1]["name"] == "exp-student001-a1b2"
+        assert projects["data"][3]["name"] == "exp-student001-a1b2"
+        child_projects = projects["data"][3:]
+        assert [project["description"].split("]", 1)[0] for project in child_projects] == [
+            "[FINCOLAB_PARENT_PROJECT_ID:parent-experiment-001",
+            "[FINCOLAB_PARENT_PROJECT_ID:sequence-list-experiment-001",
+            "[FINCOLAB_PARENT_PROJECT_ID:linked-list-experiment-002",
+        ]
 
         status, parent = client.request(
             "GET",
@@ -127,6 +721,16 @@ def test_student_receives_parent_metadata_and_own_child_for_compatibility_matchi
         assert status == HTTPStatus.OK
         assert workbench["workbench_status"] == "RUNNING"
         assert workbench["jupyter_url"] == "http://127.0.0.1:8888/lab"
+
+        status, cpp_workbench = client.request(
+            "GET",
+            "/v1/spaces/course-001/algorithm_development/"
+            "child-linked-list-experiment-002-student001/workbench/"
+            "workbench-linked-list-experiment-002-student001",
+            token="student001-token",
+        )
+        assert status == HTTPStatus.OK
+        assert cpp_workbench["workbench_status"] == "RUNNING"
 
 
 @pytest.mark.parametrize(
@@ -158,16 +762,29 @@ def test_facade_rejects_cross_course_and_unknown_bearers(
         assert payload == {"detail": expected_detail}
 
 
-def test_facade_rejects_invalid_login_and_preserves_legacy_student_token_alias():
+@pytest.mark.parametrize(
+    ("username", "password"),
+    [
+        ("teacher001", "local-demo-teacher"),
+        ("student001", "local-demo-student"),
+    ],
+)
+def test_facade_rejects_old_login_credentials(
+    username: str,
+    password: str,
+):
     with demo_client() as client:
         status, payload = client.request(
             "POST",
             "/v1/login",
-            payload={"username": "student001", "password": "incorrect"},
+            payload={"username": username, "password": password},
         )
         assert status == HTTPStatus.UNAUTHORIZED
         assert payload == {"detail": "demo_login_rejected"}
 
+
+def test_facade_preserves_legacy_student_token_alias():
+    with demo_client() as client:
         status, user = client.request("GET", "/v1/user/info", token="student-token")
         assert status == HTTPStatus.OK
         assert user["username"] == "student001"
@@ -177,9 +794,33 @@ def test_facade_can_supply_a_bounded_local_roster_for_concurrency_checks(monkeyp
     monkeypatch.setenv("CLASSROOM_MOCK_STUDENT_COUNT", "20")
     facade = _load_facade_module()
 
-    course_students = [user for user in facade.USERS.values() if user.role_name == "student" and user.space_id == facade.COURSE_ID]
+    course_students = [
+        user
+        for user in facade.USERS.values()
+        if user.role_name == "student" and user.space_id == facade.COURSE_ID
+    ]
 
     assert len(course_students) == 20
     assert facade.authenticate_bearer("student020-token") is not None
     assert facade.authenticate_bearer("student002-token").space_id == facade.NEGATIVE_COURSE_ID
     assert len([facade._student_project(student.username) for student in course_students]) == 20
+
+
+def test_project_listing_limits_student_children_to_the_authenticated_owner(monkeypatch):
+    monkeypatch.setenv("CLASSROOM_MOCK_STUDENT_COUNT", "2")
+
+    with demo_client() as client:
+        path = "/v1/spaces/course-001/algorithm_development"
+        teacher_status, teacher_projects = client.request("GET", path, token="teacher-token")
+        student_status, student_projects = client.request("GET", path, token="student001-token")
+
+    assert teacher_status == HTTPStatus.OK
+    assert student_status == HTTPStatus.OK
+
+    teacher_children = teacher_projects["data"][3:]
+    assert {project["username"] for project in teacher_children} == {"student001", "student003"}
+
+    student_children = student_projects["data"][3:]
+    assert len(student_children) == len(CPP_MATERIALS) + 1
+    assert {project["username"] for project in student_children} == {"student001"}
+    assert not any("student003" in project["id"] for project in student_projects["data"])

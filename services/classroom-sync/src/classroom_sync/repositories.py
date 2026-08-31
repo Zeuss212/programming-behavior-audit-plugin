@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select, tuple_
+from hashlib import sha256
+
+from sqlalchemy import select, text, tuple_
 from sqlalchemy.orm import Session
 
 from classroom_sync.models import (
     AuditEvent,
+    ClassroomPlanSuggestionJob,
     ExperimentPlanBinding,
     MonitorSession,
+    PlanAuthoringSession,
     PlanDraft,
+    PlanSeries,
     PlanVersion,
     StudentAssignment,
     StudentBrief,
+    TeacherReview,
 )
 
 
@@ -22,8 +28,87 @@ class ClassroomRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
 
+    def lock_plan_scope(self, space_id: str, parent_algorithm_id: str) -> None:
+        """Serialize binding reads and writes for one experiment scope."""
+
+        connection = self.session.connection()
+        dialect_name = connection.dialect.name
+        if dialect_name == "postgresql":
+            scope = (
+                b"classroom-plan-scope-v1\0"
+                + len(space_id.encode()).to_bytes(4, "big")
+                + space_id.encode()
+                + len(parent_algorithm_id.encode()).to_bytes(4, "big")
+                + parent_algorithm_id.encode()
+            )
+            lock_key = int.from_bytes(sha256(scope).digest()[:8], "big", signed=True)
+            connection.execute(
+                text("SELECT pg_advisory_xact_lock(:lock_key)"),
+                {"lock_key": lock_key},
+            )
+            return
+        if dialect_name == "sqlite":
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
+            return
+        raise RuntimeError(f"unsupported plan scope lock dialect: {dialect_name}")
+
     def get_plan_draft(self, draft_id: str, *, for_update: bool = False) -> PlanDraft | None:
         statement = select(PlanDraft).where(PlanDraft.id == draft_id)
+        if for_update:
+            statement = statement.with_for_update()
+        return self.session.scalar(statement)
+
+    def find_open_authoring_session(
+        self,
+        *,
+        teacher_id: str,
+        space_id: str,
+        parent_algorithm_id: str,
+        for_update: bool = False,
+    ) -> PlanAuthoringSession | None:
+        statement = select(PlanAuthoringSession).where(
+            PlanAuthoringSession.teacher_id == teacher_id,
+            PlanAuthoringSession.space_id == space_id,
+            PlanAuthoringSession.parent_algorithm_id == parent_algorithm_id,
+            PlanAuthoringSession.active_slot == 1,
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        return self.session.scalar(statement)
+
+    def get_authoring_session(
+        self, authoring_session_id: str, *, for_update: bool = False
+    ) -> PlanAuthoringSession | None:
+        statement = select(PlanAuthoringSession).where(
+            PlanAuthoringSession.id == authoring_session_id
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        return self.session.scalar(statement)
+
+    def get_plan_draft_for_authoring_session(
+        self, authoring_session_id: str
+    ) -> PlanDraft | None:
+        return self.session.scalar(
+            select(PlanDraft).where(
+                PlanDraft.authoring_session_id == authoring_session_id
+            )
+        )
+
+    def get_plan_series(
+        self, plan_id: str, *, for_update: bool = False
+    ) -> PlanSeries | None:
+        statement = select(PlanSeries).where(PlanSeries.id == plan_id)
+        if for_update:
+            statement = statement.with_for_update()
+        return self.session.scalar(statement)
+
+    def get_plan_suggestion_job(
+        self, job_id: str, *, for_update: bool = False
+    ) -> ClassroomPlanSuggestionJob | None:
+        statement = select(ClassroomPlanSuggestionJob).where(
+            ClassroomPlanSuggestionJob.id == job_id
+        )
         if for_update:
             statement = statement.with_for_update()
         return self.session.scalar(statement)
@@ -45,6 +130,16 @@ class ClassroomRepository:
             )
         )
 
+    def get_plan_version_for_source(
+        self, draft_id: str, revision: int
+    ) -> PlanVersion | None:
+        return self.session.scalar(
+            select(PlanVersion).where(
+                PlanVersion.source_draft_id == draft_id,
+                PlanVersion.source_draft_revision == revision,
+            )
+        )
+
     def get_plan_version_by_id(self, plan_version_id: str) -> PlanVersion | None:
         return self.session.get(PlanVersion, plan_version_id)
 
@@ -59,13 +154,20 @@ class ClassroomRepository:
             )
         )
 
-    def get_binding(self, space_id: str, parent_algorithm_id: str) -> ExperimentPlanBinding | None:
-        return self.session.scalar(
-            select(ExperimentPlanBinding).where(
-                ExperimentPlanBinding.space_id == space_id,
-                ExperimentPlanBinding.parent_algorithm_id == parent_algorithm_id,
-            )
+    def get_binding(
+        self,
+        space_id: str,
+        parent_algorithm_id: str,
+        *,
+        for_update: bool = False,
+    ) -> ExperimentPlanBinding | None:
+        statement = select(ExperimentPlanBinding).where(
+            ExperimentPlanBinding.space_id == space_id,
+            ExperimentPlanBinding.parent_algorithm_id == parent_algorithm_id,
         )
+        if for_update:
+            statement = statement.with_for_update()
+        return self.session.scalar(statement)
 
     def get_assignment(
         self,
@@ -136,6 +238,21 @@ class ClassroomRepository:
                 select(StudentBrief)
                 .where(StudentBrief.session_id.in_(session_ids))
                 .order_by(StudentBrief.session_id, StudentBrief.revision.desc())
+            )
+        )
+
+    def list_teacher_reviews_for_sessions(self, session_ids: list[str]) -> list[TeacherReview]:
+        if not session_ids:
+            return []
+        return list(
+            self.session.scalars(
+                select(TeacherReview)
+                .where(TeacherReview.session_id.in_(session_ids))
+                .order_by(
+                    TeacherReview.session_id,
+                    TeacherReview.created_at.desc(),
+                    TeacherReview.id.desc(),
+                )
             )
         )
 

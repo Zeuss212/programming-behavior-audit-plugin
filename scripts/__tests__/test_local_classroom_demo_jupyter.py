@@ -29,7 +29,7 @@ def _launcher_environment(tmp_path: Path, *, port_busy: bool = False) -> tuple[d
         fake_bin / "uv",
         "#!/bin/sh\n"
         "printf 'uv %s\\n' \"$*\" > \"$LOCAL_JUPYTER_TRACE\"\n"
-        "env | grep '^JUPYTERLAB_BEHAVIOR_AUDIT_' | sort > \"$LOCAL_JUPYTER_ENVIRONMENT\"\n",
+        "env | grep -E '^(JUPYTERLAB_BEHAVIOR_AUDIT_|NO_PROXY=|no_proxy=)' | sort > \"$LOCAL_JUPYTER_ENVIRONMENT\"\n",
     )
     return (
         {
@@ -37,6 +37,8 @@ def _launcher_environment(tmp_path: Path, *, port_busy: bool = False) -> tuple[d
             "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
             "LOCAL_JUPYTER_TRACE": str(trace),
             "LOCAL_JUPYTER_ENVIRONMENT": str(environment),
+            "NO_PROXY": "existing.example",
+            "no_proxy": "legacy.example",
         },
         trace,
         environment,
@@ -59,6 +61,8 @@ def test_jupyter_launcher_starts_only_loopback_student_mode(tmp_path: Path):
         "JUPYTERLAB_BEHAVIOR_AUDIT_LOG_DIR=/private/tmp/classroom-local-demo-jupyter/behavior-audit",
         "JUPYTERLAB_BEHAVIOR_AUDIT_PLATFORM_MODE=student",
         "JUPYTERLAB_BEHAVIOR_AUDIT_SYNC_BASE_URL=http://127.0.0.1:18081/classroom-api",
+        "NO_PROXY=127.0.0.1,localhost,existing.example,legacy.example",
+        "no_proxy=127.0.0.1,localhost,existing.example,legacy.example",
     ]
 
 

@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "importer_version": "cpp_assessment_material_importer_v1",
+  "space_id": "course-001",
+  "parent_algorithm_id": "linked-list-experiment-002",
+  "exercise_profile": "linked_list_v1",
+  "title": "链表尾插与逆置",
+  "statement": "完善带头结点的单链表类定义，完成尾插与链表倒置。",
+  "toolchain_profile": "cpp17_stdio_v1",
+  "source": {
+    "path": "链表操作练习02.cpp",
+    "sha256": "6468a373fbf602c7c8d5012fca2a5ead4973bb8daf54714c7ef22d84bbd68cb0",
+    "encoding": "utf-8",
+    "artifact_id": "ART_LINKED_LIST_CPP_01",
+    "editable_symbols": [
+      "MList::insertToTail",
+      "MList::Reverse"
+    ]
+  },
+  "tests": {
+    "path": "编码习题2-链表的逆置操作.txt",
+    "sha256": "78c32919dc9bcbf2cf1477f44faf1cda649f5c2c93aa160788ffa8ad2a2d8afd",
+    "encoding": "utf-8",
+    "parser_profile": "linked_txt_v1"
+  },
+  "expected_requirement_ids": [
+    "REQ_LINK_TAIL_INSERT",
+    "REQ_LINK_REVERSE",
+    "REQ_LINK_TRAVERSAL",
+    "REQ_LINK_DELETE"
+  ]
+}

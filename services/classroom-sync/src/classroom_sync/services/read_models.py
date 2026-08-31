@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 import json
+import re
+from collections.abc import Mapping
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session, sessionmaker
 
 from classroom_sync.errors import NotFoundError
-from classroom_sync.models import MonitorSession, PlanVersion, StudentAssignment, StudentBrief
+from classroom_sync.models import (
+    MonitorSession,
+    PlanVersion,
+    StudentAssignment,
+    StudentBrief,
+    TeacherReview,
+)
 from classroom_sync.repositories import ClassroomRepository
 
 
@@ -80,6 +88,11 @@ class ClassroomReadService:
                     [monitor_session.id for monitor_session in latest_sessions.values()]
                 )
             )
+            latest_reviews = self._latest_reviews(
+                repository.list_teacher_reviews_for_sessions(
+                    [monitor_session.id for monitor_session in latest_sessions.values()]
+                )
+            )
             students: list[dict[str, object]] = []
             for assignment in assignments:
                 monitor_session = latest_sessions.get(assignment.id)
@@ -92,7 +105,12 @@ class ClassroomReadService:
                         "assignment_id": assignment.id,
                         "assignment_status": assignment.status,
                         "session": self._session_summary(monitor_session),
-                        "brief": self._brief_summary(student_brief),
+                        "brief": self._brief_summary(
+                            student_brief,
+                            latest_reviews.get(monitor_session.id)
+                            if monitor_session is not None
+                            else None,
+                        ),
                     }
                 )
             return {
@@ -136,6 +154,7 @@ class ClassroomReadService:
                     "status": assignment.status,
                     "scheduled_start_at": self._isoformat(assignment.scheduled_start_at),
                     "scheduled_end_at": self._isoformat(assignment.scheduled_end_at),
+                    "ai_policy": plan_version.ai_policy,
                     "session": self._session_summary(latest_sessions.get(assignment.id)),
                 }
             )
@@ -151,6 +170,13 @@ class ClassroomReadService:
     @staticmethod
     def _latest_briefs(records: list[StudentBrief]) -> dict[str, StudentBrief]:
         latest: dict[str, StudentBrief] = {}
+        for record in records:
+            latest.setdefault(record.session_id, record)
+        return latest
+
+    @staticmethod
+    def _latest_reviews(records: list[TeacherReview]) -> dict[str, TeacherReview]:
+        latest: dict[str, TeacherReview] = {}
         for record in records:
             latest.setdefault(record.session_id, record)
         return latest
@@ -186,7 +212,10 @@ class ClassroomReadService:
         }
 
     @staticmethod
-    def _brief_summary(student_brief: StudentBrief | None) -> dict[str, object] | None:
+    def _brief_summary(
+        student_brief: StudentBrief | None,
+        teacher_review: TeacherReview | None,
+    ) -> dict[str, object] | None:
         if student_brief is None:
             return None
         ai_analysis_status = student_brief.payload.get("ai_analysis_status")
@@ -198,6 +227,131 @@ class ClassroomReadService:
                 if ai_analysis_status in {"not_requested", "pending", "ready", "unavailable"}
                 else "not_requested"
             ),
+            "mastery_overview": ClassroomReadService._mastery_overview(
+                student_brief, teacher_review
+            ),
+        }
+
+    @staticmethod
+    def _mastery_overview(
+        student_brief: StudentBrief,
+        teacher_review: TeacherReview | None,
+    ) -> dict[str, object]:
+        raw_points = student_brief.payload.get("knowledge_points")
+        points = raw_points if isinstance(raw_points, list) else []
+        base_statuses = {
+            "mastered",
+            "partial",
+            "not_mastered",
+            "not_demonstrated",
+            "review_required",
+        }
+        normalized_rows: list[dict[str, object]] = []
+        for point in points:
+            if not isinstance(point, Mapping):
+                continue
+            point_id = point.get("knowledge_point_id")
+            name = point.get("name")
+            status = point.get("status")
+            if (
+                not isinstance(point_id, str)
+                or not isinstance(name, str)
+                or status not in base_statuses
+            ):
+                continue
+            gap = point.get("gap")
+            references = point.get("evidence_refs")
+            normalized_rows.append(
+                {
+                    "knowledge_point_id": point_id,
+                    "name": name,
+                    "status": status,
+                    "reason": gap if isinstance(gap, str) else "需要查看相关过程证据。",
+                    "evidence_refs": references if isinstance(references, list) else [],
+                }
+            )
+
+        review_by_point: dict[str, tuple[str, str]] = {}
+        if teacher_review is not None:
+            raw_reviews = teacher_review.payload.get("knowledge_point_reviews")
+            if isinstance(raw_reviews, list):
+                for review in raw_reviews:
+                    if not isinstance(review, Mapping):
+                        continue
+                    point_id = review.get("knowledge_point_id")
+                    status = review.get("status")
+                    reason = review.get("reason")
+                    if (
+                        isinstance(point_id, str)
+                        and status in base_statuses
+                        and isinstance(reason, str)
+                    ):
+                        review_by_point[point_id] = (status, reason)
+
+        applied_teacher_review = False
+        counts = {
+            "mastered": 0,
+            "partial": 0,
+            "not_mastered": 0,
+            "evidence_insufficient": 0,
+            "review_required": 0,
+        }
+        attention: list[tuple[int, int, dict[str, object]]] = []
+        priority = {
+            "not_mastered": 0,
+            "partial": 1,
+            "review_required": 2,
+            "evidence_insufficient": 3,
+        }
+        for index, row in enumerate(normalized_rows):
+            point_id = str(row["knowledge_point_id"])
+            override = review_by_point.get(point_id)
+            if override is not None:
+                row["status"], row["reason"] = override
+                applied_teacher_review = True
+            display_status = (
+                "evidence_insufficient"
+                if row["status"] == "not_demonstrated"
+                else str(row["status"])
+            )
+            counts[display_status] += 1
+            if display_status == "mastered":
+                continue
+            raw_references = row.get("evidence_refs")
+            evidence_count = (
+                len(
+                    [
+                        reference
+                        for reference in raw_references
+                        if isinstance(reference, str)
+                        and re.fullmatch(
+                            r"chunk-[1-9][0-9]*#event-[1-9][0-9]*", reference
+                        )
+                    ]
+                )
+                if isinstance(raw_references, list)
+                else 0
+            )
+            attention.append(
+                (
+                    priority[display_status],
+                    index,
+                    {
+                        "knowledge_point_id": point_id,
+                        "name": str(row["name"])[:200],
+                        "status": display_status,
+                        "reason": str(row["reason"])[:500],
+                        "evidence_count": evidence_count,
+                    },
+                )
+            )
+
+        attention.sort(key=lambda item: (item[0], item[1]))
+        return {
+            "counts": counts,
+            "attention_items": [item[2] for item in attention[:3]],
+            "data_completeness": student_brief.data_completeness,
+            "source": "teacher" if applied_teacher_review else "automatic",
         }
 
     @staticmethod

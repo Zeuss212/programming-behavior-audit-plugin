@@ -78,6 +78,66 @@ it('uses a no-authoring student context when classroom context is unavailable', 
   });
 });
 
+it('fails closed when an observed classroom ticket resolves to the local context', async () => {
+  const initialize = jest.fn();
+
+  const result = await initializeClassroomUi({
+    classroomTicketObserved: true,
+    getContext: async () => LOCAL_PLATFORM_CONTEXT,
+    initialize,
+    reportUnavailable: jest.fn()
+  });
+
+  expect(result).toBe('student-unavailable');
+  expect(initialize).toHaveBeenCalledWith(
+    expect.objectContaining({
+      mode: 'student',
+      classroom_session: null,
+      capabilities: expect.objectContaining({
+        canAuthorPlan: false,
+        canPublishPlan: false
+      })
+    })
+  );
+});
+
+it('preserves the local context when no classroom ticket was observed', async () => {
+  const initialize = jest.fn();
+
+  const result = await initializeClassroomUi({
+    classroomTicketObserved: false,
+    getContext: async () => LOCAL_PLATFORM_CONTEXT,
+    initialize,
+    reportUnavailable: jest.fn()
+  });
+
+  expect(result).toBe('context');
+  expect(initialize).toHaveBeenCalledWith(LOCAL_PLATFORM_CONTEXT);
+});
+
+it('fails closed when an observed classroom ticket resolves to unsafe student capabilities', async () => {
+  const initialize = jest.fn();
+  const unsafeStudentContext = {
+    ...studentContext,
+    capabilities: { ...studentContext.capabilities, canAuthorPlan: true }
+  };
+
+  const result = await initializeClassroomUi({
+    classroomTicketObserved: true,
+    getContext: async () => unsafeStudentContext,
+    initialize,
+    reportUnavailable: jest.fn()
+  });
+
+  expect(result).toBe('student-unavailable');
+  expect(initialize).toHaveBeenCalledWith(
+    expect.objectContaining({
+      mode: 'student',
+      capabilities: expect.objectContaining({ canAuthorPlan: false })
+    })
+  );
+});
+
 it('does not invent a student UI for a non-classroom context failure', async () => {
   const initialize = jest.fn();
   const reportUnavailable = jest.fn();

@@ -32,14 +32,10 @@ python -m build --wheel 的默认隔离环境需要联网获取构建后端；�
 
 | 命令 | 结果 |
 | --- | --- |
-| .venv/bin/jlpm jest src/__tests__/ticketBootstrap.spec.ts src/__tests__/classroomUiBootstrap.spec.ts --runInBand --coverage=false | 2 suites / 8 tests passed |
-| .venv/bin/jlpm jest src/__tests__/studentModeSidebar.spec.ts src/__tests__/behaviorAnalysisSidebar.spec.ts --runInBand --coverage=false | 2 suites / 97 tests passed |
+| .venv/bin/jlpm jest src/__tests__/classroomUiBootstrap.spec.ts src/__tests__/studentModeSidebar.spec.ts --runInBand --coverage=false | 2 suites / 22 tests passed；覆盖课堂票据失败闭锁、畸形快照，以及空会话/空知识点刷新保留旧快照 |
 | PATH="$PWD/.venv/bin:$PATH" .venv/bin/jlpm lint:check | passed |
-| PATH="$PWD/.venv/bin:$PATH" .venv/bin/jlpm test --runInBand | 29 suites / 348 tests passed |
-| .venv/bin/python -m pytest -q myextension/tests/test_platform_registration.py myextension/tests/test_student_mode_routes.py | 27 passed；仅绑定本机 127.0.0.1 测试端口 |
-| .venv/bin/python -m pytest -q myextension/tests --ignore=myextension/tests/test_labextension_artifact.py --ignore=myextension/tests/test_classroom_release_040.py | 750 passed |
-| .venv/bin/python -m pytest -q myextension/tests/test_labextension_artifact.py | 1 passed |
-| .venv/bin/python -m pytest -q myextension/tests/test_classroom_release_040.py | 10 passed |
+| PATH="$PWD/.venv/bin:$PATH" .venv/bin/jlpm test --runInBand | 29 suites / 360 tests passed |
+| .venv/bin/python -m pytest -q myextension/tests | 761 passed；仅绑定本机 127.0.0.1 测试端口 |
 | sh -n deploy/bluedot/release-0.4.0/{build_image,verify_image,export_image}.sh | passed |
 
 wheel 构建和完整性检查：
@@ -59,9 +55,9 @@ cmp dist/myextension-0.4.0-py3-none-any.whl deploy/bluedot/release-0.4.0/artifac
 
 | 产物 | SHA-256 |
 | --- | --- |
-| dist/myextension-0.4.0-py3-none-any.whl | 43232d306d0d9c29c67ddbad752f389d41ad283c03afc3fb9b2bc316b02549a3 |
-| deploy/bluedot/release-0.4.0/artifacts/myextension-0.4.0-py3-none-any.whl | 43232d306d0d9c29c67ddbad752f389d41ad283c03afc3fb9b2bc316b02549a3 |
-| releases/behavior-audit-classroom-0.4.0-linux-amd64-buildkit.tar.gz | 3142e1ff6120be62b440b0c3e22de6e38d1d0bf796a17f2c22807476ec9678d6 |
+| dist/myextension-0.4.0-py3-none-any.whl | 8b41650e32015a7c6d23c157e51b2d8d59807c378d8a337cde7798144dfddfe6 |
+| deploy/bluedot/release-0.4.0/artifacts/myextension-0.4.0-py3-none-any.whl | 8b41650e32015a7c6d23c157e51b2d8d59807c378d8a337cde7798144dfddfe6 |
+| releases/behavior-audit-classroom-0.4.0-linux-amd64-buildkit.tar.gz | d2ee4fd8b37c7610db62b0a17210fefb28250f80426946a80cb112d6bc14e9a8 |
 
 归档通过如下命令生成和校验：
 
@@ -78,7 +74,7 @@ cmp dist/myextension-0.4.0-py3-none-any.whl deploy/bluedot/release-0.4.0/artifac
 
 1. 唯一的测试工作台模板 ID，以及可恢复的变更窗口；
 2. 当前线上插件实际为 0.2.2 的镜像与 wheel 不可变 digest；
-3. 0.2.2 的明确回滚 digest。候选包 README 中仍提到 0.3.0，必须先消除该文档与实际运行版本的差异；
+3. 0.2.2 的明确回滚 digest；候选包 README 已改为仅接受由 BAMS 运维确认的当前模板实际 digest；
 4. Linux AMD64 基础镜像的不可变 digest，且其中包含 JupyterLab 4、Jupyter Server 2 与 jsonschema；
 5. 已运行工作台是否需要重建、已启动学生任务的资源与发布快照保留策略；
 6. BAMS HTTPS 下真实的 /classroom-api 地址和运行时 Secret 注入方案，不能使用 loopback 或工作台端口 40037。

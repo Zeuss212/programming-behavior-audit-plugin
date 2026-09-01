@@ -34,10 +34,13 @@ import { openLogFolder } from '../services/logFolderApi';
 import { ISessionLogFile, listSessionLogs } from '../services/sessionLogApi';
 import { requestAPI } from '../request';
 import {
+  hasPublishedStudentClassroomSnapshot,
   IPlatformContext,
   LOCAL_PLATFORM_CONTEXT,
+  isValidStudentPlatformContext,
   refreshPlatformContext
 } from '../platform/contextApi';
+import { IAssessmentProfileVersion } from '../models/assessmentPlan';
 import {
   IClassroomSubmission,
   submitClassroomBrief
@@ -170,24 +173,11 @@ function compactProfileTitle(title: string): string {
 }
 
 function orderedStudentKnowledgePoints(
-  profile: IDimensionProfileVersion
-): Array<{ name: string; description: string; order: number }> | null {
-  if (profile.schema_version !== 2) return null;
-  const knowledgePoints = profile.knowledge_points;
-  if (
-    !Array.isArray(knowledgePoints) ||
-    !knowledgePoints.every(
-      point =>
-        typeof point?.name === 'string' &&
-        point.name.trim() !== '' &&
-        typeof point.description === 'string' &&
-        Number.isFinite(point.order) &&
-        point.order >= 0
-    )
-  ) {
-    return null;
-  }
-  return [...knowledgePoints].sort((left, right) => left.order - right.order);
+  profile: IAssessmentProfileVersion
+): Array<{ name: string; description: string; order: number }> {
+  return [...profile.knowledge_points].sort(
+    (left, right) => left.order - right.order
+  );
 }
 
 function button(text: string, primary = false): HTMLButtonElement {
@@ -733,8 +723,14 @@ export class BehaviorAnalysisSidebar extends Widget {
     const operation = Promise.resolve()
       .then(() => this.deps.refreshPlatformContext(this.deps.settings))
       .then(context => {
-        if (context.mode !== 'student') {
-          throw new Error('Classroom refresh returned a non-student context.');
+        if (
+          !isValidStudentPlatformContext(context) ||
+          (hasPublishedStudentClassroomSnapshot(this.platformContext) &&
+            !hasPublishedStudentClassroomSnapshot(context))
+        ) {
+          throw new Error(
+            'Classroom refresh returned an invalid student context.'
+          );
         }
         this.platformContext = context;
         this.studentContextFeedback = '';
@@ -1273,10 +1269,25 @@ export class BehaviorAnalysisSidebar extends Widget {
 
   private studentClassroomSection(): HTMLElement {
     const section = node('section', 'jp-BehaviorAudit-sidebarSection');
-    const session = this.platformContext.classroom_session;
+    const platformContext = this.platformContext;
+    if (!isValidStudentPlatformContext(platformContext)) {
+      const message = node('p', 'jp-BehaviorAudit-notice');
+      message.textContent = '知识点暂时无法加载，请重试';
+      section.appendChild(message);
+      this.appendStudentContextRefresh(section);
+      return section;
+    }
+    const session = platformContext.classroom_session;
     if (!session) {
       const message = node('p', 'jp-BehaviorAudit-notice');
       message.textContent = '尚未接入课堂任务，请从课程页面重新进入';
+      section.appendChild(message);
+      this.appendStudentContextRefresh(section);
+      return section;
+    }
+    if (!hasPublishedStudentClassroomSnapshot(platformContext)) {
+      const message = node('p', 'jp-BehaviorAudit-notice');
+      message.textContent = '知识点暂时无法加载，请重试';
       section.appendChild(message);
       this.appendStudentContextRefresh(section);
       return section;
@@ -1289,23 +1300,17 @@ export class BehaviorAnalysisSidebar extends Widget {
     knowledgeHeading.textContent = '本次实验知识点';
     const knowledgePoints = orderedStudentKnowledgePoints(session.profile);
     const knowledgeContent = node('div');
-    if (knowledgePoints === null) {
-      const error = node('p', 'jp-BehaviorAudit-notice');
-      error.textContent = '知识点暂时无法加载，请重试';
-      knowledgeContent.appendChild(error);
-    } else {
-      const list = node('ol', 'jp-BehaviorAudit-knowledgePointList');
-      for (const knowledgePoint of knowledgePoints) {
-        const item = node('li');
-        const name = node('strong');
-        name.textContent = knowledgePoint.name;
-        const description = node('p', 'jp-BehaviorAudit-notice');
-        description.textContent = knowledgePoint.description;
-        item.append(name, description);
-        list.appendChild(item);
-      }
-      knowledgeContent.appendChild(list);
+    const list = node('ol', 'jp-BehaviorAudit-knowledgePointList');
+    for (const knowledgePoint of knowledgePoints) {
+      const item = node('li');
+      const name = node('strong');
+      name.textContent = knowledgePoint.name;
+      const description = node('p', 'jp-BehaviorAudit-notice');
+      description.textContent = knowledgePoint.description;
+      item.append(name, description);
+      list.appendChild(item);
     }
+    knowledgeContent.appendChild(list);
     const monitoring = node('p', 'jp-BehaviorAudit-captureState');
     monitoring.textContent = `监控状态：${
       this.deps.capture.isEnabled() ? '进行中' : '等待开始'

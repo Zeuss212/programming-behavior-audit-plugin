@@ -35,4 +35,4 @@ TARGET_IMAGE='behavior-audit:0.4.0-classroom'
 
 ## 停止点与回滚
 
-本地镜像验证结束即停止。不得执行 `docker push`、`scp`、模板替换或容器重启。保留已验证的 0.3.0 镜像 digest；若后续发布出现问题，将 BAMS 工作台模板改回该 digest，新建工作台验证即可，不能删除 `/workspace/result/behavior-audit`。
+本地镜像验证结束即停止。不得执行 `docker push`、`scp`、模板替换或容器重启。部署前由 BAMS 运维记录当前线上测试模板的实际不可变 digest，并将其作为唯一回滚对象；若后续发布出现问题，将 BAMS 工作台模板改回该已确认 digest，新建工作台验证即可，不能删除 `/workspace/result/behavior-audit`。

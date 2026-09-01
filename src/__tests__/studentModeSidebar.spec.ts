@@ -5,6 +5,7 @@ import {
   IPlatformContext,
   LOCAL_PLATFORM_CONTEXT
 } from '../platform/contextApi';
+import { IAssessmentProfileVersion } from '../models/assessmentPlan';
 import {
   BehaviorAnalysisSidebar,
   sidebarDependencies
@@ -97,6 +98,10 @@ const studentContext: IPlatformContext = {
     last_sync_at: '2026-08-12T08:00:00Z'
   }
 };
+
+const firstStudentKnowledgePoint = (
+  studentContext.classroom_session!.profile as IAssessmentProfileVersion
+).knowledge_points[0];
 
 function createStudentSidebar(
   context: IPlatformContext = studentContext,
@@ -200,6 +205,127 @@ it('shows a neutral error for a malformed knowledge-point snapshot', () => {
   expect(sidebar.node.textContent).toContain('知识点暂时无法加载，请重试');
   sidebar.dispose();
 });
+
+it.each([
+  [
+    'a missing knowledge-point id',
+    { ...firstStudentKnowledgePoint, id: undefined }
+  ],
+  [
+    'an invalid knowledge-point source',
+    { ...firstStudentKnowledgePoint, source: 'unknown' }
+  ],
+  [
+    'a fractional knowledge-point order',
+    { ...firstStudentKnowledgePoint, order: 0.5 }
+  ],
+  [
+    'an out-of-range knowledge-point order',
+    { ...firstStudentKnowledgePoint, order: 10 }
+  ]
+])('shows a neutral error for %s', (_label, invalidPoint) => {
+  const malformedContext = {
+    ...studentContext,
+    classroom_session: {
+      ...studentContext.classroom_session!,
+      profile: {
+        ...studentContext.classroom_session!.profile,
+        knowledge_points: [invalidPoint]
+      }
+    }
+  } as unknown as IPlatformContext;
+  const sidebar = createStudentSidebar(malformedContext);
+
+  expect(sidebar.node.textContent).toContain('知识点暂时无法加载，请重试');
+  sidebar.dispose();
+});
+
+it('shows a neutral error when a classroom profile is missing', () => {
+  const malformedContext = {
+    ...studentContext,
+    classroom_session: {
+      ...studentContext.classroom_session!,
+      profile: null
+    }
+  } as unknown as IPlatformContext;
+  const sidebar = createStudentSidebar(malformedContext);
+
+  expect(sidebar.node.textContent).toContain('知识点暂时无法加载，请重试');
+  sidebar.dispose();
+});
+
+it('shows a neutral error when a classroom snapshot has no published knowledge points', () => {
+  const malformedContext = {
+    ...studentContext,
+    classroom_session: {
+      ...studentContext.classroom_session!,
+      profile: {
+        ...studentContext.classroom_session!.profile,
+        knowledge_points: []
+      }
+    }
+  } as unknown as IPlatformContext;
+  const sidebar = createStudentSidebar(malformedContext);
+
+  expect(sidebar.node.textContent).toContain('知识点暂时无法加载，请重试');
+  sidebar.dispose();
+});
+
+it('keeps the previous snapshot when refreshed classroom context is malformed', async () => {
+  const malformedContext = {
+    ...studentContext,
+    classroom_session: {
+      ...studentContext.classroom_session!,
+      profile: null
+    }
+  } as unknown as IPlatformContext;
+  const refreshPlatformContext = jest.fn(async () => malformedContext);
+  const sidebar = createStudentSidebar(studentContext, {
+    refreshPlatformContext
+  });
+
+  findButton(sidebar, '刷新课堂信息').click();
+  await flushPromises();
+
+  expect(sidebar.node.textContent).toContain('平均值计算');
+  expect(sidebar.node.textContent).toContain('知识点暂时无法加载，请重试');
+  sidebar.dispose();
+});
+
+it.each([
+  [
+    'has no classroom session',
+    { ...studentContext, classroom_session: null } as IPlatformContext
+  ],
+  [
+    'has no published knowledge points',
+    {
+      ...studentContext,
+      classroom_session: {
+        ...studentContext.classroom_session!,
+        profile: {
+          ...studentContext.classroom_session!.profile,
+          knowledge_points: []
+        }
+      }
+    } as unknown as IPlatformContext
+  ]
+])(
+  'keeps the previous snapshot when refreshed classroom context %s',
+  async (_label, malformedContext) => {
+    const refreshPlatformContext = jest.fn(async () => malformedContext);
+    const sidebar = createStudentSidebar(studentContext, {
+      refreshPlatformContext
+    });
+
+    findButton(sidebar, '刷新课堂信息').click();
+    await flushPromises();
+
+    expect(sidebar.node.textContent).toContain('平均值计算');
+    expect(sidebar.node.textContent).toContain('知识点暂时无法加载，请重试');
+    sidebar.dispose();
+  }
+);
 
 it('renders only the classroom task card in student mode and never loads teacher tools', () => {
   const dependencies = sidebarDependencies(

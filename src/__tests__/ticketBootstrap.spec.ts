@@ -1,9 +1,27 @@
 import {
   bootstrapClassroomTicket,
-  consumeClassroomTicket
+  consumeClassroomTicket,
+  hasClassroomTicket
 } from '../platform/ticketBootstrap';
 
 describe('consumeClassroomTicket', () => {
+  it('detects only a fragment classroom ticket without reading it', () => {
+    expect(
+      hasClassroomTicket({
+        hash: '#view=lab&behavior_ticket=temporary-ticket',
+        pathname: '/lab',
+        search: '?behavior_ticket=unsafe-query-ticket'
+      })
+    ).toBe(true);
+    expect(
+      hasClassroomTicket({
+        hash: '#view=lab',
+        pathname: '/lab',
+        search: '?behavior_ticket=unsafe-query-ticket'
+      })
+    ).toBe(false);
+  });
+
   it('reads the ticket only from the fragment and removes only that fragment parameter', () => {
     const replaceState = jest.fn();
     const location = {

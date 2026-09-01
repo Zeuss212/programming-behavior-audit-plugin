@@ -51,6 +51,16 @@ export const LOCAL_PLATFORM_CONTEXT: IPlatformContext = {
   classroom_session: null
 };
 
+export function createUnavailableStudentPlatformContext(): IPlatformContext {
+  return {
+    schema_version: 1,
+    request_id: 'classroom-context-unavailable',
+    mode: 'student',
+    capabilities: capabilitiesForMode('student'),
+    classroom_session: null
+  };
+}
+
 export function getPlatformContext(
   settings: ServerConnection.ISettings
 ): Promise<IPlatformContext> {

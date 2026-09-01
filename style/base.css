@@ -487,6 +487,17 @@ textarea.jp-BehaviorAudit-input {
   line-height: 1.45;
 }
 
+.jp-BehaviorAudit-knowledgePointList {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 20px;
+}
+
+.jp-BehaviorAudit-knowledgePointList li {
+  overflow-wrap: anywhere;
+}
+
 .jp-BehaviorAudit-captureState,
 .jp-BehaviorAudit-counts,
 .jp-BehaviorAudit-resultSummary,

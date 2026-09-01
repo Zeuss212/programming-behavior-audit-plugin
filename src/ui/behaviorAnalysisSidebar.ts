@@ -35,7 +35,8 @@ import { ISessionLogFile, listSessionLogs } from '../services/sessionLogApi';
 import { requestAPI } from '../request';
 import {
   IPlatformContext,
-  LOCAL_PLATFORM_CONTEXT
+  LOCAL_PLATFORM_CONTEXT,
+  refreshPlatformContext
 } from '../platform/contextApi';
 import {
   IClassroomSubmission,
@@ -67,6 +68,7 @@ export interface IBehaviorAnalysisSidebarDependencies {
   settings: ServerConnection.ISettings;
   capture: IBehaviorCaptureController;
   platformContext?: IPlatformContext;
+  refreshPlatformContext: typeof refreshPlatformContext;
   listProfiles: typeof listProfiles;
   getProfileVersion: typeof getProfileVersion;
   getAnalysisJob: typeof getAnalysisJob;
@@ -118,6 +120,7 @@ export function sidebarDependencies(
     settings,
     capture,
     platformContext,
+    refreshPlatformContext,
     listProfiles,
     getProfileVersion,
     getAnalysisJob,
@@ -164,6 +167,27 @@ function compactProfileTitle(title: string): string {
   return characters.length <= maximum
     ? characters.join('')
     : `${characters.slice(0, maximum - 1).join('')}…`;
+}
+
+function orderedStudentKnowledgePoints(
+  profile: IDimensionProfileVersion
+): Array<{ name: string; description: string; order: number }> | null {
+  if (profile.schema_version !== 2) return null;
+  const knowledgePoints = profile.knowledge_points;
+  if (
+    !Array.isArray(knowledgePoints) ||
+    !knowledgePoints.every(
+      point =>
+        typeof point?.name === 'string' &&
+        point.name.trim() !== '' &&
+        typeof point.description === 'string' &&
+        Number.isFinite(point.order) &&
+        point.order >= 0
+    )
+  ) {
+    return null;
+  }
+  return [...knowledgePoints].sort((left, right) => left.order - right.order);
 }
 
 function button(text: string, primary = false): HTMLButtonElement {
@@ -360,7 +384,7 @@ const EMPTY_UPLOAD: IUploadSnapshot = {
 };
 
 export class BehaviorAnalysisSidebar extends Widget {
-  private readonly platformContext: IPlatformContext;
+  private platformContext: IPlatformContext;
   private profiles: IDimensionProfileVersion[] = [];
   private selectedProfileId = '';
   private consent = false;
@@ -376,6 +400,8 @@ export class BehaviorAnalysisSidebar extends Widget {
   } | null = null;
   private studentCaptureFinalizedSessionId: string | null = null;
   private studentSubmissionCompletedSessionId: string | null = null;
+  private studentContextRefreshInFlight: Promise<void> | null = null;
+  private studentContextFeedback = '';
   private currentSessionId: string | null = null;
   private pollTimer: TimerHandle | null = null;
   private observationTimer: TimerHandle | null = null;
@@ -698,6 +724,33 @@ export class BehaviorAnalysisSidebar extends Widget {
 
   private isStudentMode(): boolean {
     return this.platformContext.mode === 'student';
+  }
+
+  private refreshStudentClassroomContext(): Promise<void> {
+    if (this.studentContextRefreshInFlight !== null) {
+      return this.studentContextRefreshInFlight;
+    }
+    const operation = Promise.resolve()
+      .then(() => this.deps.refreshPlatformContext(this.deps.settings))
+      .then(context => {
+        if (context.mode !== 'student') {
+          throw new Error('Classroom refresh returned a non-student context.');
+        }
+        this.platformContext = context;
+        this.studentContextFeedback = '';
+      })
+      .catch(() => {
+        this.studentContextFeedback = '知识点暂时无法加载，请重试';
+      })
+      .then(() => {
+        if (this.studentContextRefreshInFlight === operation) {
+          this.studentContextRefreshInFlight = null;
+          if (!this.isDisposed) this.render();
+        }
+      });
+    this.studentContextRefreshInFlight = operation;
+    this.render();
+    return operation;
   }
 
   private hasUnfinishedPendingSession(): boolean {
@@ -1223,14 +1276,36 @@ export class BehaviorAnalysisSidebar extends Widget {
     const session = this.platformContext.classroom_session;
     if (!session) {
       const message = node('p', 'jp-BehaviorAudit-notice');
-      message.textContent = '课堂会话未就绪，请返回课程页面重新打开。';
+      message.textContent = '尚未接入课堂任务，请从课程页面重新进入';
       section.appendChild(message);
+      this.appendStudentContextRefresh(section);
       return section;
     }
     const title = node('h2');
     title.textContent = session.profile.title;
     const task = node('p', 'jp-BehaviorAudit-notice');
     task.textContent = `课堂任务 · 方案 v${session.plan_version}`;
+    const knowledgeHeading = node('h2');
+    knowledgeHeading.textContent = '本次实验知识点';
+    const knowledgePoints = orderedStudentKnowledgePoints(session.profile);
+    const knowledgeContent = node('div');
+    if (knowledgePoints === null) {
+      const error = node('p', 'jp-BehaviorAudit-notice');
+      error.textContent = '知识点暂时无法加载，请重试';
+      knowledgeContent.appendChild(error);
+    } else {
+      const list = node('ol', 'jp-BehaviorAudit-knowledgePointList');
+      for (const knowledgePoint of knowledgePoints) {
+        const item = node('li');
+        const name = node('strong');
+        name.textContent = knowledgePoint.name;
+        const description = node('p', 'jp-BehaviorAudit-notice');
+        description.textContent = knowledgePoint.description;
+        item.append(name, description);
+        list.appendChild(item);
+      }
+      knowledgeContent.appendChild(list);
+    }
     const monitoring = node('p', 'jp-BehaviorAudit-captureState');
     monitoring.textContent = `监控状态：${
       this.deps.capture.isEnabled() ? '进行中' : '等待开始'
@@ -1269,13 +1344,33 @@ export class BehaviorAnalysisSidebar extends Widget {
     section.append(
       title,
       task,
+      knowledgeHeading,
+      knowledgeContent,
       monitoring,
       lastSync,
       deadline,
       recovery,
       submit
     );
+    this.appendStudentContextRefresh(section);
     return section;
+  }
+
+  private appendStudentContextRefresh(section: HTMLElement): void {
+    const refresh = button('刷新课堂信息');
+    const refreshing = this.studentContextRefreshInFlight !== null;
+    refresh.disabled = refreshing;
+    if (refreshing) refresh.setAttribute('aria-busy', 'true');
+    refresh.addEventListener('click', () => {
+      void this.refreshStudentClassroomContext();
+    });
+    section.appendChild(refresh);
+    if (this.studentContextFeedback) {
+      const feedback = node('p', 'jp-BehaviorAudit-notice');
+      feedback.setAttribute('role', 'status');
+      feedback.textContent = this.studentContextFeedback;
+      section.appendChild(feedback);
+    }
   }
 
   private classroomBriefSection(): HTMLElement | null {

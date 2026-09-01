@@ -35,6 +35,10 @@ const capture = {
   stop: jest.fn()
 } as unknown as IBehaviorCaptureController;
 
+beforeEach(() => {
+  jest.clearAllMocks();
+});
+
 const studentContext: IPlatformContext = {
   ...LOCAL_PLATFORM_CONTEXT,
   mode: 'student',
@@ -65,7 +69,22 @@ const studentContext: IPlatformContext = {
           entrypoint: 'calculate_average'
         }
       },
-      knowledge_points: [],
+      knowledge_points: [
+        {
+          id: 'KP_B2C3D4E5',
+          name: '边界条件处理',
+          description: '处理空输入与除零。',
+          source: 'teacher',
+          order: 1
+        },
+        {
+          id: 'KP_A1B2C3D4',
+          name: '平均值计算',
+          description: '使用总和除以元素数量。',
+          source: 'teacher',
+          order: 0
+        }
+      ],
       assessment_tests: [],
       confirmations: { knowledge_points_hash: null, tests_hash: null },
       dimensions: [],
@@ -78,6 +97,109 @@ const studentContext: IPlatformContext = {
     last_sync_at: '2026-08-12T08:00:00Z'
   }
 };
+
+function createStudentSidebar(
+  context: IPlatformContext = studentContext,
+  overrides: object = {}
+): BehaviorAnalysisSidebar {
+  const dependencies = Object.assign(
+    sidebarDependencies(
+      settings,
+      capture,
+      {
+        openProfileEditor: jest.fn(),
+        openDataFile: jest.fn(),
+        confirmClearAIKey: jest.fn(),
+        getStoredActiveSession: jest.fn(),
+        openLogFolder: jest.fn(),
+        openSessionLog: jest.fn(),
+        downloadSessionLog: jest.fn()
+      },
+      context
+    ),
+    overrides
+  );
+  return new BehaviorAnalysisSidebar(dependencies);
+}
+
+function findButton(
+  sidebar: BehaviorAnalysisSidebar,
+  label: string
+): HTMLButtonElement {
+  const found = Array.from(
+    sidebar.node.querySelectorAll<HTMLButtonElement>('button')
+  ).find(value => value.textContent === label);
+  if (!found) throw new Error(`Missing button: ${label}`);
+  return found;
+}
+
+async function flushPromises(): Promise<void> {
+  for (let index = 0; index < 16; index += 1) {
+    await Promise.resolve();
+  }
+  await new Promise(resolve => setTimeout(resolve, 0));
+}
+
+it('renders published knowledge points in teacher order', () => {
+  const sidebar = createStudentSidebar();
+  const text = sidebar.node.textContent ?? '';
+
+  expect(text).toContain('本次实验知识点');
+  expect(text.indexOf('平均值计算')).toBeLessThan(text.indexOf('边界条件处理'));
+  expect(text).toContain('使用总和除以元素数量。');
+  expect(text).not.toContain('创建题目考核方案');
+  sidebar.dispose();
+});
+
+it('keeps the latest snapshot when a refresh fails', async () => {
+  const refreshPlatformContext = jest.fn(() =>
+    Promise.reject(new Error('offline'))
+  );
+  const sidebar = createStudentSidebar(studentContext, {
+    refreshPlatformContext
+  });
+
+  findButton(sidebar, '刷新课堂信息').click();
+  await flushPromises();
+
+  expect(refreshPlatformContext).toHaveBeenCalledWith(settings);
+  expect(sidebar.node.textContent).toContain('平均值计算');
+  expect(sidebar.node.textContent).toContain('知识点暂时无法加载，请重试');
+  expect(findButton(sidebar, '提交本节简报')).toBeDefined();
+  sidebar.dispose();
+});
+
+it('does not leave student mode when refresh returns a local context', async () => {
+  const refreshPlatformContext = jest.fn(async () => LOCAL_PLATFORM_CONTEXT);
+  const sidebar = createStudentSidebar(studentContext, {
+    refreshPlatformContext
+  });
+
+  findButton(sidebar, '刷新课堂信息').click();
+  await flushPromises();
+
+  expect(sidebar.node.textContent).toContain('平均值计算');
+  expect(sidebar.node.textContent).toContain('知识点暂时无法加载，请重试');
+  expect(sidebar.node.textContent).not.toContain('创建题目考核方案');
+  sidebar.dispose();
+});
+
+it('shows a neutral error for a malformed knowledge-point snapshot', () => {
+  const malformedContext = {
+    ...studentContext,
+    classroom_session: {
+      ...studentContext.classroom_session!,
+      profile: {
+        ...studentContext.classroom_session!.profile,
+        knowledge_points: [{ name: '缺少必须字段' }]
+      }
+    }
+  } as unknown as IPlatformContext;
+  const sidebar = createStudentSidebar(malformedContext);
+
+  expect(sidebar.node.textContent).toContain('知识点暂时无法加载，请重试');
+  sidebar.dispose();
+});
 
 it('renders only the classroom task card in student mode and never loads teacher tools', () => {
   const dependencies = sidebarDependencies(

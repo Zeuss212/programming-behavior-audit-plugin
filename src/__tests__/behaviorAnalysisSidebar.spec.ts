@@ -313,6 +313,7 @@ function dependencies(
   return {
     settings,
     capture,
+    refreshPlatformContext: jest.fn(),
     listProfiles: jest.fn(async () => profiles),
     getProfileVersion: jest.fn(async () => profile),
     getAnalysisJob: jest.fn(),

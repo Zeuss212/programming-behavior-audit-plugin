@@ -38,6 +38,9 @@ REQUIRED_TASK_12_MARKERS = (
     "ai_provider_timeout",
     "ai_response_invalid",
     "最长约 180 秒",
+    "本次实验知识点",
+    "刷新课堂信息",
+    "知识点暂时无法加载，请重试",
 )
 
 FORBIDDEN_STALE_OR_PRIVATE_MARKERS = (

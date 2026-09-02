@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from classroom_sync.canonical import sha256_json
@@ -20,7 +21,9 @@ from classroom_sync.errors import (
     ValidationError,
 )
 from classroom_sync.models import (
+    AssessmentConfig,
     AuditEvent,
+    ExperimentAssessmentConfig,
     PlanAuthoringSession,
     PlanDraft,
     PlanSeries,
@@ -267,7 +270,22 @@ class PlanService:
                 draft.scheduled_start_at
             )
             scheduled_end_at = self._utc_storage_instant(draft.scheduled_end_at)
-            assessment_model = repository.get_assessment_config(draft.id, for_update=True)
+            experiment_assessment_model = session.scalar(
+                select(ExperimentAssessmentConfig)
+                .where(
+                    ExperimentAssessmentConfig.space_id == draft.space_id,
+                    ExperimentAssessmentConfig.parent_algorithm_id
+                    == draft.parent_algorithm_id,
+                )
+                .with_for_update()
+            )
+            assessment_model: AssessmentConfig | ExperimentAssessmentConfig | None = (
+                experiment_assessment_model
+            )
+            if assessment_model is None:
+                assessment_model = repository.get_assessment_config(
+                    draft.id, for_update=True
+                )
             assessment_snapshot: dict[str, object] | None = None
             content_schema_version = 1
             if assessment_model is not None:

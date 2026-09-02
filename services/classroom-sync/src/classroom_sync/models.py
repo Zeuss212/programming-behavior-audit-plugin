@@ -54,6 +54,43 @@ class PlanSeries(Base):
     latest_version: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
+class ExperimentResource(Base):
+    """One private, teacher-owned resource staged for an experiment."""
+
+    __tablename__ = "experiment_resources"
+    __table_args__ = (
+        UniqueConstraint(
+            "space_id",
+            "parent_algorithm_id",
+            "resource_kind",
+            "filename",
+            "content_sha256",
+            name="uq_experiment_resources_scope_kind_name_hash",
+        ),
+        Index(
+            "ix_experiment_resources_scope_kind_created",
+            "space_id",
+            "parent_algorithm_id",
+            "resource_kind",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    space_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    parent_algorithm_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    teacher_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    resource_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    download_only: Mapped[bool] = mapped_column(nullable=False)
+    object_key: Mapped[str] = mapped_column(String(512), nullable=False, unique=True)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class PlanDraft(Base):
     __tablename__ = "plan_drafts"
     __table_args__ = (
@@ -96,6 +133,31 @@ class AssessmentConfig(Base):
         ForeignKey("plan_drafts.id", ondelete="RESTRICT"),
         primary_key=True,
     )
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    config_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    monitoring_scopes: Mapped[dict[str, bool]] = mapped_column(JSON, nullable=False)
+    evaluation_dimensions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ExperimentAssessmentConfig(Base):
+    """Assessment content bound directly to one experiment scope."""
+
+    __tablename__ = "experiment_assessment_configs"
+    __table_args__ = (
+        UniqueConstraint(
+            "space_id",
+            "parent_algorithm_id",
+            name="uq_experiment_assessment_configs_scope",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    space_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    parent_algorithm_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    experiment_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    teacher_id: Mapped[str] = mapped_column(String(128), nullable=False)
     schema_version: Mapped[int] = mapped_column(Integer, nullable=False)
     config_revision: Mapped[int] = mapped_column(Integer, nullable=False)
     monitoring_scopes: Mapped[dict[str, bool]] = mapped_column(JSON, nullable=False)

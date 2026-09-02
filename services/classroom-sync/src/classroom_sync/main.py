@@ -21,9 +21,11 @@ from .routers.assessment_configs import (
 )
 from .routers.authoring import router as authoring_router
 from .routers.events import router as events_router
+from .routers.experiment_assessment_configs import router as experiment_assessment_configs_router
 from .routers.materials import router as materials_router
 from .routers.plans import router as plans_router
 from .routers.plugin import router as plugin_router
+from .routers.resources import router as resources_router
 from .routers.student import router as student_router
 from .routers.suggestions import router as suggestions_router
 from .routers.teacher import router as teacher_router
@@ -121,5 +123,7 @@ def create_app(
         app.include_router(suggestions_router)
         app.include_router(events_router)
         app.include_router(materials_router)
+        app.include_router(resources_router)
+        app.include_router(experiment_assessment_configs_router)
 
     return app

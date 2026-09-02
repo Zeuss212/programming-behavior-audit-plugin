@@ -13,6 +13,10 @@ from classroom_sync.services.assignments import AssignmentService
 from classroom_sync.services.brief_analysis import BriefAnalysisJobService
 from classroom_sync.services.briefs import BriefService
 from classroom_sync.services.deadlines import DeadlineService
+from classroom_sync.services.experiment_assessment_configs import (
+    ExperimentAssessmentConfigService,
+)
+from classroom_sync.services.experiment_resources import ExperimentResourceService
 from classroom_sync.services.plan_authoring import PlanAuthoringService
 from classroom_sync.services.plan_suggestion_jobs import PlanSuggestionJobService
 from classroom_sync.services.plan_suggestions import PlanSuggestion, PlanSuggestionInput
@@ -58,4 +62,6 @@ class ClassroomServices:
     brief_analysis_service: BriefAnalysisJobService | None = None
     assessment_material_service: AssessmentMaterialService | None = None
     assessment_config_service: AssessmentConfigService | None = None
+    experiment_resource_service: ExperimentResourceService | None = None
+    experiment_assessment_config_service: ExperimentAssessmentConfigService | None = None
     shutdown: Callable[[], None] | None = None

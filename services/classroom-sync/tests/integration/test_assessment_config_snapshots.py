@@ -11,11 +11,19 @@ from sqlalchemy.orm import sessionmaker
 from classroom_sync.domain.schemas import ClassroomSchemaRegistry
 from classroom_sync.models import Base
 from classroom_sync.services.assessment_configs import AssessmentConfigService
+from classroom_sync.services.experiment_assessment_configs import (
+    ExperimentAssessmentConfigService,
+)
 from classroom_sync.services.plans import PlanDraftInput, PlanService
 from tests.integration.test_plan_assignment_flow import profile_draft
 
 
-def services() -> tuple[PlanService, AssessmentConfigService, datetime]:
+def services() -> tuple[
+    PlanService,
+    AssessmentConfigService,
+    ExperimentAssessmentConfigService,
+    datetime,
+]:
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
     session_factory = sessionmaker(bind=engine, expire_on_commit=False)
@@ -25,6 +33,7 @@ def services() -> tuple[PlanService, AssessmentConfigService, datetime]:
     return (
         PlanService(session_factory, schemas, clock=lambda: now),
         AssessmentConfigService(session_factory, clock=lambda: now),
+        ExperimentAssessmentConfigService(session_factory, clock=lambda: now),
         now,
     )
 
@@ -45,7 +54,7 @@ def create_draft(plan_service: PlanService, now: datetime):
 
 
 def test_saved_config_is_frozen_into_schema_v2_and_not_mutated_later() -> None:
-    plan_service, config_service, now = services()
+    plan_service, config_service, _experiment_config_service, now = services()
     draft = create_draft(plan_service, now)
     initial = config_service.get_or_create(draft.id, teacher_id="teacher-1")
     first_saved = config_service.update(
@@ -113,10 +122,28 @@ def test_saved_config_is_frozen_into_schema_v2_and_not_mutated_later() -> None:
 
 
 def test_legacy_draft_without_config_keeps_schema_v1_publication() -> None:
-    plan_service, _config_service, now = services()
+    plan_service, _config_service, _experiment_config_service, now = services()
     draft = create_draft(plan_service, now)
 
     published = plan_service.publish_draft(draft.id, teacher_id="teacher-1")
 
     assert published.content_schema_version == 1
     assert published.assessment_config is None
+
+
+def test_independent_experiment_config_is_snapshotted_when_classroom_is_later_published() -> None:
+    plan_service, _legacy_config_service, experiment_config_service, now = services()
+    experiment_config_service.ensure(
+        space_id="space-1",
+        parent_algorithm_id="parent-1",
+        experiment_name="字典课堂练习",
+        teacher_id="teacher-1",
+    )
+    draft = create_draft(plan_service, now)
+
+    published = plan_service.publish_draft(draft.id, teacher_id="teacher-1")
+
+    assert published.content_schema_version == 2
+    assert published.assessment_config is not None
+    assert published.assessment_config["total_bps"] == 10000
+    assert len(published.assessment_config["evaluation_dimensions"]) == 5

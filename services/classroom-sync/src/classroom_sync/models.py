@@ -166,6 +166,31 @@ class ExperimentAssessmentConfig(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class ExperimentPublicationContext(Base):
+    """Creation-time data required to publish an experiment as a classroom."""
+
+    __tablename__ = "experiment_publication_contexts"
+    __table_args__ = (
+        UniqueConstraint(
+            "space_id",
+            "parent_algorithm_id",
+            name="uq_experiment_publication_contexts_scope",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    space_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    parent_algorithm_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    experiment_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    statement: Mapped[str] = mapped_column(String(10000), nullable=False)
+    scheduled_start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    scheduled_end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ai_policy: Mapped[str] = mapped_column(String(32), nullable=False)
+    teacher_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class PlanVersion(Base):
     __tablename__ = "plan_versions"
     __table_args__ = (
@@ -283,8 +308,12 @@ class MonitorSession(Base):
     scheduled_end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     actual_end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     evidence_cutoff_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    last_activity_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_activity_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     last_contiguous_sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     missing_ranges: Mapped[list[dict[str, int]]] = mapped_column(JSON, nullable=False)
     completeness: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -296,7 +325,9 @@ class MonitorSession(Base):
 
 class EvidenceChunk(Base):
     __tablename__ = "evidence_chunks"
-    __table_args__ = (UniqueConstraint("session_id", "sequence", name="uq_evidence_chunks_sequence"),)
+    __table_args__ = (
+        UniqueConstraint("session_id", "sequence", name="uq_evidence_chunks_sequence"),
+    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     session_id: Mapped[str] = mapped_column(
@@ -358,7 +389,9 @@ class ClassroomBriefAnalysisJob(Base):
     run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     lease_owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     attempts: Mapped[int] = mapped_column(Integer, nullable=False)
     failure_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -401,7 +434,9 @@ class ClassroomPlanSuggestionJob(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     active_slot: Mapped[int | None] = mapped_column(Integer, nullable=True)
     lease_owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     attempts: Mapped[int] = mapped_column(Integer, nullable=False)
     failure_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -431,7 +466,9 @@ class ClassroomDeadlineJob(Base):
     run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     lease_owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     attempts: Mapped[int] = mapped_column(Integer, nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

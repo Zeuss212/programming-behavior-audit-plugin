@@ -35,6 +35,7 @@ from classroom_sync.services.deadlines import DeadlineService
 from classroom_sync.services.experiment_assessment_configs import (
     ExperimentAssessmentConfigService,
 )
+from classroom_sync.services.experiment_publications import ExperimentPublicationService
 from classroom_sync.services.experiment_resources import ExperimentResourceService
 from classroom_sync.services.plan_authoring import PlanAuthoringService
 from classroom_sync.services.plan_suggestion_jobs import PlanSuggestionJobService
@@ -187,6 +188,13 @@ def create_runtime_services(settings: Settings) -> ClassroomServices:
         plan_suggestion_job_service,
         clock=utc_now,
     )
+    experiment_publication_service = ExperimentPublicationService(
+        session_factory,
+        plan_service=plan_service,
+        plan_authoring_service=plan_authoring_service,
+        assignment_service=assignment_service,
+        clock=utc_now,
+    )
     return ClassroomServices(
         identity_gateway=identity_gateway,
         plan_service=plan_service,
@@ -203,6 +211,7 @@ def create_runtime_services(settings: Settings) -> ClassroomServices:
         assessment_config_service=assessment_config_service,
         experiment_resource_service=experiment_resource_service,
         experiment_assessment_config_service=experiment_assessment_config_service,
+        experiment_publication_service=experiment_publication_service,
         shutdown=fincolab_client.close,
     )
 

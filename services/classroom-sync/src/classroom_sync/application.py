@@ -16,6 +16,7 @@ from classroom_sync.services.deadlines import DeadlineService
 from classroom_sync.services.experiment_assessment_configs import (
     ExperimentAssessmentConfigService,
 )
+from classroom_sync.services.experiment_publications import ExperimentPublicationService
 from classroom_sync.services.experiment_resources import ExperimentResourceService
 from classroom_sync.services.plan_authoring import PlanAuthoringService
 from classroom_sync.services.plan_suggestion_jobs import PlanSuggestionJobService
@@ -64,4 +65,5 @@ class ClassroomServices:
     assessment_config_service: AssessmentConfigService | None = None
     experiment_resource_service: ExperimentResourceService | None = None
     experiment_assessment_config_service: ExperimentAssessmentConfigService | None = None
+    experiment_publication_service: ExperimentPublicationService | None = None
     shutdown: Callable[[], None] | None = None

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Header, Request
@@ -13,6 +14,7 @@ from classroom_sync.services.experiment_assessment_configs import (
     ExperimentAssessmentConfigService,
     ExperimentAssessmentConfigSnapshot,
 )
+from classroom_sync.services.experiment_publications import ExperimentPublicationService
 
 router = APIRouter(prefix="/v1/classroom/experiments", tags=["classroom-teacher"])
 
@@ -29,12 +31,26 @@ class UpdateExperimentAssessmentConfigRequest(EnsureExperimentAssessmentConfigRe
     evaluation_dimensions: list[dict[str, object]]
 
 
+class UpsertExperimentPublicationContextRequest(EnsureExperimentAssessmentConfigRequest):
+    statement: str = Field(min_length=1, max_length=10_000)
+    scheduled_start_at: datetime
+    scheduled_end_at: datetime
+    ai_policy: str = Field(pattern="^(prohibited|allowed)$")
+
+
 def service(request: Request) -> ExperimentAssessmentConfigService:
     configured = get_services(request).experiment_assessment_config_service
     if configured is None:
         raise UpstreamUnavailableError(
             "experiment_assessment_configs_not_configured", retryable=False
         )
+    return configured
+
+
+def publication_service(request: Request) -> ExperimentPublicationService:
+    configured = get_services(request).experiment_publication_service
+    if configured is None:
+        raise UpstreamUnavailableError("experiment_publications_not_configured", retryable=False)
     return configured
 
 
@@ -118,3 +134,59 @@ def update_config(
             evaluation_dimensions=payload.evaluation_dimensions,
         )
     )
+
+
+@router.put("/{space_id}/{parent_algorithm_id}/publication-context")
+def upsert_publication_context(
+    space_id: str,
+    parent_algorithm_id: str,
+    payload: UpsertExperimentPublicationContextRequest,
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, object]:
+    teacher_id = authorize(request, authorization, space_id, parent_algorithm_id)
+    context = publication_service(request).upsert_context(
+        space_id=space_id,
+        parent_algorithm_id=parent_algorithm_id,
+        experiment_name=payload.experiment_name,
+        statement=payload.statement,
+        scheduled_start_at=payload.scheduled_start_at,
+        scheduled_end_at=payload.scheduled_end_at,
+        ai_policy=payload.ai_policy,
+        teacher_id=teacher_id,
+    )
+    return {
+        "space_id": context.space_id,
+        "parent_algorithm_id": context.parent_algorithm_id,
+        "experiment_name": context.experiment_name,
+        "statement": context.statement,
+        "scheduled_start_at": context.scheduled_start_at,
+        "scheduled_end_at": context.scheduled_end_at,
+        "ai_policy": context.ai_policy,
+    }
+
+
+@router.post("/{space_id}/{parent_algorithm_id}/assessment-publication")
+def publish_assessment(
+    space_id: str,
+    parent_algorithm_id: str,
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, object]:
+    teacher_id = authorize(request, authorization, space_id, parent_algorithm_id)
+    services = get_services(request)
+    principal = resolve_bearer_principal(services, authorization)
+    published = publication_service(request).publish_assessment(
+        space_id=space_id,
+        parent_algorithm_id=parent_algorithm_id,
+        teacher_id=teacher_id,
+        roster=services.identity_gateway.list_student_children(
+            principal, space_id, parent_algorithm_id
+        ),
+    )
+    return {
+        "plan_version_id": published.plan_version_id,
+        "plan_id": published.plan_id,
+        "version": published.version,
+        "assignment_count": published.assignment_count,
+    }

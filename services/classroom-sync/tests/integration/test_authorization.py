@@ -3,7 +3,11 @@ from collections.abc import Callable
 import httpx
 import pytest
 
-from classroom_sync.auth.fincolab import FincolabIdentityGateway
+from classroom_sync.auth.fincolab import (
+    FincolabIdentityGateway,
+    Principal,
+    StudentChildExperiment,
+)
 from classroom_sync.errors import (
     AuthenticationError,
     AuthorizationError,
@@ -211,3 +215,43 @@ def test_duplicate_child_projects_are_quarantined_instead_of_auto_assigned():
 
     with pytest.raises(RosterConflictError, match="duplicate_student_child"):
         identity_gateway.list_student_children(principal, "space-1", "parent-1")
+
+
+def test_teacher_owned_v1_child_binds_the_marked_roster_student():
+    """Teacher-created BAMS children must be assigned to the student in their marker."""
+
+    description = (
+        "[FINCOLAB_PARENT_PROJECT_ID:parent-1]"
+        "[FINCOLAB_STUDENT_BINDING_V1:"
+        "eyJwYXJlbnRfYWxnb3JpdGhtX2lkIjoicGFyZW50LTEiLCJzcGFjZV9pZCI6InNwYWNlLTEiLCJzdHVkZW50X2lkIjoic3R1ZGVudC0xIiwic3R1ZGVudF91c2VybmFtZSI6InN0dWRlbnQtYSJ9]"
+    )
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/users"):
+            return httpx.Response(
+                200,
+                json=member_response(
+                    {"id": "teacher-1", "username": "teacher-a", "role_name": "teacher"},
+                    {"id": "student-1", "username": "student-a", "role_name": "student"},
+                ),
+            )
+        if request.url.path.endswith("/algorithm_development"):
+            return httpx.Response(
+                200,
+                json=member_response({
+                    "id": "child-1",
+                    "name": "exp-student-a-a1b2",
+                    "username": "teacher-a",
+                    "description": description,
+                    "workbench_id": "workbench-1",
+                }),
+            )
+        raise AssertionError(request.url)
+
+    roster = gateway(responder).list_student_children(
+        Principal("teacher-1", "teacher-a", "token"), "space-1", "parent-1"
+    )
+
+    assert roster == (
+        StudentChildExperiment("student-1", "student-a", "child-1", "workbench-1"),
+    )

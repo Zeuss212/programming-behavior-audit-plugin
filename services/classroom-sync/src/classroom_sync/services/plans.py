@@ -24,6 +24,7 @@ from classroom_sync.models import (
     AssessmentConfig,
     AuditEvent,
     ExperimentAssessmentConfig,
+    ExperimentPlanBinding,
     PlanAuthoringSession,
     PlanDraft,
     PlanSeries,
@@ -161,6 +162,10 @@ class PlanService:
                 raise NotFoundError("plan_draft_not_found")
             if draft.teacher_id != teacher_id:
                 raise AuthorizationError("plan_draft_owner_mismatch")
+            repository.lock_plan_scope(
+                draft.space_id,
+                draft.parent_algorithm_id,
+            )
             if expected_revision is not None and draft.revision != expected_revision:
                 raise ConflictError("plan_draft_revision_conflict")
             if title is not None:
@@ -209,6 +214,10 @@ class PlanService:
                 raise NotFoundError("plan_draft_not_found")
             if draft.teacher_id != teacher_id:
                 raise AuthorizationError("plan_draft_owner_mismatch")
+            repository.lock_plan_scope(
+                draft.space_id,
+                draft.parent_algorithm_id,
+            )
 
             is_v3 = draft.profile.get("schema_version") == 3
             authoring: PlanAuthoringSession | None = None
@@ -230,6 +239,13 @@ class PlanService:
                 raise ConflictError("plan_series_not_found")
             existing = repository.get_plan_version_for_source(draft.id, draft.revision)
             if existing is not None:
+                self._bind_experiment(
+                    session,
+                    repository,
+                    plan_version=existing,
+                    teacher_id=teacher_id,
+                    now=now,
+                )
                 if authoring is not None and authoring.status == "open":
                     self._close_authoring(authoring, draft=draft, now=now)
                 return existing
@@ -340,6 +356,13 @@ class PlanService:
             session.add(plan_version)
             series.latest_version = version
             session.flush()
+            self._bind_experiment(
+                session,
+                repository,
+                plan_version=plan_version,
+                teacher_id=teacher_id,
+                now=now,
+            )
             draft.published_revision = draft.revision
             if authoring is not None:
                 self._close_authoring(authoring, draft=draft, now=now)
@@ -354,6 +377,39 @@ class PlanService:
             if plan_version is None:
                 raise NotFoundError("plan_version_not_found")
             return plan_version
+
+    @staticmethod
+    def _bind_experiment(
+        session: Session,
+        repository: ClassroomRepository,
+        *,
+        plan_version: PlanVersion,
+        teacher_id: str,
+        now: datetime,
+    ) -> None:
+        binding = repository.get_binding(
+            plan_version.space_id,
+            plan_version.parent_algorithm_id,
+            for_update=True,
+        )
+        if binding is None:
+            session.add(
+                ExperimentPlanBinding(
+                    id=str(uuid4()),
+                    space_id=plan_version.space_id,
+                    parent_algorithm_id=plan_version.parent_algorithm_id,
+                    plan_id=plan_version.plan_id,
+                    plan_version=plan_version.version,
+                    teacher_id=teacher_id,
+                    created_at=now,
+                    updated_at=None,
+                )
+            )
+            return
+        binding.plan_id = plan_version.plan_id
+        binding.plan_version = plan_version.version
+        binding.teacher_id = teacher_id
+        binding.updated_at = now
 
     def _validate_draft(self, draft: PlanDraft) -> None:
         self._schema_registry.validate(

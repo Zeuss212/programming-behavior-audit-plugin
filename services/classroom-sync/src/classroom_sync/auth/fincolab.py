@@ -10,6 +10,11 @@ from time import monotonic
 
 import httpx
 
+from classroom_sync.auth.student_binding import (
+    parse_legacy_child_name,
+    parse_student_binding_description,
+    safe_legacy_key,
+)
 from classroom_sync.errors import (
     AuthenticationError,
     AuthorizationError,
@@ -20,7 +25,7 @@ from classroom_sync.errors import (
 
 TEACHER_ROLE_NAMES = frozenset({"teacher", "admin", "administrator", "owner", "manager"})
 STUDENT_ROLE_NAMES = frozenset({"student"})
-PARENT_PROJECT_PATTERN = re.compile(r"^\[FINCOLAB_PARENT_PROJECT_ID:([^\]]+)\]")
+PARENT_PROJECT_PATTERN = re.compile(r"^\[FINCOLAB_PARENT_PROJECT_ID:([^\]\r\n]+)\]")
 
 
 @dataclass(frozen=True)
@@ -56,12 +61,14 @@ class FincolabIdentityGateway:
         base_url: str,
         organization_id: str,
         client: httpx.Client,
+        student_project_name_prefix: str = "exp",
         cache_ttl_seconds: float = 30.0,
         clock: Callable[[], float] = monotonic,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._organization_id = organization_id
         self._client = client
+        self._student_project_name_prefix = student_project_name_prefix
         self._cache_ttl_seconds = cache_ttl_seconds
         self._clock = clock
         self._principals_by_token_hash: dict[str, tuple[float, Principal]] = {}
@@ -125,17 +132,26 @@ class FincolabIdentityGateway:
     ) -> tuple[StudentChildExperiment, ...]:
         """Return one verified child experiment per student, or fail closed on conflicts."""
 
-        student_members = {
-            member.username: member
+        students_by_id = {
+            member.user_id: member
             for member in self._list_space_members(principal.bearer_token, space_id)
             if member.role_name.casefold() in STUDENT_ROLE_NAMES
         }
+        students_by_username = {member.username: member for member in students_by_id.values()}
+        legacy_students_by_key: dict[str, SpaceMember] = {}
+        for member in students_by_id.values():
+            key = safe_legacy_key(member.username)
+            if key in legacy_students_by_key:
+                raise RosterConflictError("legacy_safe_key_collision")
+            legacy_students_by_key[key] = member
         projects = self._list_paginated(
             f"/v1/spaces/{space_id}/algorithm_development", principal.bearer_token
         )
 
         children: list[StudentChildExperiment] = []
-        child_by_student_id: dict[str, StudentChildExperiment] = {}
+        seen_student_ids: set[str] = set()
+        seen_child_ids: set[str] = set()
+        seen_workbench_ids: set[str] = set()
         for project in projects:
             description = project.get("description")
             if not isinstance(description, str):
@@ -144,24 +160,56 @@ class FincolabIdentityGateway:
             if parent_match is None or parent_match.group(1) != parent_algorithm_id:
                 continue
 
-            owner_username = self._required_string(
-                project, "username", "child_owner_unverified"
-            )
-            member = student_members.get(owner_username)
-            if member is None:
-                raise UpstreamContractError("child_owner_not_student_member")
+            binding = parse_student_binding_description(description)
+            if binding is None:
+                name = project.get("name")
+                legacy_key = (
+                    parse_legacy_child_name(name, self._student_project_name_prefix)
+                    if isinstance(name, str)
+                    else None
+                )
+                if legacy_key is not None:
+                    member = legacy_students_by_key.get(legacy_key)
+                    if member is None:
+                        continue
+                else:
+                    owner = project.get("username")
+                    if not isinstance(owner, str) or not owner.strip():
+                        raise UpstreamContractError("child_owner_unverified")
+                    member = students_by_username.get(owner)
+                    if member is None:
+                        raise UpstreamContractError("child_owner_not_student_member")
+            else:
+                if binding.space_id != space_id:
+                    raise RosterConflictError("student_binding_space_mismatch")
+                if binding.parent_algorithm_id != parent_algorithm_id:
+                    raise RosterConflictError("student_binding_parent_mismatch")
+                member = students_by_id.get(binding.student_id)
+                if member is None:
+                    raise RosterConflictError("student_binding_student_not_in_roster")
+                if member.username != binding.student_username:
+                    raise RosterConflictError("student_binding_username_mismatch")
 
-            child = StudentChildExperiment(
-                student_id=member.user_id,
-                student_username=member.username,
-                child_algorithm_id=self._required_string(
-                    project, "id", "child_algorithm_missing_id"
-                ),
-                workbench_id=self._required_string(project, "workbench_id", "child_workbench_unverified"),
-            )
-            if child.student_id in child_by_student_id:
+            child_id = self._required_string(project, "id", "child_algorithm_missing_id")
+            workbench_id = self._required_string(project, "workbench_id", "child_workbench_unverified")
+            owner_username = project.get("username")
+            if not isinstance(owner_username, str) or not owner_username.strip():
+                detail = self._request_object(
+                    f"/v1/spaces/{space_id}/algorithm_development/{child_id}", principal.bearer_token
+                )
+                owner_username = self._required_string(detail, "username", "child_owner_unverified")
+            if owner_username not in {principal.username, member.username}:
+                raise RosterConflictError("child_owner_contract_conflict")
+            child = StudentChildExperiment(member.user_id, member.username, child_id, workbench_id)
+            if child.student_id in seen_student_ids:
                 raise RosterConflictError("duplicate_student_child")
-            child_by_student_id[child.student_id] = child
+            if child.child_algorithm_id in seen_child_ids:
+                raise RosterConflictError("duplicate_child_algorithm")
+            if child.workbench_id in seen_workbench_ids:
+                raise RosterConflictError("duplicate_workbench")
+            seen_student_ids.add(child.student_id)
+            seen_child_ids.add(child.child_algorithm_id)
+            seen_workbench_ids.add(child.workbench_id)
             children.append(child)
 
         return tuple(children)

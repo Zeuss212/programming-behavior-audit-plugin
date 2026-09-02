@@ -42,7 +42,12 @@ class ClassroomReadService:
             repository = ClassroomRepository(session)
             binding = repository.get_binding(space_id, parent_algorithm_id)
             if binding is None:
-                raise NotFoundError("experiment_plan_binding_not_found")
+                plan_version = repository.get_latest_plan_version_for_scope(
+                    space_id, parent_algorithm_id
+                )
+                if plan_version is None:
+                    raise NotFoundError("experiment_plan_binding_not_found")
+                return self._plan_summary(plan_version)
             plan_version = repository.get_plan_version(binding.plan_id, binding.plan_version)
             if plan_version is None:
                 raise NotFoundError("plan_version_not_found")

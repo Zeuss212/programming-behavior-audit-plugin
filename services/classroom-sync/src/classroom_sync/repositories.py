@@ -152,6 +152,19 @@ class ClassroomRepository:
     def get_plan_version_by_id(self, plan_version_id: str) -> PlanVersion | None:
         return self.session.get(PlanVersion, plan_version_id)
 
+    def get_latest_plan_version_for_scope(
+        self, space_id: str, parent_algorithm_id: str
+    ) -> PlanVersion | None:
+        return self.session.scalar(
+            select(PlanVersion)
+            .where(
+                PlanVersion.space_id == space_id,
+                PlanVersion.parent_algorithm_id == parent_algorithm_id,
+            )
+            .order_by(PlanVersion.published_at.desc(), PlanVersion.version.desc())
+            .limit(1)
+        )
+
     def list_plan_versions(self, plan_keys: list[tuple[str, int]]) -> list[PlanVersion]:
         if not plan_keys:
             return []

@@ -145,7 +145,9 @@ class FincolabIdentityGateway:
                 raise RosterConflictError("legacy_safe_key_collision")
             legacy_students_by_key[key] = member
         projects = self._list_paginated(
-            f"/v1/spaces/{space_id}/algorithm_development", principal.bearer_token
+            f"/v1/spaces/{space_id}/algorithm_development",
+            principal.bearer_token,
+            search_term="",
         )
 
         children: list[StudentChildExperiment] = []
@@ -236,13 +238,22 @@ class FincolabIdentityGateway:
             )
         return tuple(members)
 
-    def _list_paginated(self, path: str, bearer_token: str) -> tuple[dict[str, object], ...]:
+    def _list_paginated(
+        self,
+        path: str,
+        bearer_token: str,
+        *,
+        search_term: str | None = None,
+    ) -> tuple[dict[str, object], ...]:
         expected_total_pages: int | None = None
         page = 1
         rows: list[dict[str, object]] = []
 
         while expected_total_pages is None or page <= expected_total_pages:
-            response = self._request_object(path, bearer_token, params={"limit": 100, "page": page})
+            params: dict[str, int | str] = {"limit": 100, "page": page}
+            if search_term is not None:
+                params["q"] = search_term
+            response = self._request_object(path, bearer_token, params=params)
             raw_rows = response.get("data")
             if not isinstance(raw_rows, list):
                 raise UpstreamContractError("upstream_pagination_incomplete")
@@ -268,7 +279,7 @@ class FincolabIdentityGateway:
         path: str,
         bearer_token: str,
         *,
-        params: dict[str, int] | None = None,
+        params: dict[str, int | str] | None = None,
     ) -> dict[str, object]:
         try:
             response = self._client.get(

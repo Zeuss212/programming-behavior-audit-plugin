@@ -141,6 +141,44 @@ def test_student_membership_reads_all_pages_before_authorizing():
     assert requested_pages == ["1", "2"]
 
 
+def test_student_roster_query_includes_the_empty_bams_search_term() -> None:
+    """BAMS rejects its algorithm list endpoint when the required search term is omitted."""
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/organizations/org-1/spaces/space-1/users":
+            return httpx.Response(
+                200,
+                json=member_response(
+                    {"id": "teacher-1", "username": "teacher-a", "role_name": "teacher"},
+                    {"id": "student-1", "username": "student-a", "role_name": "student"},
+                ),
+            )
+        if request.url.path == "/v1/spaces/space-1/algorithm_development":
+            if request.url.params.get("q") != "":
+                return httpx.Response(503, json={"detail": "q is required"})
+            return httpx.Response(
+                200,
+                json=member_response(
+                    {
+                        "id": "child-1",
+                        "name": "exp-student-a-a1b2",
+                        "username": "student-a",
+                        "description": "[FINCOLAB_PARENT_PROJECT_ID:parent-1]",
+                        "workbench_id": "workbench-1",
+                    }
+                ),
+            )
+        raise AssertionError(f"Unexpected upstream request: {request.url}")
+
+    roster = gateway(responder).list_student_children(
+        Principal("teacher-1", "teacher-a", "teacher-token"), "space-1", "parent-1"
+    )
+
+    assert roster == (
+        StudentChildExperiment("student-1", "student-a", "child-1", "workbench-1"),
+    )
+
+
 def test_upstream_unauthorized_is_mapped_to_a_client_authentication_error():
     identity_gateway = gateway(lambda _: httpx.Response(401, json={"detail": "expired"}))
 

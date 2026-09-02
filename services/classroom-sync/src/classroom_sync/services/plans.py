@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -266,8 +267,23 @@ class PlanService:
                 draft.scheduled_start_at
             )
             scheduled_end_at = self._utc_storage_instant(draft.scheduled_end_at)
+            assessment_model = repository.get_assessment_config(draft.id, for_update=True)
+            assessment_snapshot: dict[str, object] | None = None
+            content_schema_version = 1
+            if assessment_model is not None:
+                assessment_dimensions = deepcopy(assessment_model.evaluation_dimensions)
+                assessment_snapshot = {
+                    "schema_version": assessment_model.schema_version,
+                    "monitoring_scopes": dict(assessment_model.monitoring_scopes),
+                    "evaluation_dimensions": assessment_dimensions,
+                    "total_bps": sum(
+                        int(dimension["weight_bps"])
+                        for dimension in assessment_dimensions
+                    ),
+                }
+                content_schema_version = 2
             plan_content = {
-                "schema_version": 1,
+                "schema_version": content_schema_version,
                 "plan_id": draft.plan_id,
                 "version": version,
                 "space_id": draft.space_id,
@@ -278,6 +294,8 @@ class PlanService:
                 "ai_policy": draft.ai_policy,
                 "published_at": now.isoformat(),
             }
+            if assessment_snapshot is not None:
+                plan_content["assessment_config"] = assessment_snapshot
             content_hash = sha256_json(plan_content)
             published_contract = {**plan_content, "content_hash": content_hash}
             self._schema_registry.validate("plan-version", published_contract)
@@ -292,6 +310,8 @@ class PlanService:
                 space_id=draft.space_id,
                 parent_algorithm_id=draft.parent_algorithm_id,
                 profile=published_profile,
+                content_schema_version=content_schema_version,
+                assessment_config=assessment_snapshot,
                 content_hash=content_hash,
                 scheduled_start_at=scheduled_start_at,
                 scheduled_end_at=scheduled_end_at,

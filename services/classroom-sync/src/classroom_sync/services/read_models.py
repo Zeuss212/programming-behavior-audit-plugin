@@ -188,7 +188,7 @@ class ClassroomReadService:
 
     @classmethod
     def _plan_summary(cls, plan_version: PlanVersion) -> dict[str, object]:
-        return {
+        response: dict[str, object] = {
             "plan_version_id": plan_version.id,
             "plan_id": plan_version.plan_id,
             "version": plan_version.version,
@@ -199,6 +199,10 @@ class ClassroomReadService:
             "ai_policy": plan_version.ai_policy,
             "published_at": cls._isoformat(plan_version.published_at),
         }
+        if plan_version.assessment_config is not None:
+            response["content_schema_version"] = plan_version.content_schema_version
+            response["assessment_config"] = dict(plan_version.assessment_config)
+        return response
 
     @classmethod
     def _session_summary(cls, monitor_session: MonitorSession | None) -> dict[str, object] | None:

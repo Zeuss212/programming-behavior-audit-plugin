@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from classroom_sync.auth.fincolab import Principal, StudentChildExperiment
+from classroom_sync.services.assessment_configs import AssessmentConfigService
 from classroom_sync.services.assessment_materials import AssessmentMaterialService
 from classroom_sync.services.assignments import AssignmentService
 from classroom_sync.services.brief_analysis import BriefAnalysisJobService
@@ -56,4 +57,5 @@ class ClassroomServices:
     plan_suggestion_job_service: PlanSuggestionJobService | None = None
     brief_analysis_service: BriefAnalysisJobService | None = None
     assessment_material_service: AssessmentMaterialService | None = None
+    assessment_config_service: AssessmentConfigService | None = None
     shutdown: Callable[[], None] | None = None

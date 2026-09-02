@@ -87,6 +87,23 @@ class PlanDraft(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class AssessmentConfig(Base):
+    """Mutable independent scoring configuration owned by one plan draft."""
+
+    __tablename__ = "assessment_configs"
+
+    draft_id: Mapped[str] = mapped_column(
+        ForeignKey("plan_drafts.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    config_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    monitoring_scopes: Mapped[dict[str, bool]] = mapped_column(JSON, nullable=False)
+    evaluation_dimensions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class PlanVersion(Base):
     __tablename__ = "plan_versions"
     __table_args__ = (
@@ -110,6 +127,10 @@ class PlanVersion(Base):
     space_id: Mapped[str] = mapped_column(String(128), nullable=False)
     parent_algorithm_id: Mapped[str] = mapped_column(String(128), nullable=False)
     profile: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    content_schema_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
+    assessment_config: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     scheduled_start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     scheduled_end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

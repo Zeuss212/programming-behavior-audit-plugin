@@ -23,6 +23,7 @@ from classroom_sync.db import create_database_engine, create_session_factory
 from classroom_sync.domain.schemas import ClassroomSchemaRegistry
 from classroom_sync.errors import AiSuggestionUnavailableError
 from classroom_sync.main import create_app
+from classroom_sync.services.assessment_configs import AssessmentConfigService
 from classroom_sync.services.assessment_materials import AssessmentMaterialService
 from classroom_sync.services.assignments import AssignmentService
 from classroom_sync.services.brief_analysis import (
@@ -134,6 +135,7 @@ def create_runtime_services(settings: Settings) -> ClassroomServices:
         )
     )
     plan_service = PlanService(session_factory, schema_registry, clock=utc_now)
+    assessment_config_service = AssessmentConfigService(session_factory, clock=utc_now)
     assignment_service = AssignmentService(session_factory, clock=utc_now)
     brief_service = BriefService(session_factory, schema_registry, clock=utc_now)
     plugin_session_service = PluginSessionService(
@@ -185,6 +187,7 @@ def create_runtime_services(settings: Settings) -> ClassroomServices:
         plan_suggestion_job_service=plan_suggestion_job_service,
         brief_analysis_service=brief_analysis_service,
         assessment_material_service=assessment_material_service,
+        assessment_config_service=assessment_config_service,
         shutdown=fincolab_client.close,
     )
 

@@ -18,6 +18,7 @@ from classroom_sync.models import (
 )
 
 CORE_TABLES = {
+    "assessment_configs",
     "plan_series",
     "plan_drafts",
     "plan_versions",
@@ -33,6 +34,73 @@ CORE_TABLES = {
     "classroom_plan_suggestion_jobs",
     "audit_events",
 }
+
+
+def test_assessment_config_migration_backfills_legacy_plan_schema_version(
+    tmp_path: Path,
+) -> None:
+    database_url = f"sqlite:///{tmp_path / 'assessment-config.db'}"
+    config = migration_config(database_url)
+    command.upgrade(config, "0009_plan_series")
+    engine = create_engine(database_url)
+    metadata = Base.metadata.__class__()
+    metadata.reflect(engine)
+    now = datetime(2026, 9, 2, 4, 0, tzinfo=UTC)
+    with engine.begin() as connection:
+        connection.execute(
+            metadata.tables["plan_versions"].insert(),
+            {
+                "id": "legacy-version",
+                "plan_id": "legacy-plan",
+                "profile_id": "legacy-profile",
+                "version": 1,
+                "source_draft_id": "legacy-draft",
+                "source_draft_revision": 0,
+                "space_id": "space-1",
+                "parent_algorithm_id": "parent-1",
+                "profile": {"schema_version": 2},
+                "content_hash": "a" * 64,
+                "scheduled_start_at": now,
+                "scheduled_end_at": now,
+                "ai_policy": "prohibited",
+                "published_at": now,
+                "teacher_id": "teacher-1",
+            },
+        )
+
+    command.upgrade(config, "head")
+
+    inspector = inspect(engine)
+    assert "assessment_configs" in inspector.get_table_names()
+    assert {column["name"] for column in inspector.get_columns("assessment_configs")} == {
+        "draft_id",
+        "schema_version",
+        "config_revision",
+        "monitoring_scopes",
+        "evaluation_dimensions",
+        "created_at",
+        "updated_at",
+    }
+    assert {column["name"] for column in inspector.get_columns("plan_versions")} >= {
+        "content_schema_version",
+        "assessment_config",
+    }
+    with engine.connect() as connection:
+        row = connection.execute(
+            text(
+                "SELECT content_schema_version, assessment_config "
+                "FROM plan_versions WHERE id = 'legacy-version'"
+            )
+        ).one()
+    assert row.content_schema_version == 1
+    assert row.assessment_config is None
+
+    command.downgrade(config, "0009_plan_series")
+    assert "assessment_configs" not in inspect(engine).get_table_names()
+    remaining_columns = {
+        column["name"] for column in inspect(engine).get_columns("plan_versions")
+    }
+    assert remaining_columns.isdisjoint({"content_schema_version", "assessment_config"})
 
 
 def migration_config(database_url: str) -> Config:

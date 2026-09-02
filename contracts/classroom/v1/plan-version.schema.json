@@ -18,7 +18,7 @@
     "published_at"
   ],
   "properties": {
-    "schema_version": {"const": 1},
+    "schema_version": {"enum": [1, 2]},
     "plan_id": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/uuid"},
     "version": {"type": "integer", "minimum": 1},
     "space_id": {"type": "string", "minLength": 1, "maxLength": 128},
@@ -29,10 +29,67 @@
         {"$ref": "https://classroom.local/plugin/api-schemas/profile-version-v3.json"}
       ]
     },
+    "assessment_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "monitoring_scopes",
+        "evaluation_dimensions",
+        "total_bps"
+      ],
+      "properties": {
+        "schema_version": {"const": 1},
+        "monitoring_scopes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "coding_process",
+            "revision_process",
+            "run_and_debug",
+            "thinking_and_pause",
+            "paste_behavior"
+          ],
+          "properties": {
+            "coding_process": {"type": "boolean"},
+            "revision_process": {"type": "boolean"},
+            "run_and_debug": {"type": "boolean"},
+            "thinking_and_pause": {"type": "boolean"},
+            "paste_behavior": {"type": "boolean"}
+          }
+        },
+        "evaluation_dimensions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "name", "description", "weight_bps", "student_visible", "order"],
+            "properties": {
+              "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"},
+              "name": {"type": "string", "minLength": 1, "maxLength": 50},
+              "description": {"type": "string", "maxLength": 500},
+              "weight_bps": {"type": "integer", "minimum": 1, "maximum": 10000},
+              "student_visible": {"type": "boolean"},
+              "order": {"type": "integer", "minimum": 1}
+            }
+          }
+        },
+        "total_bps": {"const": 10000}
+      }
+    },
     "content_hash": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/sha256"},
     "scheduled_start_at": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/timestamp"},
     "scheduled_end_at": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/timestamp"},
     "ai_policy": {"enum": ["prohibited", "allowed"]},
     "published_at": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/timestamp"}
-  }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"schema_version": {"const": 2}}},
+      "then": {"required": ["assessment_config"]},
+      "else": {"not": {"required": ["assessment_config"]}}
+    }
+  ]
 }

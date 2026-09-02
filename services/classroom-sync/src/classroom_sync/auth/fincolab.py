@@ -155,6 +155,7 @@ class FincolabIdentityGateway:
         seen_child_ids: set[str] = set()
         seen_workbench_ids: set[str] = set()
         for project in projects:
+            roster_member: SpaceMember | None
             description = project.get("description")
             if not isinstance(description, str):
                 continue
@@ -171,38 +172,54 @@ class FincolabIdentityGateway:
                     else None
                 )
                 if legacy_key is not None:
-                    member = legacy_students_by_key.get(legacy_key)
-                    if member is None:
+                    roster_member = legacy_students_by_key.get(legacy_key)
+                    if roster_member is None:
                         continue
                 else:
                     owner = project.get("username")
                     if not isinstance(owner, str) or not owner.strip():
                         raise UpstreamContractError("child_owner_unverified")
-                    member = students_by_username.get(owner)
-                    if member is None:
+                    roster_member = students_by_username.get(owner)
+                    if roster_member is None:
                         raise UpstreamContractError("child_owner_not_student_member")
             else:
                 if binding.space_id != space_id:
                     raise RosterConflictError("student_binding_space_mismatch")
                 if binding.parent_algorithm_id != parent_algorithm_id:
                     raise RosterConflictError("student_binding_parent_mismatch")
-                member = students_by_id.get(binding.student_id)
-                if member is None:
+                roster_member = students_by_id.get(binding.student_id)
+                if roster_member is None:
                     raise RosterConflictError("student_binding_student_not_in_roster")
-                if member.username != binding.student_username:
+                if roster_member.username != binding.student_username:
                     raise RosterConflictError("student_binding_username_mismatch")
 
             child_id = self._required_string(project, "id", "child_algorithm_missing_id")
-            workbench_id = self._required_string(project, "workbench_id", "child_workbench_unverified")
             owner_username = project.get("username")
-            if not isinstance(owner_username, str) or not owner_username.strip():
+            listed_workbench_id = project.get("workbench_id")
+            needs_detail = (
+                not isinstance(owner_username, str)
+                or not owner_username.strip()
+                or not isinstance(listed_workbench_id, str)
+                or not listed_workbench_id.strip()
+            )
+            authoritative_project = project
+            if needs_detail:
                 detail = self._request_object(
-                    f"/v1/spaces/{space_id}/algorithm_development/{child_id}", principal.bearer_token
+                    f"/v1/spaces/{space_id}/algorithm_development/{child_id}",
+                    principal.bearer_token,
                 )
-                owner_username = self._required_string(detail, "username", "child_owner_unverified")
-            if owner_username not in {principal.username, member.username}:
+                authoritative_project = {**project, **detail}
+            workbench_id = self._required_string(
+                authoritative_project, "workbench_id", "child_workbench_unverified"
+            )
+            owner_username = self._required_string(
+                authoritative_project, "username", "child_owner_unverified"
+            )
+            if owner_username not in {principal.username, roster_member.username}:
                 raise RosterConflictError("child_owner_contract_conflict")
-            child = StudentChildExperiment(member.user_id, member.username, child_id, workbench_id)
+            child = StudentChildExperiment(
+                roster_member.user_id, roster_member.username, child_id, workbench_id
+            )
             if child.student_id in seen_student_ids:
                 raise RosterConflictError("duplicate_student_child")
             if child.child_algorithm_id in seen_child_ids:

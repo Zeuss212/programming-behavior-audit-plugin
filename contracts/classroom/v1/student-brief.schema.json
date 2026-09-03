@@ -131,6 +131,69 @@
         "teacher_note": {"type": "string", "minLength": 1, "maxLength": 500}
       }
     },
+    "assessment_score": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["schema_version", "scoring_rule_version", "overall_score", "dimensions"],
+      "properties": {
+        "schema_version": {"const": 1},
+        "scoring_rule_version": {"const": "ai-score-v1"},
+        "overall_score": {"type": "number", "minimum": 0, "maximum": 100},
+        "dimensions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "dimension_id",
+              "dimension_name",
+              "score",
+              "weight_bps",
+              "weighted_score",
+              "evidence_level",
+              "confidence",
+              "reason",
+              "evidence_event_ids"
+            ],
+            "properties": {
+              "dimension_id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+              },
+              "dimension_name": {"type": "string", "minLength": 1, "maxLength": 50},
+              "score": {"type": "integer", "minimum": 0, "maximum": 100},
+              "weight_bps": {"type": "integer", "minimum": 1, "maximum": 10000},
+              "weighted_score": {"type": "number", "minimum": 0, "maximum": 100},
+              "evidence_level": {"enum": ["sufficient", "partial", "insufficient"]},
+              "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+              "reason": {"type": "string", "minLength": 1, "maxLength": 500},
+              "evidence_event_ids": {
+                "type": "array",
+                "maxItems": 3,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "pattern": "^chunk-[1-9][0-9]*#event-[1-9][0-9]*$"
+                }
+              }
+            },
+            "allOf": [
+              {
+                "if": {"properties": {"evidence_level": {"const": "partial"}}},
+                "then": {"properties": {"score": {"maximum": 79}}}
+              },
+              {
+                "if": {"properties": {"evidence_level": {"const": "insufficient"}}},
+                "then": {"properties": {"score": {"maximum": 59}}},
+                "else": {"properties": {"evidence_event_ids": {"minItems": 1}}}
+              }
+            ]
+          }
+        }
+      }
+    },
     "generated_at": {"$ref": "https://classroom.local/contracts/v1/common.schema.json#/$defs/timestamp"}
   }
 }

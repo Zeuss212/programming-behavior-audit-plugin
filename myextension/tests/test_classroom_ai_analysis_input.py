@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 
 import pytest
 
@@ -101,6 +102,24 @@ def test_builder_reuses_safe_candidate_selection_and_emits_only_bounded_fields()
     assert "local-" not in encoded
     assert payload["knowledge_points"][0]["question"].startswith("学生是否")
     assert sum(len(row["source"]) for row in payload["code_snapshots"]) <= 12_000
+
+
+def test_builder_includes_only_the_bounded_problem_statement_for_scoring() -> None:
+    profile = deepcopy(_profile())
+    profile["problem_context"] = {
+        "statement": "实现字典读取，并在键不存在时返回默认值。",
+        "language": "python",
+        "submission_contract": {"kind": "function", "entrypoint": "lookup"},
+    }
+
+    payload = build_analysis_input(profile, _detail(), _ranges())
+
+    assert payload["lesson"] == {
+        "title": "Python 字典课堂练习",
+        "statement": "实现字典读取，并在键不存在时返回默认值。",
+    }
+    assert "language" not in payload["lesson"]
+    assert "submission_contract" not in payload["lesson"]
 
 
 def test_builder_applies_one_deterministic_snapshot_budget() -> None:

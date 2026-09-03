@@ -228,7 +228,7 @@ class ClassroomReadService:
         if student_brief is None:
             return None
         ai_analysis_status = student_brief.payload.get("ai_analysis_status")
-        return {
+        response: dict[str, object] = {
             "status": student_brief.status,
             "revision": student_brief.revision,
             "ai_analysis_status": (
@@ -239,6 +239,31 @@ class ClassroomReadService:
             "mastery_overview": ClassroomReadService._mastery_overview(
                 student_brief, teacher_review
             ),
+        }
+        assessment_score = ClassroomReadService._assessment_score_summary(student_brief)
+        if assessment_score is not None:
+            response["assessment_score"] = assessment_score
+        return response
+
+    @staticmethod
+    def _assessment_score_summary(
+        student_brief: StudentBrief,
+    ) -> dict[str, object] | None:
+        raw_score = student_brief.payload.get("assessment_score")
+        if not isinstance(raw_score, Mapping):
+            return None
+        overall_score = raw_score.get("overall_score")
+        scoring_rule_version = raw_score.get("scoring_rule_version")
+        if (
+            not isinstance(overall_score, (int, float))
+            or isinstance(overall_score, bool)
+            or not 0 <= float(overall_score) <= 100
+            or scoring_rule_version != "ai-score-v1"
+        ):
+            return None
+        return {
+            "overall_score": float(overall_score),
+            "scoring_rule_version": scoring_rule_version,
         }
 
     @staticmethod

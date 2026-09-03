@@ -26,6 +26,7 @@ from classroom_sync.models import (
     StudentAssignment,
     StudentBrief,
 )
+from classroom_sync.services.assessment_scoring import AssessmentScore
 from classroom_sync.services.assignments import AssignmentService
 from classroom_sync.services.brief_analysis import (
     BriefAiAnalysis,
@@ -48,6 +49,7 @@ def seeded_brief_service(
     now: datetime,
     *,
     ai_policy: str = "allowed",
+    assessment_config: dict[str, object] | None = None,
     enforce_foreign_keys: bool = False,
 ):
     engine = create_engine(
@@ -96,6 +98,8 @@ def seeded_brief_service(
                         }
                     ],
                 },
+                content_schema_version=2 if assessment_config is not None else 1,
+                assessment_config=assessment_config,
                 content_hash="a" * 64,
                 scheduled_start_at=now,
                 scheduled_end_at=now + timedelta(minutes=30),
@@ -508,6 +512,122 @@ def test_analysis_worker_appends_a_ready_revision_without_overwriting_base_brief
     assert job.status == "completed"
     assert job.lease_owner is None
     assert job.analysis_input == {}
+
+
+def test_scored_analysis_uses_published_weights_and_persists_score_separately():
+    now = datetime(2026, 8, 12, 8, 30, tzinfo=UTC)
+    assessment_config = {
+        "schema_version": 1,
+        "monitoring_scopes": {
+            "coding_process": True,
+            "revision_process": True,
+            "run_and_debug": True,
+            "thinking_and_pause": True,
+            "paste_behavior": True,
+        },
+        "evaluation_dimensions": [
+            {
+                "id": "knowledge_mastery",
+                "name": "知识点掌握",
+                "description": "知识点的理解与运用。",
+                "weight_bps": 6000,
+                "student_visible": True,
+                "order": 1,
+            },
+            {
+                "id": "debugging_ability",
+                "name": "调试能力",
+                "description": "识别、修正和复测错误。",
+                "weight_bps": 4000,
+                "student_visible": True,
+                "order": 2,
+            },
+        ],
+        "total_bps": 10000,
+    }
+    brief_service, factory, _registry = seeded_brief_service(
+        now, assessment_config=assessment_config
+    )
+    brief_service.submit(
+        IDS["session"],
+        valid_content(),
+        reason="student_manual",
+        request_ai_analysis=True,
+        analysis_input=valid_analysis_input(),
+    )
+
+    with factory() as session:
+        job = session.scalar(select(ClassroomBriefAnalysisJob))
+        assert job is not None
+        assert job.analysis_input["assessment_dimensions"] == [
+            {
+                "id": "knowledge_mastery",
+                "name": "知识点掌握",
+                "description": "知识点的理解与运用。",
+                "weight_bps": 6000,
+                "order": 1,
+            },
+            {
+                "id": "debugging_ability",
+                "name": "调试能力",
+                "description": "识别、修正和复测错误。",
+                "weight_bps": 4000,
+                "order": 2,
+            },
+        ]
+
+    class AnalysisService:
+        def generate(self, _source):
+            return BriefAiAnalysis(
+                knowledge_point_analyses=[{
+                    "knowledge_point_id": "KP_DICT0001",
+                    "status": "observed",
+                    "evidence_event_ids": ["chunk-1#event-1"],
+                    "teaching_suggestion": "追问不存在键时的默认值处理。",
+                }],
+                teacher_note="仅反映本次过程证据，仍需教师复核。",
+                assessment_score=AssessmentScore.model_validate({
+                    "schema_version": 1,
+                    "scoring_rule_version": "ai-score-v1",
+                    "overall_score": 70.0,
+                    "dimensions": [
+                        {
+                            "dimension_id": "knowledge_mastery",
+                            "dimension_name": "知识点掌握",
+                            "score": 82,
+                            "weight_bps": 6000,
+                            "weighted_score": 49.2,
+                            "evidence_level": "sufficient",
+                            "confidence": 0.86,
+                            "reason": "知识点应用较完整。",
+                            "evidence_event_ids": ["chunk-1#event-1"],
+                        },
+                        {
+                            "dimension_id": "debugging_ability",
+                            "dimension_name": "调试能力",
+                            "score": 52,
+                            "weight_bps": 4000,
+                            "weighted_score": 20.8,
+                            "evidence_level": "insufficient",
+                            "confidence": 0.43,
+                            "reason": "未观测到完整调试链路。",
+                            "evidence_event_ids": [],
+                        },
+                    ],
+                }),
+            )
+
+    worker = BriefAnalysisJobService(
+        factory, brief_service, AnalysisService(), clock=lambda: now
+    )
+    assert worker.run_due_jobs("worker-a") == 1
+
+    latest = brief_service.get_latest_brief(IDS["session"])
+    assert latest.payload["assessment_score"]["overall_score"] == 70.0
+    assert set(latest.payload["ai_analysis"]) == {
+        "knowledge_point_analyses",
+        "teacher_note",
+    }
 
 
 def test_stale_analysis_completion_does_not_replace_a_newer_student_brief():

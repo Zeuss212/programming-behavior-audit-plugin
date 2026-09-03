@@ -27,7 +27,7 @@ from classroom_sync.models import (
     StudentBrief,
     TeacherReview,
 )
-from classroom_sync.services.brief_analysis import BriefAnalysisInput
+from classroom_sync.services.brief_analysis import BriefAnalysisInput, BriefAnalysisJobInput
 
 EVIDENCE_REF_PATTERN = re.compile(r"^chunk-(\d+)#event-(\d+)$")
 _EVENT_DESCRIPTIONS = {
@@ -145,9 +145,23 @@ class BriefService:
                     plan_version,
                     private_source,
                 )
-            private_analysis_input = (
-                private_source.model_dump(mode="json") if private_source is not None else None
-            )
+            private_analysis_input = None
+            if private_source is not None:
+                try:
+                    job_input = BriefAnalysisJobInput.model_validate(
+                        {
+                            **private_source.model_dump(mode="json"),
+                            "assessment_dimensions": self._assessment_dimensions(plan_version),
+                        }
+                    )
+                    private_analysis_input = job_input.model_dump(
+                        mode="json",
+                        exclude={"assessment_dimensions"}
+                        if not job_input.assessment_dimensions
+                        else set(),
+                    )
+                except PydanticValidationError as error:
+                    raise ValidationError("brief_assessment_config_invalid") from error
             analysis_permitted = request_ai_analysis and plan_version.ai_policy == "allowed"
             analysis_ready = analysis_available and analysis_context_available
             previous = session.scalar(
@@ -191,6 +205,7 @@ class BriefService:
                     else "not_requested"
                 ),
                 "ai_analysis": None,
+                "assessment_score": None,
                 "generated_at": now.isoformat(),
             }
             self._schema_registry.validate("student-brief", payload)
@@ -292,11 +307,18 @@ class BriefService:
             source = session.get(StudentBrief, job.source_brief_id)
             if source is None:
                 raise NotFoundError("analysis_source_brief_not_found")
+            analysis_payload = dict(analysis)
+            assessment_score = analysis_payload.pop("assessment_score", None)
             brief, appended = self._append_analysis_revision(
                 session,
                 source,
                 ai_analysis_status="ready",
-                ai_analysis=dict(analysis),
+                ai_analysis=analysis_payload,
+                assessment_score=(
+                    dict(assessment_score)
+                    if isinstance(assessment_score, Mapping)
+                    else None
+                ),
                 generated_at=now,
             )
             job.status = "completed"
@@ -348,6 +370,7 @@ class BriefService:
                 source,
                 ai_analysis_status="unavailable",
                 ai_analysis=None,
+                assessment_score=None,
                 generated_at=now,
             )
             job.status = "completed"
@@ -407,6 +430,7 @@ class BriefService:
         *,
         ai_analysis_status: str,
         ai_analysis: dict[str, object] | None,
+        assessment_score: dict[str, object] | None,
         generated_at: datetime,
     ) -> tuple[StudentBrief, bool]:
         monitor_session = session.scalar(
@@ -430,6 +454,7 @@ class BriefService:
         payload["revision"] = latest.revision + 1
         payload["ai_analysis_status"] = ai_analysis_status
         payload["ai_analysis"] = ai_analysis
+        payload["assessment_score"] = assessment_score
         payload["generated_at"] = generated_at.isoformat()
         self._schema_registry.validate("student-brief", payload)
         brief = StudentBrief(
@@ -514,6 +539,16 @@ class BriefService:
     ) -> bool:
         profile = plan_version.profile
         if source.lesson["title"] != BriefService._plan_text(profile.get("title"), 200):
+            raise ValidationError("brief_analysis_input_context_invalid")
+        submitted_statement = source.lesson.get("statement")
+        raw_problem_context = profile.get("problem_context")
+        expected_statement = BriefService._plan_text(
+            raw_problem_context.get("statement")
+            if isinstance(raw_problem_context, Mapping)
+            else None,
+            2_000,
+        )
+        if submitted_statement is not None and submitted_statement != expected_statement:
             raise ValidationError("brief_analysis_input_context_invalid")
         raw_points = profile.get("knowledge_points")
         raw_dimensions = profile.get("dimensions")
@@ -627,6 +662,26 @@ class BriefService:
     @staticmethod
     def _plan_text(value: object, limit: int) -> str:
         return value.strip()[:limit] if isinstance(value, str) else ""
+
+    @staticmethod
+    def _assessment_dimensions(plan_version: PlanVersion) -> list[dict[str, object]]:
+        config = plan_version.assessment_config
+        raw_dimensions = (
+            config.get("evaluation_dimensions") if isinstance(config, Mapping) else None
+        )
+        if not isinstance(raw_dimensions, list):
+            return []
+        return [
+            {
+                "id": row.get("id"),
+                "name": row.get("name"),
+                "description": row.get("description"),
+                "weight_bps": row.get("weight_bps"),
+                "order": row.get("order"),
+            }
+            for row in raw_dimensions
+            if isinstance(row, Mapping)
+        ]
 
     @staticmethod
     def _submission_hash(

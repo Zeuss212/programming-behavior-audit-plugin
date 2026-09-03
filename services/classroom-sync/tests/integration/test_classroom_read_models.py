@@ -186,6 +186,24 @@ def classroom_read_app():
                 submission_reason="student_manual",
                 payload={
                     "summary": "学生完成字典读取练习。",
+                    "assessment_score": {
+                        "schema_version": 1,
+                        "scoring_rule_version": "ai-score-v1",
+                        "overall_score": 70.0,
+                        "dimensions": [
+                            {
+                                "dimension_id": "knowledge_mastery",
+                                "dimension_name": "知识点掌握",
+                                "score": 70,
+                                "weight_bps": 10000,
+                                "weighted_score": 70.0,
+                                "evidence_level": "sufficient",
+                                "confidence": 0.86,
+                                "reason": "知识点应用较完整。",
+                                "evidence_event_ids": ["chunk-1#event-1"],
+                            }
+                        ],
+                    },
                     "knowledge_points": [
                         {
                             "knowledge_point_id": "KP_DICT",
@@ -291,6 +309,10 @@ def test_teacher_reads_own_experiment_plan_and_allowlisted_monitoring(classroom_
                 "status": "completed",
                 "revision": 1,
                 "ai_analysis_status": "not_requested",
+                "assessment_score": {
+                    "overall_score": 70.0,
+                    "scoring_rule_version": "ai-score-v1",
+                },
                 "mastery_overview": {
                     "counts": {
                         "mastered": 1,

@@ -389,6 +389,36 @@ def test_student_brief_accepts_only_bounded_auxiliary_ai_analysis(
         schema_registry.validate("student-brief", payload)
 
 
+def test_student_brief_accepts_bounded_ai_assessment_score(
+    schema_registry: ClassroomSchemaRegistry,
+):
+    payload = valid_student_brief()
+    payload["assessment_score"] = {
+        "schema_version": 1,
+        "scoring_rule_version": "ai-score-v1",
+        "overall_score": 52.0,
+        "dimensions": [
+            {
+                "dimension_id": "debugging_ability",
+                "dimension_name": "调试能力",
+                "score": 52,
+                "weight_bps": 10000,
+                "weighted_score": 52.0,
+                "evidence_level": "insufficient",
+                "confidence": 0.43,
+                "reason": "未观测到完整的调试链路。",
+                "evidence_event_ids": [],
+            }
+        ],
+    }
+
+    schema_registry.validate("student-brief", payload)
+
+    payload["assessment_score"]["dimensions"][0]["unexpected"] = True
+    with pytest.raises(ValidationError):
+        schema_registry.validate("student-brief", payload)
+
+
 def test_plan_version_requires_a_complete_profile_v2(
     schema_registry: ClassroomSchemaRegistry,
 ):

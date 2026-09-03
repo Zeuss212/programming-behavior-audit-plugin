@@ -8,7 +8,11 @@ import pytest
 
 from classroom_sync.config import Settings
 from classroom_sync.errors import UpstreamUnavailableError
-from classroom_sync.services.brief_analysis import BriefAnalysisInput, OpenAiBriefAnalysisService
+from classroom_sync.services.brief_analysis import (
+    BriefAnalysisInput,
+    BriefAnalysisJobInput,
+    OpenAiBriefAnalysisService,
+)
 from classroom_sync.services.plan_suggestions import AiProviderSettings, OpenAiCompletionClient
 
 
@@ -66,6 +70,54 @@ def valid_result() -> dict[str, object]:
             }
         ],
         "teacher_note": "仅反映本次过程证据，仍需教师结合作品复核。",
+    }
+
+
+def valid_scored_source() -> BriefAnalysisJobInput:
+    return BriefAnalysisJobInput.model_validate(
+        {
+            **valid_source().model_dump(mode="json"),
+            "assessment_dimensions": [
+                {
+                    "id": "knowledge_mastery",
+                    "name": "知识点掌握",
+                    "description": "对本实验知识点的理解与运用。",
+                    "weight_bps": 6000,
+                    "order": 1,
+                },
+                {
+                    "id": "debugging_ability",
+                    "name": "调试能力",
+                    "description": "识别、修正并验证错误。",
+                    "weight_bps": 4000,
+                    "order": 2,
+                },
+            ],
+        }
+    )
+
+
+def valid_scored_result() -> dict[str, object]:
+    return {
+        **valid_result(),
+        "assessment_dimension_scores": [
+            {
+                "dimension_id": "knowledge_mastery",
+                "score": 82,
+                "evidence_level": "sufficient",
+                "confidence": 0.86,
+                "reason": "知识点应用较完整，且有连续的编辑与运行证据。",
+                "evidence_event_ids": ["chunk-1#event-1", "chunk-1#event-2"],
+            },
+            {
+                "dimension_id": "debugging_ability",
+                "score": 52,
+                "evidence_level": "insufficient",
+                "confidence": 0.43,
+                "reason": "未观测到完整的报错、修改和复测链路，仅能依据现有行为评估。",
+                "evidence_event_ids": [],
+            },
+        ],
     }
 
 
@@ -287,3 +339,34 @@ def test_brief_analysis_maps_malformed_json_to_safe_terminal_error() -> None:
 
     assert error.value.code == "ai_brief_analysis_response_invalid"
     assert error.value.retryable is True
+
+
+def test_brief_analysis_builds_weighted_score_from_provider_judgements() -> None:
+    recorded: list[httpx.Request] = []
+
+    result = service_for_response(valid_scored_result(), recorded).generate(
+        valid_scored_source()
+    )
+
+    assert result.assessment_score is not None
+    assert result.assessment_score.overall_score == 70.0
+    assert [row.weight_bps for row in result.assessment_score.dimensions] == [6000, 4000]
+    assert [row.weighted_score for row in result.assessment_score.dimensions] == [49.2, 20.8]
+    system_prompt = json.loads(recorded[0].content.decode("utf-8"))["messages"][0][
+        "content"
+    ]
+    assert "assessment_dimension_scores" in system_prompt
+    assert "证据不足也必须给出 0 到 100 的整数分" in system_prompt
+    assert "权重和总分由系统计算" in system_prompt
+    assert "knowledge_mastery：知识点理解与运用" in system_prompt
+    assert "debugging_ability：错误识别、有效修正和修改后复测" in system_prompt
+
+
+def test_brief_analysis_rejects_provider_score_that_exceeds_evidence_cap() -> None:
+    payload = valid_scored_result()
+    payload["assessment_dimension_scores"][1]["score"] = 60
+
+    with pytest.raises(UpstreamUnavailableError) as error:
+        service_for_response(payload).generate(valid_scored_source())
+
+    assert error.value.code == "ai_brief_analysis_response_invalid"

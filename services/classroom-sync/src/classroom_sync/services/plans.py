@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from classroom_sync.canonical import sha256_json
@@ -19,7 +21,10 @@ from classroom_sync.errors import (
     ValidationError,
 )
 from classroom_sync.models import (
+    AssessmentConfig,
     AuditEvent,
+    ExperimentAssessmentConfig,
+    ExperimentPlanBinding,
     PlanAuthoringSession,
     PlanDraft,
     PlanSeries,
@@ -157,6 +162,10 @@ class PlanService:
                 raise NotFoundError("plan_draft_not_found")
             if draft.teacher_id != teacher_id:
                 raise AuthorizationError("plan_draft_owner_mismatch")
+            repository.lock_plan_scope(
+                draft.space_id,
+                draft.parent_algorithm_id,
+            )
             if expected_revision is not None and draft.revision != expected_revision:
                 raise ConflictError("plan_draft_revision_conflict")
             if title is not None:
@@ -205,6 +214,10 @@ class PlanService:
                 raise NotFoundError("plan_draft_not_found")
             if draft.teacher_id != teacher_id:
                 raise AuthorizationError("plan_draft_owner_mismatch")
+            repository.lock_plan_scope(
+                draft.space_id,
+                draft.parent_algorithm_id,
+            )
 
             is_v3 = draft.profile.get("schema_version") == 3
             authoring: PlanAuthoringSession | None = None
@@ -226,6 +239,13 @@ class PlanService:
                 raise ConflictError("plan_series_not_found")
             existing = repository.get_plan_version_for_source(draft.id, draft.revision)
             if existing is not None:
+                self._bind_experiment(
+                    session,
+                    repository,
+                    plan_version=existing,
+                    teacher_id=teacher_id,
+                    now=now,
+                )
                 if authoring is not None and authoring.status == "open":
                     self._close_authoring(authoring, draft=draft, now=now)
                 return existing
@@ -266,8 +286,38 @@ class PlanService:
                 draft.scheduled_start_at
             )
             scheduled_end_at = self._utc_storage_instant(draft.scheduled_end_at)
+            experiment_assessment_model = session.scalar(
+                select(ExperimentAssessmentConfig)
+                .where(
+                    ExperimentAssessmentConfig.space_id == draft.space_id,
+                    ExperimentAssessmentConfig.parent_algorithm_id
+                    == draft.parent_algorithm_id,
+                )
+                .with_for_update()
+            )
+            assessment_model: AssessmentConfig | ExperimentAssessmentConfig | None = (
+                experiment_assessment_model
+            )
+            if assessment_model is None:
+                assessment_model = repository.get_assessment_config(
+                    draft.id, for_update=True
+                )
+            assessment_snapshot: dict[str, object] | None = None
+            content_schema_version = 1
+            if assessment_model is not None:
+                assessment_dimensions = deepcopy(assessment_model.evaluation_dimensions)
+                assessment_snapshot = {
+                    "schema_version": assessment_model.schema_version,
+                    "monitoring_scopes": dict(assessment_model.monitoring_scopes),
+                    "evaluation_dimensions": assessment_dimensions,
+                    "total_bps": sum(
+                        int(dimension["weight_bps"])
+                        for dimension in assessment_dimensions
+                    ),
+                }
+                content_schema_version = 2
             plan_content = {
-                "schema_version": 1,
+                "schema_version": content_schema_version,
                 "plan_id": draft.plan_id,
                 "version": version,
                 "space_id": draft.space_id,
@@ -278,6 +328,8 @@ class PlanService:
                 "ai_policy": draft.ai_policy,
                 "published_at": now.isoformat(),
             }
+            if assessment_snapshot is not None:
+                plan_content["assessment_config"] = assessment_snapshot
             content_hash = sha256_json(plan_content)
             published_contract = {**plan_content, "content_hash": content_hash}
             self._schema_registry.validate("plan-version", published_contract)
@@ -292,6 +344,8 @@ class PlanService:
                 space_id=draft.space_id,
                 parent_algorithm_id=draft.parent_algorithm_id,
                 profile=published_profile,
+                content_schema_version=content_schema_version,
+                assessment_config=assessment_snapshot,
                 content_hash=content_hash,
                 scheduled_start_at=scheduled_start_at,
                 scheduled_end_at=scheduled_end_at,
@@ -302,6 +356,13 @@ class PlanService:
             session.add(plan_version)
             series.latest_version = version
             session.flush()
+            self._bind_experiment(
+                session,
+                repository,
+                plan_version=plan_version,
+                teacher_id=teacher_id,
+                now=now,
+            )
             draft.published_revision = draft.revision
             if authoring is not None:
                 self._close_authoring(authoring, draft=draft, now=now)
@@ -316,6 +377,39 @@ class PlanService:
             if plan_version is None:
                 raise NotFoundError("plan_version_not_found")
             return plan_version
+
+    @staticmethod
+    def _bind_experiment(
+        session: Session,
+        repository: ClassroomRepository,
+        *,
+        plan_version: PlanVersion,
+        teacher_id: str,
+        now: datetime,
+    ) -> None:
+        binding = repository.get_binding(
+            plan_version.space_id,
+            plan_version.parent_algorithm_id,
+            for_update=True,
+        )
+        if binding is None:
+            session.add(
+                ExperimentPlanBinding(
+                    id=str(uuid4()),
+                    space_id=plan_version.space_id,
+                    parent_algorithm_id=plan_version.parent_algorithm_id,
+                    plan_id=plan_version.plan_id,
+                    plan_version=plan_version.version,
+                    teacher_id=teacher_id,
+                    created_at=now,
+                    updated_at=None,
+                )
+            )
+            return
+        binding.plan_id = plan_version.plan_id
+        binding.plan_version = plan_version.version
+        binding.teacher_id = teacher_id
+        binding.updated_at = now
 
     def _validate_draft(self, draft: PlanDraft) -> None:
         self._schema_registry.validate(

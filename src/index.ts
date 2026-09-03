@@ -20,8 +20,12 @@ import {
 import { requestAPI } from './request';
 import { registerClassroomTicket } from './platform/classroomApi';
 import { getPlatformContext, IPlatformContext } from './platform/contextApi';
+import { initializeClassroomUi } from './platform/classroomUiBootstrap';
 import { PlatformSessionController } from './platform/platformSessionController';
-import { bootstrapClassroomTicket } from './platform/ticketBootstrap';
+import {
+  bootstrapClassroomTicket,
+  hasClassroomTicket
+} from './platform/ticketBootstrap';
 import { openLogFolder } from './services/logFolderApi';
 import {
   downloadSessionLog,
@@ -193,11 +197,15 @@ const plugin: JupyterFrontEndPlugin<void> = {
       () => console.info('myextension_server_available'),
       () => console.error('myextension_server_unavailable')
     );
+    const classroomTicketObserved = hasClassroomTicket(window.location);
     const initializeAfterClassroomTicket = (): void => {
-      void getPlatformContext(app.serviceManager.serverSettings).then(
-        initializePlatformUi,
-        () => console.error('myextension_platform_context_unavailable')
-      );
+      void initializeClassroomUi({
+        classroomTicketObserved,
+        getContext: () => getPlatformContext(app.serviceManager.serverSettings),
+        initialize: initializePlatformUi,
+        reportUnavailable: () =>
+          console.error('myextension_platform_context_unavailable')
+      });
     };
     void bootstrapClassroomTicket(
       window.location,

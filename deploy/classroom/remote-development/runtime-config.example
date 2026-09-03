@@ -1,0 +1,6 @@
+# The browser platform proxy and this service must use the same FinColab origin
+# and organization. Copy this file to .env.remote-development.local; the local
+# file is ignored by Git through the repository-wide *.local rule.
+CLASSROOM_FINCOLAB_BASE_URL=http://fincolab.example.internal:40002
+CLASSROOM_FINCOLAB_ORGANIZATION_ID=replace-with-organization-id
+CLASSROOM_PLUGIN_JWT_SECRET=replace-with-at-least-32-random-characters

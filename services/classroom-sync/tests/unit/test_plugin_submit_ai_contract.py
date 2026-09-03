@@ -6,7 +6,10 @@ from classroom_sync.routers.plugin import SubmitBriefRequest
 def test_submit_request_accepts_explicit_ai_consent_and_private_input() -> None:
     """The current student client must not be rejected before a consented job can queue."""
     analysis_input = {
-        "lesson": {"title": "字典读取"},
+        "lesson": {
+            "title": "字典读取",
+            "statement": "实现字典读取，并在键不存在时返回默认值。",
+        },
         "knowledge_points": [
             {
                 "knowledge_point_id": "KP_DICT0001",

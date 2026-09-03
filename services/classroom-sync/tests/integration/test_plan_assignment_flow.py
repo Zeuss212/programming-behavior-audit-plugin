@@ -136,6 +136,82 @@ def test_create_draft_persists_plan_series_before_foreign_key_draft() -> None:
         assert series.id == draft.plan_id
 
 
+def test_publish_draft_binds_the_experiment_before_student_sync() -> None:
+    """A published classroom plan must be visible to analytics without a roster sync."""
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    repository_root = Path(__file__).resolve().parents[4]
+    schema_registry = ClassroomSchemaRegistry(repository_root / "contracts" / "classroom" / "v1")
+    now = datetime(2026, 9, 2, 8, 0, tzinfo=UTC)
+    service = PlanService(session_factory, schema_registry, clock=lambda: now)
+    draft = service.create_draft(
+        PlanDraftInput(
+            space_id="course-001",
+            parent_algorithm_id="demo-algorithm-0001",
+            title="published lesson",
+            profile=profile_draft("published lesson"),
+            scheduled_start_at=now,
+            scheduled_end_at=now + timedelta(days=1),
+            ai_policy="prohibited",
+        ),
+        teacher_id="teacher001",
+    )
+
+    published = service.publish_draft(draft.id, teacher_id="teacher001")
+
+    with session_factory() as session:
+        binding = ClassroomRepository(session).get_binding(
+            "course-001", "demo-algorithm-0001"
+        )
+        assert binding is not None
+        assert binding.plan_id == published.plan_id
+        assert binding.plan_version == published.version
+        assert binding.teacher_id == "teacher001"
+
+
+def test_publish_draft_uses_the_shared_scope_lock_before_creating_a_binding() -> None:
+    """Removing the scope lock would reintroduce first-publication binding races."""
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    repository_root = Path(__file__).resolve().parents[4]
+    schema_registry = ClassroomSchemaRegistry(repository_root / "contracts" / "classroom" / "v1")
+    now = datetime(2026, 9, 2, 8, 30, tzinfo=UTC)
+    service = PlanService(session_factory, schema_registry, clock=lambda: now)
+    draft = service.create_draft(
+        PlanDraftInput(
+            space_id="course-lock",
+            parent_algorithm_id="parent-lock",
+            title="locked lesson",
+            profile=profile_draft("locked lesson"),
+            scheduled_start_at=now,
+            scheduled_end_at=now + timedelta(days=1),
+            ai_policy="prohibited",
+        ),
+        teacher_id="teacher001",
+    )
+    statements: list[str] = []
+
+    def capture_scope_lock(
+        _connection: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
+        if statement == "BEGIN IMMEDIATE":
+            statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", capture_scope_lock)
+    service.publish_draft(draft.id, teacher_id="teacher001")
+
+    assert statements == ["BEGIN IMMEDIATE"]
+
+
 @pytest.mark.parametrize("existing_binding", [False, True])
 def test_plan_scope_lock_serializes_existing_and_absent_bindings_on_sqlite(
     tmp_path: Path,

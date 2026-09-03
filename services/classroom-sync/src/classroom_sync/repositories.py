@@ -8,6 +8,7 @@ from sqlalchemy import select, text, tuple_
 from sqlalchemy.orm import Session
 
 from classroom_sync.models import (
+    AssessmentConfig,
     AuditEvent,
     ClassroomPlanSuggestionJob,
     ExperimentPlanBinding,
@@ -54,6 +55,14 @@ class ClassroomRepository:
 
     def get_plan_draft(self, draft_id: str, *, for_update: bool = False) -> PlanDraft | None:
         statement = select(PlanDraft).where(PlanDraft.id == draft_id)
+        if for_update:
+            statement = statement.with_for_update()
+        return self.session.scalar(statement)
+
+    def get_assessment_config(
+        self, draft_id: str, *, for_update: bool = False
+    ) -> AssessmentConfig | None:
+        statement = select(AssessmentConfig).where(AssessmentConfig.draft_id == draft_id)
         if for_update:
             statement = statement.with_for_update()
         return self.session.scalar(statement)
@@ -142,6 +151,19 @@ class ClassroomRepository:
 
     def get_plan_version_by_id(self, plan_version_id: str) -> PlanVersion | None:
         return self.session.get(PlanVersion, plan_version_id)
+
+    def get_latest_plan_version_for_scope(
+        self, space_id: str, parent_algorithm_id: str
+    ) -> PlanVersion | None:
+        return self.session.scalar(
+            select(PlanVersion)
+            .where(
+                PlanVersion.space_id == space_id,
+                PlanVersion.parent_algorithm_id == parent_algorithm_id,
+            )
+            .order_by(PlanVersion.published_at.desc(), PlanVersion.version.desc())
+            .limit(1)
+        )
 
     def list_plan_versions(self, plan_keys: list[tuple[str, int]]) -> list[PlanVersion]:
         if not plan_keys:

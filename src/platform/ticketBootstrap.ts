@@ -14,6 +14,13 @@ export type ClassroomTicketRegistrar = (
   pluginInstanceId: string
 ) => Promise<unknown>;
 
+export function hasClassroomTicket(location: FragmentLocation): boolean {
+  const fragment = location.hash.startsWith('#')
+    ? location.hash.slice(1)
+    : location.hash;
+  return new URLSearchParams(fragment).has('behavior_ticket');
+}
+
 export function consumeClassroomTicket(
   location: FragmentLocation,
   history: HistoryReplacement

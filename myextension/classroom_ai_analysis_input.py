@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
 import re
+from collections.abc import Mapping, Sequence
 
 from .dimension_analyzer import (
     _scrub_untrusted_text,
     _select_candidate_events,
 )
-
 
 MAX_ANALYSIS_EVENTS = 20
 MAX_ANALYSIS_SNAPSHOT_CHARACTERS = 12_000
@@ -244,8 +243,15 @@ def build_analysis_input(
             )
             remaining -= len(safe_source)
 
+    lesson = {"title": _text(profile.get("title"), 200)}
+    problem_context = profile.get("problem_context")
+    if isinstance(problem_context, Mapping):
+        statement = _text(problem_context.get("statement"), 2_000)
+        if statement:
+            lesson["statement"] = statement
+
     return {
-        "lesson": {"title": _text(profile.get("title"), 200)},
+        "lesson": lesson,
         "knowledge_points": _knowledge_points(profile),
         "evidence_events": evidence_events,
         "code_snapshots": code_snapshots,

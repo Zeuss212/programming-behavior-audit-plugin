@@ -3,7 +3,11 @@ from collections.abc import Callable
 import httpx
 import pytest
 
-from classroom_sync.auth.fincolab import FincolabIdentityGateway
+from classroom_sync.auth.fincolab import (
+    FincolabIdentityGateway,
+    Principal,
+    StudentChildExperiment,
+)
 from classroom_sync.errors import (
     AuthenticationError,
     AuthorizationError,
@@ -137,6 +141,44 @@ def test_student_membership_reads_all_pages_before_authorizing():
     assert requested_pages == ["1", "2"]
 
 
+def test_student_roster_query_includes_the_empty_bams_search_term() -> None:
+    """BAMS rejects its algorithm list endpoint when the required search term is omitted."""
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/organizations/org-1/spaces/space-1/users":
+            return httpx.Response(
+                200,
+                json=member_response(
+                    {"id": "teacher-1", "username": "teacher-a", "role_name": "teacher"},
+                    {"id": "student-1", "username": "student-a", "role_name": "student"},
+                ),
+            )
+        if request.url.path == "/v1/spaces/space-1/algorithm_development":
+            if request.url.params.get("q") != "":
+                return httpx.Response(503, json={"detail": "q is required"})
+            return httpx.Response(
+                200,
+                json=member_response(
+                    {
+                        "id": "child-1",
+                        "name": "exp-student-a-a1b2",
+                        "username": "student-a",
+                        "description": "[FINCOLAB_PARENT_PROJECT_ID:parent-1]",
+                        "workbench_id": "workbench-1",
+                    }
+                ),
+            )
+        raise AssertionError(f"Unexpected upstream request: {request.url}")
+
+    roster = gateway(responder).list_student_children(
+        Principal("teacher-1", "teacher-a", "teacher-token"), "space-1", "parent-1"
+    )
+
+    assert roster == (
+        StudentChildExperiment("student-1", "student-a", "child-1", "workbench-1"),
+    )
+
+
 def test_upstream_unauthorized_is_mapped_to_a_client_authentication_error():
     identity_gateway = gateway(lambda _: httpx.Response(401, json={"detail": "expired"}))
 
@@ -211,3 +253,132 @@ def test_duplicate_child_projects_are_quarantined_instead_of_auto_assigned():
 
     with pytest.raises(RosterConflictError, match="duplicate_student_child"):
         identity_gateway.list_student_children(principal, "space-1", "parent-1")
+
+
+def test_teacher_owned_v1_child_binds_the_marked_roster_student():
+    """Teacher-created BAMS children must be assigned to the student in their marker."""
+
+    description = (
+        "[FINCOLAB_PARENT_PROJECT_ID:parent-1]"
+        "[FINCOLAB_STUDENT_BINDING_V1:"
+        "eyJwYXJlbnRfYWxnb3JpdGhtX2lkIjoicGFyZW50LTEiLCJzcGFjZV9pZCI6InNwYWNlLTEiLCJzdHVkZW50X2lkIjoic3R1ZGVudC0xIiwic3R1ZGVudF91c2VybmFtZSI6InN0dWRlbnQtYSJ9]"
+    )
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/users"):
+            return httpx.Response(
+                200,
+                json=member_response(
+                    {"id": "teacher-1", "username": "teacher-a", "role_name": "teacher"},
+                    {"id": "student-1", "username": "student-a", "role_name": "student"},
+                ),
+            )
+        if request.url.path.endswith("/algorithm_development"):
+            return httpx.Response(
+                200,
+                json=member_response({
+                    "id": "child-1",
+                    "name": "exp-student-a-a1b2",
+                    "username": "teacher-a",
+                    "description": description,
+                    "workbench_id": "workbench-1",
+                }),
+            )
+        raise AssertionError(request.url)
+
+    roster = gateway(responder).list_student_children(
+        Principal("teacher-1", "teacher-a", "token"), "space-1", "parent-1"
+    )
+
+    assert roster == (
+        StudentChildExperiment("student-1", "student-a", "child-1", "workbench-1"),
+    )
+
+
+def test_child_detail_supplies_workbench_missing_from_list_projection():
+    """A delayed BAMS list projection must not hide an authoritative detail binding."""
+
+    description = (
+        "[FINCOLAB_PARENT_PROJECT_ID:parent-1]"
+        "[FINCOLAB_STUDENT_BINDING_V1:"
+        "eyJwYXJlbnRfYWxnb3JpdGhtX2lkIjoicGFyZW50LTEiLCJzcGFjZV9pZCI6InNwYWNlLTEiLCJzdHVkZW50X2lkIjoic3R1ZGVudC0xIiwic3R1ZGVudF91c2VybmFtZSI6InN0dWRlbnQtYSJ9]"
+    )
+    detail_requests: list[str] = []
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/users"):
+            return httpx.Response(
+                200,
+                json=member_response(
+                    {"id": "teacher-1", "username": "teacher-a", "role_name": "teacher"},
+                    {"id": "student-1", "username": "student-a", "role_name": "student"},
+                ),
+            )
+        if request.url.path.endswith("/algorithm_development"):
+            return httpx.Response(
+                200,
+                json=member_response({
+                    "id": "child-1",
+                    "name": "exp-student-a-a1b2",
+                    "username": "teacher-a",
+                    "description": description,
+                }),
+            )
+        if request.url.path.endswith("/algorithm_development/child-1"):
+            detail_requests.append(request.url.path)
+            return httpx.Response(
+                200,
+                json={
+                    "id": "child-1",
+                    "username": "teacher-a",
+                    "workbench_id": "workbench-1",
+                },
+            )
+        raise AssertionError(request.url)
+
+    roster = gateway(responder).list_student_children(
+        Principal("teacher-1", "teacher-a", "token"), "space-1", "parent-1"
+    )
+
+    assert roster == (
+        StudentChildExperiment("student-1", "student-a", "child-1", "workbench-1"),
+    )
+    assert detail_requests == ["/v1/spaces/space-1/algorithm_development/child-1"]
+
+
+def test_child_detail_without_workbench_remains_fail_closed():
+    """A detail fallback must retain the stable missing-workbench contract error."""
+
+    description = (
+        "[FINCOLAB_PARENT_PROJECT_ID:parent-1]"
+        "[FINCOLAB_STUDENT_BINDING_V1:"
+        "eyJwYXJlbnRfYWxnb3JpdGhtX2lkIjoicGFyZW50LTEiLCJzcGFjZV9pZCI6InNwYWNlLTEiLCJzdHVkZW50X2lkIjoic3R1ZGVudC0xIiwic3R1ZGVudF91c2VybmFtZSI6InN0dWRlbnQtYSJ9]"
+    )
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/users"):
+            return httpx.Response(
+                200,
+                json=member_response(
+                    {"id": "teacher-1", "username": "teacher-a", "role_name": "teacher"},
+                    {"id": "student-1", "username": "student-a", "role_name": "student"},
+                ),
+            )
+        if request.url.path.endswith("/algorithm_development"):
+            return httpx.Response(
+                200,
+                json=member_response({
+                    "id": "child-1",
+                    "name": "exp-student-a-a1b2",
+                    "username": "teacher-a",
+                    "description": description,
+                }),
+            )
+        if request.url.path.endswith("/algorithm_development/child-1"):
+            return httpx.Response(200, json={"id": "child-1", "username": "teacher-a"})
+        raise AssertionError(request.url)
+
+    with pytest.raises(UpstreamContractError, match="child_workbench_unverified"):
+        gateway(responder).list_student_children(
+            Principal("teacher-1", "teacher-a", "token"), "space-1", "parent-1"
+        )
